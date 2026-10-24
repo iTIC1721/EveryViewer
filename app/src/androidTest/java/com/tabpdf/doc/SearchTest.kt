@@ -1,6 +1,11 @@
 package com.tabpdf.doc
 
+import android.net.Uri
+import android.os.Build
+import android.os.ext.SdkExtensions
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import com.tabpdf.pdf.PdfDocument
 import com.tabpdf.doc.office.DocxReader
 import com.tabpdf.doc.office.OfficeLayout
 import com.tabpdf.doc.office.ZipParts
@@ -11,6 +16,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
@@ -84,6 +90,27 @@ class SearchTest {
         assertEquals(2, found.size)
         assertTrue("one line per page here", found[1].page > found[0].page)
         doc.close()
+    }
+
+    /** Needs Android 15, or Android 12–14 with the PDF system update; finds nothing elsewhere. */
+    @Test
+    fun pdfTextIsFoundWhereThePlatformCanReadIt() = runBlocking {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val file = File(instrumentation.targetContext.cacheDir, "search.pdf")
+        instrumentation.context.assets.open("sample.pdf").use { input -> file.outputStream().use { input.copyTo(it) } }
+        val doc = PdfDocument.open(instrumentation.targetContext, Uri.fromFile(file))
+        val found = doc.search("vocab")
+        val canSearch = Build.VERSION.SDK_INT >= 35 ||
+            Build.VERSION.SDK_INT >= 31 && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 13
+        if (canSearch) {
+            assertEquals("every page has the word", (0 until doc.pageCount).toSet(), found.map { it.page }.toSet())
+            for (r in found.flatMap { it.rects }) assertTrue(r.left >= 0f && r.right <= 1f && r.top >= 0f && r.bottom <= 1f && r.width() > 0f)
+        } else {
+            assertTrue(found.isEmpty())
+        }
+        doc.close()
+        file.delete()
+        Unit
     }
 
     @Test
