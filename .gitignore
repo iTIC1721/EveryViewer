@@ -1,0 +1,21 @@
+# Gradle / 빌드 산출물
+.gradle/
+build/
+.kotlin/
+/captures
+.externalNativeBuild
+.cxx
+
+# 개인 환경 설정
+local.properties
+*.iml
+.idea/
+.DS_Store
+
+# 서명 키 — 절대 커밋하지 않는다
+keystore.properties
+*.jks
+*.keystore
+
+# Claude Code 개인 설정
+.claude/settings.local.json
