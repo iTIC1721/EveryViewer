@@ -775,6 +775,8 @@ private fun FastScroller(
     modifier: Modifier,
 ) {
     if (pageCount < FAST_SCROLL_MIN_PAGES) return
+    // Read live by the position and the drag handler: a document laid out in the background grows.
+    val pages by rememberUpdatedState(pageCount)
     val scope = rememberCoroutineScope()
     var dragging by remember { mutableStateOf(false) }
     var visible by remember { mutableStateOf(false) }
@@ -792,7 +794,7 @@ private fun FastScroller(
             if (!listState.canScrollForward) return@derivedStateOf 1f
             val first = listState.layoutInfo.visibleItemsInfo.firstOrNull() ?: return@derivedStateOf 0f
             val within = listState.firstVisibleItemScrollOffset.toFloat() / first.size.coerceAtLeast(1)
-            ((first.index + within) / (pageCount - 1)).coerceIn(0f, 1f)
+            ((first.index + within) / (pages - 1)).coerceIn(0f, 1f)
         }
     }
     AnimatedVisibility(
@@ -808,7 +810,7 @@ private fun FastScroller(
             val thumbHeight = with(LocalDensity.current) { 48.dp.toPx() }
             fun jumpTo(y: Float) {
                 val fraction = ((y - thumbHeight / 2) / (trackHeight - thumbHeight)).coerceIn(0f, 1f)
-                scope.launch { listState.scrollToItem((fraction * (pageCount - 1)).roundToInt()) }
+                scope.launch { listState.scrollToItem((fraction * (pages - 1)).roundToInt()) }
             }
             fun setDragging(value: Boolean) {
                 dragging = value
