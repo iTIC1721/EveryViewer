@@ -4,6 +4,8 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.PointF
+import android.util.LruCache
 import android.graphics.RectF
 import android.graphics.Typeface
 import android.text.Layout
@@ -42,6 +44,9 @@ abstract class FlowBlock {
     /** Where [query] (normalized by [TextSearch]) occurs in the block's text, in block coordinates. */
     open fun find(query: String): List<Found> = emptyList()
 
+    /** Gives [sink] the block's characters in reading order, with boxes in block coordinates. */
+    open fun collectText(sink: TextSink) = Unit
+
     private companion object {
         val NO_BREAKS = FloatArray(0)
     }
@@ -61,6 +66,8 @@ open class TextBlock(val layout: StaticLayout) : FlowBlock() {
     override fun draw(canvas: Canvas) = layout.draw(canvas)
 
     override fun find(query: String): List<Found> = TextSearch.find(layout, query)
+
+    override fun collectText(sink: TextSink) = collectLayoutText(layout, sink, 0f, 0f)
 
     override fun linkAt(x: Float, y: Float): String? {
         val text = layout.text as? Spanned ?: return null
@@ -219,6 +226,27 @@ class FlowDocument(
             }
             result
         }
+    }
+
+    /** Page texts for selecting; a drag asks for the same pages again and again. */
+    private val pageTexts = LruCache<Int, PageText>(6)
+
+    private fun pageText(index: Int): PageText = pageTexts[index] ?: run {
+        val top = boundaries[index]
+        val bottom = boundaries[index + 1]
+        val height = bottom - top
+        val builder = PageText.Builder { RectF(it.left / FLOW_WIDTH, (it.top - top) / height, it.right / FLOW_WIDTH, (it.bottom - top) / height) }
+        val page = builder.clipped(top, bottom)
+        for (p in blocksBetween(top, bottom)) p.block.collectText(page.offset(p.x, p.y))
+        builder.build().also { pageTexts.put(index, it) }
+    }
+
+    override suspend fun selectText(index: Int, from: PointF, to: PointF): TextSelection? = withContext(Dispatchers.Default) {
+        mutex.withLock { if (closed) null else pageText(index).select(from, to) }
+    }
+
+    override suspend fun selectWord(index: Int, at: PointF): TextSelection? = withContext(Dispatchers.Default) {
+        mutex.withLock { if (closed) null else pageText(index).word(at) }
     }
 
     override fun linkAt(index: Int, x: Float, y: Float): String? {

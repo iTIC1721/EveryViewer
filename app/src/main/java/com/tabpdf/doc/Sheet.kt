@@ -3,6 +3,8 @@ package com.tabpdf.doc
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.PointF
+import android.util.LruCache
 import android.graphics.RectF
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
@@ -31,6 +33,8 @@ class StackBlock(private val placed: List<Placed>, override val height: Float) :
             canvas.restore()
         }
     }
+
+    override fun collectText(sink: TextSink) = placed.forEach { it.block.collectText(sink.offset(it.x, it.y)) }
 
     override fun find(query: String): List<Found> = placed.flatMap { p -> p.block.find(query).map { it.offset(p.x, p.y) } }
 
@@ -122,6 +126,29 @@ class SheetDocument(
             }
             result
         }
+    }
+
+    private val pageTexts = LruCache<Int, PageText>(6)
+
+    /** A sheet's text: header, the body's slice, footer. */
+    private fun pageText(index: Int): PageText = pageTexts[index] ?: run {
+        val builder = PageText.Builder { RectF(it.left / FLOW_WIDTH, it.top / frame.height, it.right / FLOW_WIDTH, it.bottom / frame.height) }
+        for (p in frame.header) p.block.collectText(builder.offset(p.x, p.y))
+        val top = boundaries[index]
+        val bottom = boundaries[index + 1]
+        // Body characters in flow coordinates, kept to this sheet's slice, then moved onto the sheet.
+        val body = builder.offset(0f, frame.bodyTop - top).clipped(top, bottom)
+        for (p in placed.filter { it.bottom > top && it.y < bottom }) p.block.collectText(body.offset(p.x, p.y))
+        for (p in frame.footer) p.block.collectText(builder.offset(p.x, p.y))
+        builder.build().also { pageTexts.put(index, it) }
+    }
+
+    override suspend fun selectText(index: Int, from: PointF, to: PointF): TextSelection? = withContext(Dispatchers.Default) {
+        mutex.withLock { if (closed) null else pageText(index).select(from, to) }
+    }
+
+    override suspend fun selectWord(index: Int, at: PointF): TextSelection? = withContext(Dispatchers.Default) {
+        mutex.withLock { if (closed) null else pageText(index).word(at) }
     }
 
     override fun linkAt(index: Int, x: Float, y: Float): String? {

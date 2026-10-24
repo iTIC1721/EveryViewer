@@ -20,6 +20,9 @@ import com.tabpdf.doc.Document
 import com.tabpdf.doc.FLOW_WIDTH
 import com.tabpdf.doc.FlowBlock
 import com.tabpdf.doc.Found
+import com.tabpdf.doc.PageText
+import com.tabpdf.doc.TextSelection
+import com.tabpdf.doc.TextSink
 import com.tabpdf.doc.PageSize
 import com.tabpdf.doc.SearchMatch
 import com.tabpdf.doc.TextSearch
@@ -112,6 +115,23 @@ class SlideDocument private constructor(
         }
     }
 
+    private val pageTexts = LruCache<Int, PageText>(6)
+
+    /** A slide's text, shape by shape in drawing order (as PowerPoint reads them out). */
+    private fun pageText(index: Int): PageText = pageTexts[index] ?: run {
+        val builder = PageText.Builder { RectF(it.left / FLOW_WIDTH, it.top / height, it.right / FLOW_WIDTH, it.bottom / height) }
+        for (item in pages[index].items) item.collectText(builder)
+        builder.build().also { pageTexts.put(index, it) }
+    }
+
+    override suspend fun selectText(index: Int, from: PointF, to: PointF): TextSelection? = withContext(Dispatchers.Default) {
+        mutex.withLock { if (closed) null else pageText(index).select(from, to) }
+    }
+
+    override suspend fun selectWord(index: Int, at: PointF): TextSelection? = withContext(Dispatchers.Default) {
+        mutex.withLock { if (closed) null else pageText(index).word(at) }
+    }
+
     override fun linkAt(index: Int, x: Float, y: Float): String? {
         val px = x * FLOW_WIDTH
         val py = y * height
@@ -164,6 +184,8 @@ private interface SlideItem {
     fun linkAt(x: Float, y: Float): String? = null
     /** Where the item's text has [query], in slide coordinates. */
     fun find(query: String): List<Found> = emptyList()
+    /** The item's characters with boxes in slide coordinates. */
+    fun collectText(sink: TextSink) = Unit
 }
 
 private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -337,8 +359,22 @@ private class ShapeItem(private val shape: ShapeOnSlide, private val f: RectF, p
 
     override fun find(query: String): List<Found> {
         val block = text ?: return emptyList()
-        // The same moves as drawing: into the text box, turned for vertical text, then the frame's rotation.
-        val m = Matrix().apply {
+        val m = toSlide()
+        return block.find(query).map { found -> found.map { RectF(it).also(m::mapRect) } }
+    }
+
+    override fun collectText(sink: TextSink) {
+        val block = text ?: return
+        val m = toSlide()
+        block.collectText(object : TextSink {
+            override fun char(c: Char, box: RectF) = sink.char(c, RectF(box).also(m::mapRect))
+            override fun endBlock() = sink.endBlock()
+        })
+    }
+
+    /** The same moves as drawing: into the text box, turned for vertical text, then the frame's rotation. */
+    private fun toSlide(): Matrix {
+        return Matrix().apply {
             setTranslate(textX, textY)
             when (shape.text?.direction) {
                 TextDirection.Down -> { postRotate(90f); postTranslate(f.width(), 0f) }
@@ -348,7 +384,6 @@ private class ShapeItem(private val shape: ShapeOnSlide, private val f: RectF, p
             postTranslate(f.left, f.top)
             if (shape.frame.rotation != 0f) postRotate(shape.frame.rotation, f.centerX(), f.centerY())
         }
-        return block.find(query).map { found -> found.map { RectF(it).also(m::mapRect) } }
     }
 
     override fun linkAt(x: Float, y: Float): String? {
@@ -407,6 +442,8 @@ private class BlockItem(private val block: FlowBlock, private val x: Float, priv
     }
 
     override fun find(query: String): List<Found> = block.find(query).map { it.offset(x, y) }
+
+    override fun collectText(sink: TextSink) = block.collectText(sink.offset(x, y))
 
     override fun linkAt(x: Float, y: Float): String? =
         if (x >= this.x && y >= this.y && y < this.y + block.height) block.linkAt(x - this.x, y - this.y) else null

@@ -64,11 +64,18 @@ object TextSearch {
             val b = min(end, lineEnd)
             val x1 = layout.getPrimaryHorizontal(a)
             val x2 = if (b >= lineEnd) layout.getLineRight(line) else layout.getPrimaryHorizontal(b)
-            val top = layout.getLineTop(line).toFloat()
-            val baseline = layout.getLineBaseline(line).toFloat()
-            // Lines may carry spacing below the text (line pitch over 1); keep the mark on the letters.
-            val bottom = min(layout.getLineBottom(line).toFloat(), baseline + (baseline - top) * 0.3f)
+            val (top, bottom) = lineBand(layout, line)
             RectF(min(x1, x2), top, max(x1, x2), bottom)
         }
+    }
+
+    /**
+     * Top and bottom of the letters of [line]. Lines may carry spacing below the text (line pitch
+     * over 1); marks and selections stay on the letters.
+     */
+    fun lineBand(layout: Layout, line: Int): Pair<Float, Float> {
+        val top = layout.getLineTop(line).toFloat()
+        val baseline = layout.getLineBaseline(line).toFloat()
+        return top to min(layout.getLineBottom(line).toFloat(), baseline + (baseline - top) * 0.3f)
     }
 }

@@ -3,7 +3,10 @@ package com.tabpdf.pdf
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.graphics.Point
+import android.graphics.PointF
 import android.graphics.RectF
+import android.graphics.pdf.models.selection.SelectionBoundary
 import android.graphics.pdf.PdfRenderer
 import android.graphics.pdf.PdfRendererPreV
 import android.os.Build
@@ -18,6 +21,7 @@ import com.tabpdf.doc.DocumentOpenException
 import com.tabpdf.doc.PageSize
 import com.tabpdf.doc.SearchMatch
 import com.tabpdf.doc.TextSearch
+import com.tabpdf.doc.TextSelection
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.ensureActive
@@ -100,6 +104,44 @@ class PdfDocument private constructor(
             PdfRendererPreV(file).also { searcher = it }
         }
         return r.openPage(index).use { page -> page.searchText(query).map { it.bounds } }
+    }
+
+    /** Selection with the platform's PDF text support, where it has it (as [search]). */
+    override suspend fun selectText(index: Int, from: PointF, to: PointF): TextSelection? = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            if (closed) return@withLock null
+            val size = pageSizes[index]
+            val start = Point((from.x * size.width).roundToInt(), (from.y * size.height).roundToInt())
+            val stop = Point((to.x * size.width).roundToInt(), (to.y * size.height).roundToInt())
+            val contents = when {
+                Build.VERSION.SDK_INT >= 35 -> selectOnPage(index, start, stop)
+                preVSearch -> selectOnPagePreV(index, start, stop)
+                else -> null
+            } ?: return@withLock null
+            val text = contents.joinToString("") { it.first }
+            if (text.isBlank()) return@withLock null
+            TextSelection(text, contents.flatMap { it.second }.map { RectF(it.left / size.width, it.top / size.height, it.right / size.width, it.bottom / size.height) })
+        }
+    }
+
+    /** The same point at both ends selects the word there. */
+    override suspend fun selectWord(index: Int, at: PointF): TextSelection? = selectText(index, at, at)
+
+    @RequiresApi(35)
+    private fun selectOnPage(index: Int, start: Point, stop: Point): List<Pair<String, List<RectF>>>? =
+        renderer.openPage(index).use { page ->
+            page.selectContent(SelectionBoundary(start), SelectionBoundary(stop))?.selectedTextContents?.map { it.text to it.bounds }
+        }
+
+    @RequiresExtension(extension = Build.VERSION_CODES.S, version = 13)
+    private fun selectOnPagePreV(index: Int, start: Point, stop: Point): List<Pair<String, List<RectF>>>? {
+        val r = (searcher as? PdfRendererPreV) ?: run {
+            val file = reopen() ?: return null
+            PdfRendererPreV(file).also { searcher = it }
+        }
+        return r.openPage(index).use { page ->
+            page.selectContent(SelectionBoundary(start), SelectionBoundary(stop))?.selectedTextContents?.map { it.text to it.bounds }
+        }
     }
 
     override suspend fun close() = withContext(NonCancellable + Dispatchers.IO) {
