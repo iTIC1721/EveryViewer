@@ -1,6 +1,9 @@
 package com.tabpdf.ui
 
+import android.content.ActivityNotFoundException
+import android.content.Intent
 import android.graphics.Bitmap
+import android.widget.Toast
 import android.net.Uri
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -207,6 +210,31 @@ private fun DocumentPages(
     }
     val currentOnTap by rememberUpdatedState(onTap)
     val currentOnStateChange by rememberUpdatedState(onStateChange)
+    val context = LocalContext.current
+
+    /** The web link under [position] (viewer coordinates), if the document has one there. */
+    fun linkAt(position: Offset): String? {
+        val info = listState.layoutInfo
+        // Item offsets are measured from the end of the top content padding, where viewportStartOffset is negative.
+        val item = info.visibleItemsInfo.firstOrNull {
+            val top = it.offset - info.viewportStartOffset
+            position.y >= top && position.y < top + it.size
+        } ?: return null
+        val top = item.offset - info.viewportStartOffset
+        val x = (position.x + panX) / (viewportWidth * zoom)
+        val y = (position.y - top) / item.size
+        return if (x in 0f..1f) document.linkAt(item.index, x, y) else null
+    }
+
+    /** A tap on a link opens it in the browser (기획서 5.7); any other tap shows or hides the bars. */
+    fun tap(position: Offset) {
+        val url = linkAt(position) ?: return currentOnTap()
+        try {
+            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        } catch (_: ActivityNotFoundException) {
+            Toast.makeText(context, "링크를 열 앱이 없습니다", Toast.LENGTH_SHORT).show()
+        }
+    }
 
     fun currentState(): ViewerState {
         val page = listState.firstVisibleItemIndex
@@ -335,7 +363,7 @@ private fun DocumentPages(
                                 lastTapPosition = position
                                 pendingTap = launch {
                                     delay(doubleTapTimeout)
-                                    currentOnTap()
+                                    tap(position)
                                 }
                             }
                         }
