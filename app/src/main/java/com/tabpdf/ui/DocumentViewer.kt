@@ -428,7 +428,9 @@ private fun OpenFailure(error: Exception, onRelocate: () -> Unit, onClose: () ->
         reason == DocumentOpenException.Reason.PasswordProtected ->
             "암호가 걸린 PDF입니다" to "암호 PDF는 아직 지원하지 않습니다."
         reason == DocumentOpenException.Reason.NoPages -> "빈 PDF입니다" to "페이지가 하나도 없습니다."
-        else -> "PDF를 열 수 없습니다" to "손상되었거나 지원하지 않는 파일입니다."
+        reason == DocumentOpenException.Reason.Unsupported -> "이 형식은 열 수 없습니다" to "아직 지원하지 않는 파일 형식입니다."
+        reason == DocumentOpenException.Reason.TooLarge -> "파일이 너무 큽니다" to "텍스트 파일은 16MB까지 열 수 있습니다."
+        else -> "파일을 열 수 없습니다" to "손상되었거나 지원하지 않는 파일입니다."
     }
     Column(modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         Text(title, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
