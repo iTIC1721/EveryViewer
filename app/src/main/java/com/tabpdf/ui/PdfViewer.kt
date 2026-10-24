@@ -62,6 +62,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import com.tabpdf.pdf.PdfDocument
+import com.tabpdf.pdf.PdfOpenException
 import com.tabpdf.tabs.ViewerState
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
@@ -381,23 +382,26 @@ private fun IntSize.toSize() = androidx.compose.ui.geometry.Size(width.toFloat()
 /** Missing or unreadable file: say so and offer to find it again or close the tab (기획서 5.3). */
 @Composable
 private fun OpenFailure(error: Exception, onRelocate: () -> Unit, onClose: () -> Unit, modifier: Modifier) {
+    // A SecurityException here comes from opening the file (access lost), not from PdfRenderer —
+    // PdfDocument turns the renderer's one into PasswordProtected.
     val missing = error is FileNotFoundException || error is SecurityException
+    val reason = (error as? PdfOpenException)?.reason
+    val (title, detail) = when {
+        missing -> "파일을 찾을 수 없습니다" to "이동되었거나 삭제되었을 수 있습니다."
+        reason == PdfOpenException.Reason.PasswordProtected ->
+            "암호가 걸린 PDF입니다" to "암호 PDF는 아직 지원하지 않습니다."
+        reason == PdfOpenException.Reason.NoPages -> "빈 PDF입니다" to "페이지가 하나도 없습니다."
+        else -> "PDF를 열 수 없습니다" to "손상되었거나 지원하지 않는 파일입니다."
+    }
     Column(modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(
-            if (missing) "파일을 찾을 수 없습니다" else "PDF를 열 수 없습니다",
-            style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        Text(title, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(4.dp))
-        Text(
-            if (missing) "이동되었거나 삭제되었을 수 있습니다." else "손상되었거나 지원하지 않는 파일입니다.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        Text(detail, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(16.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(onClick = onClose) { Text("탭 닫기") }
-            Button(onClick = onRelocate) { Text("다시 찾기") }
+            // Finding the file again only helps when it went missing.
+            if (missing) Button(onClick = onRelocate) { Text("다시 찾기") }
         }
     }
 }

@@ -590,11 +590,17 @@ private fun CloseBadge(description: String, onClick: () -> Unit, modifier: Modif
 @Composable
 private fun Thumbnail(tab: PdfTab, page: Int, modifier: Modifier) {
     val context = LocalContext.current
-    val bitmap by produceState<Bitmap?>(null, tab.id, tab.uri, page) {
-        value = Thumbnails.load(context.applicationContext, tab.id, tab.uri, page)
+    // null while loading; a failed load (missing or unreadable file) gives Result.failure.
+    val result by produceState<Result<Bitmap>?>(null, tab.id, tab.uri, page) {
+        val bitmap = Thumbnails.load(context.applicationContext, tab.id, tab.uri, page)
+        value = if (bitmap != null) Result.success(bitmap) else Result.failure(IllegalStateException())
     }
-    val image = remember(bitmap) { bitmap?.asImageBitmap() }
-    if (image != null) {
-        Image(image, contentDescription = null, modifier, contentScale = ContentScale.Crop, alignment = Alignment.TopCenter)
+    val image = remember(result) { result?.getOrNull()?.asImageBitmap() }
+    when {
+        image != null ->
+            Image(image, contentDescription = null, modifier, contentScale = ContentScale.Crop, alignment = Alignment.TopCenter)
+        result?.isFailure == true -> Box(modifier, contentAlignment = Alignment.Center) {
+            Text("열 수 없음", style = MaterialTheme.typography.labelMedium, color = Color.Gray)
+        }
     }
 }
