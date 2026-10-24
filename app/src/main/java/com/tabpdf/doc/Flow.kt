@@ -75,8 +75,12 @@ class Placed(val block: FlowBlock, val x: Float, val y: Float) {
 /** Stacks blocks top to bottom. */
 class FlowBuilder {
     private val placed = mutableListOf<Placed>()
+    private val forced = mutableListOf<Float>()
     var y = 0f
         private set
+
+    /** What has been stacked so far. */
+    val blocks: List<Placed> get() = placed
 
     fun add(block: FlowBlock, x: Float = 0f) {
         placed += Placed(block, x, y)
@@ -87,33 +91,45 @@ class FlowBuilder {
         y += height
     }
 
+    /** The next block starts a new page (a page break in the document). */
+    fun pageBreak() {
+        if (y > 0f && forced.lastOrNull() != y) forced += y
+    }
+
+    /** Every place a page may end: between blocks, or between lines or rows inside one. */
+    fun breaks(): FloatArray = buildList {
+        for (p in placed) {
+            add(p.y)
+            p.block.breaks.forEach { add(p.y + it) }
+            add(p.bottom)
+        }
+    }.distinct().sorted().toFloatArray()
+
+    fun pageBreaks(): FloatArray = forced.toFloatArray()
+
     /**
      * The finished document, cut into pages of at most [maxPageHeight] at the nearest place a
      * page may end: between blocks or between lines.
      */
-    fun build(maxPageHeight: Float, pageGaps: Boolean): FlowDocument {
-        val breaks = buildList {
-            for (p in placed) {
-                add(p.y)
-                p.block.breaks.forEach { add(p.y + it) }
-                add(p.bottom)
-            }
-        }.distinct().sorted().toFloatArray()
-        return FlowDocument(placed.toList(), paginate(y, breaks, maxPageHeight), pageGaps)
-    }
+    fun build(maxPageHeight: Float, pageGaps: Boolean): FlowDocument =
+        FlowDocument(placed.toList(), paginate(y, breaks(), maxPageHeight, pageBreaks()), pageGaps)
 }
 
 /**
  * Page boundaries for content [total] tall: 0, then each page's end, ending at [total]. A page
- * ends at the last allowed break no lower than [maxPage] below its top, preferring one that keeps
- * it at least half full; content with no break in reach is cut at [maxPage].
+ * ends at a [forced] break (page break) if one comes within [maxPage]; otherwise at the last
+ * allowed break no lower than [maxPage] below its top, preferring one that keeps it at least half
+ * full; content with no break in reach is cut at [maxPage].
  */
-fun paginate(total: Float, breaks: FloatArray, maxPage: Float): FloatArray {
+fun paginate(total: Float, breaks: FloatArray, maxPage: Float, forced: FloatArray = FloatArray(0)): FloatArray {
     val result = mutableListOf(0f)
     var top = 0f
-    while (total - top > maxPage) {
+    while (true) {
         val limit = top + maxPage
-        val end = lastBreakIn(breaks, top + maxPage / 2, limit)
+        val pageBreak = forced.firstOrNull { it > top + 0.5f && it <= limit && it < total }
+        if (pageBreak == null && total - top <= maxPage) break
+        val end = pageBreak
+            ?: lastBreakIn(breaks, top + maxPage / 2, limit)
             ?: lastBreakIn(breaks, top, limit)
             ?: limit
         result += end

@@ -11,6 +11,8 @@ enum class FileFormat(val key: String) {
     Text("text"),
     Markdown("markdown"),
     Image("image"),
+    Docx("docx"),
+    Hwpx("hwpx"),
     /** Nothing we can show. Detected again on every open, so a later version can take it over. */
     Unsupported("unsupported");
 
@@ -28,7 +30,7 @@ object FileFormats {
 
     /** Known to be something else than text, even if the bytes happen to look like it. */
     private val binaryExtensions = setOf(
-        "docx", "pptx", "xlsx", "hwpx", "hwp", "doc", "ppt", "xls", "odt", "odp", "ods", "epub",
+        "pptx", "xlsx", "hwp", "doc", "ppt", "xls", "odt", "odp", "ods", "epub",
         "zip", "apk", "rar", "7z", "gz", "mp3", "mp4", "m4a", "mov", "avi", "mkv",
     )
 
@@ -62,6 +64,8 @@ object FileFormats {
             "pdf" -> return FileFormat.Pdf
             in markdownExtensions -> return FileFormat.Markdown
             in imageExtensions -> return FileFormat.Image
+            "docx", "docm", "dotx" -> return FileFormat.Docx
+            "hwpx" -> return FileFormat.Hwpx
             in binaryExtensions -> return FileFormat.Unsupported
         }
         val type = mime?.lowercase()
@@ -69,6 +73,8 @@ object FileFormats {
             type == "application/pdf" -> return FileFormat.Pdf
             type == "text/markdown" || type == "text/x-markdown" -> return FileFormat.Markdown
             type != null && type.startsWith("image/") -> return FileFormat.Image
+            type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document" -> return FileFormat.Docx
+            type in setOf("application/hwp+zip", "application/haansofthwpx", "application/vnd.hancom.hwpx") -> return FileFormat.Hwpx
         }
         return if (TextDecoding.looksLikeText(head)) FileFormat.Text else FileFormat.Unsupported
     }
