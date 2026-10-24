@@ -7,7 +7,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
@@ -22,7 +21,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
@@ -43,16 +41,22 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.tabpdf.tabs.PdfTab
 import com.tabpdf.tabs.TabsViewModel
+import kotlin.math.abs
+import kotlin.math.roundToInt
 
 private val TOP_BAR_HEIGHT = 56.dp
 
@@ -125,26 +129,49 @@ private fun TopBar(
     onSelectTab: (Int) -> Unit,
     onCloseTab: (PdfTab) -> Unit,
 ) {
-    val current = tabs.getOrNull(pagerState.currentPage)
     Surface(color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f), tonalElevation = 2.dp) {
-        Column(Modifier.fillMaxWidth().statusBarsPadding()) {
-            Row(
-                Modifier.fillMaxWidth().height(TOP_BAR_HEIGHT - 3.dp).padding(start = 16.dp, end = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .statusBarsPadding()
+                .height(TOP_BAR_HEIGHT)
+                .padding(start = 16.dp, end = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            TitleStrip(tabs, pagerState, Modifier.weight(1f))
+            IconButton(onClick = onOpenFiles) {
+                Icon(Icons.Default.Add, contentDescription = "PDF 열기")
+            }
+            TabCountButton(tabs, pagerState.currentPage, onSelectTab, onCloseTab)
+        }
+    }
+}
+
+/**
+ * File names of the current tab and its neighbours, sliding with the pager: while swiping, the
+ * current name moves out with the finger and the next one comes in, fading by distance.
+ */
+@Composable
+private fun TitleStrip(tabs: List<PdfTab>, pagerState: PagerState, modifier: Modifier) {
+    BoxWithConstraints(modifier.fillMaxHeight().clipToBounds(), contentAlignment = Alignment.CenterStart) {
+        val width = constraints.maxWidth.toFloat()
+        val center = pagerState.currentPage
+        for (page in (center - 1)..(center + 1)) {
+            val tab = tabs.getOrNull(page) ?: continue
+            // Distance from the pager's live position, in pages: 0 = settled here, ±1 = a full swipe away.
+            fun distance() = page - (pagerState.currentPage + pagerState.currentPageOffsetFraction)
+            key(tab.id) {
                 Text(
-                    current?.name.orEmpty(),
-                    Modifier.weight(1f),
+                    tab.name,
+                    Modifier
+                        .fillMaxWidth()
+                        .offset { IntOffset((distance() * width).roundToInt(), 0) }
+                        .graphicsLayer { alpha = (1f - abs(distance())).coerceIn(0f, 1f) },
                     style = MaterialTheme.typography.titleMedium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                IconButton(onClick = onOpenFiles) {
-                    Icon(Icons.Default.Add, contentDescription = "PDF 열기")
-                }
-                TabCountButton(tabs, pagerState.currentPage, onSelectTab, onCloseTab)
             }
-            TabIndicator(pagerState, tabs.size)
         }
     }
 }
@@ -191,23 +218,5 @@ private fun TabCountButton(
                 )
             }
         }
-    }
-}
-
-/** A thin track with a segment that follows the pager, so position reads at a glance for any tab count. */
-@Composable
-private fun TabIndicator(pagerState: PagerState, count: Int) {
-    BoxWithConstraints(Modifier.fillMaxWidth().height(3.dp)) {
-        if (count <= 1) return@BoxWithConstraints
-        val segment = maxWidth / count
-        val position = (pagerState.currentPage + pagerState.currentPageOffsetFraction)
-            .coerceIn(0f, (count - 1).toFloat())
-        Box(
-            Modifier
-                .offset(x = segment * position)
-                .width(segment)
-                .fillMaxHeight()
-                .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(2.dp))
-        )
     }
 }
