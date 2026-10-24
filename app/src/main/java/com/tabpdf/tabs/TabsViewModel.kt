@@ -119,7 +119,7 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
         s.group(groupId)?.displayName(s.tabsOf(groupId).size).orEmpty()
 
     private fun newTab(file: OpenedFile, groupId: String?) =
-        DocTab(UUID.randomUUID().toString(), groupId, file.uri, file.name, file.isInternalCopy)
+        DocTab(UUID.randomUUID().toString(), groupId, file.uri, file.name, file.isInternalCopy, file.format)
 
     private fun showNextDuplicate() {
         if (_duplicatePrompt.value == null) _duplicatePrompt.value = pendingDuplicates.removeFirstOrNull()
@@ -267,7 +267,10 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         // Bumping the revision makes the viewer retry even when the same location was picked again.
-        val updated = old.copy(uri = file.uri, name = file.name, isInternalCopy = file.isInternalCopy, revision = old.revision + 1)
+        val updated = old.copy(
+            uri = file.uri, name = file.name, isInternalCopy = file.isInternalCopy, format = file.format,
+            revision = old.revision + 1,
+        )
         commit(s.replaceTab(updated))
         app.enqueueWrite { if (!repository.isUriInUse(old.uri)) FileAccess.release(app, old) }
     }

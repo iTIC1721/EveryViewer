@@ -129,13 +129,13 @@ class MainActivity : ComponentActivity() {
 
     /**
      * Debug builds only: `adb shell am start -n com.tabpdf/.MainActivity --ez debug_open_test_files true`
-     * opens every PDF in the app's internal files dir (copy them in with `adb shell run-as com.tabpdf`).
+     * opens every file in the app's internal files dir (copy them in with `adb shell run-as com.tabpdf`).
      * Lets gestures be tested on an emulator without driving the system file picker.
      */
     private fun openDebugTestFiles() {
         val debuggable = applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
         if (!debuggable || !intent.getBooleanExtra("debug_open_test_files", false)) return
-        val files = filesDir.listFiles { f -> f.extension.equals("pdf", true) }.orEmpty()
-        tabsViewModel.open(files.sortedBy { it.name }.map { OpenedFile(Uri.fromFile(it), it.name, isInternalCopy = false) }, groupId = null)
+        val files = filesDir.listFiles { f -> f.isFile }.orEmpty().sortedBy { it.name }
+        prepare(files.map { Uri.fromFile(it) }) { tabsViewModel.open(it, groupId = null) }
     }
 }

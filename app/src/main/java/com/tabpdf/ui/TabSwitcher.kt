@@ -592,7 +592,7 @@ private fun Thumbnail(tab: DocTab, page: Int, modifier: Modifier) {
     val context = LocalContext.current
     // null while loading; a failed load (missing or unreadable file) gives Result.failure.
     val result by produceState<Result<Bitmap>?>(null, tab.id, tab.uri, page) {
-        val bitmap = Thumbnails.load(context.applicationContext, tab.id, tab.uri, page)
+        val bitmap = Thumbnails.load(context.applicationContext, tab, page)
         value = if (bitmap != null) Result.success(bitmap) else Result.failure(IllegalStateException())
     }
     val image = remember(result) { result?.getOrNull()?.asImageBitmap() }

@@ -1,6 +1,7 @@
 package com.tabpdf.tabs
 
 import android.net.Uri
+import com.tabpdf.doc.FileFormat
 
 /** An entry of the top-level list in the tab switcher: an ungrouped tab or a group. */
 sealed interface TopItem {
@@ -14,6 +15,7 @@ data class DocTab(
     val uri: Uri,
     val name: String,
     val isInternalCopy: Boolean,
+    val format: FileFormat,
     /** Bumped when the tab's file is replaced; not persisted. */
     val revision: Int = 0,
 ) : TopItem

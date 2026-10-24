@@ -69,6 +69,7 @@ import androidx.compose.ui.unit.dp
 import com.tabpdf.doc.Document
 import com.tabpdf.doc.DocumentOpenException
 import com.tabpdf.doc.Documents
+import com.tabpdf.doc.FileFormat
 import com.tabpdf.tabs.PageJump
 import com.tabpdf.tabs.ViewerState
 import kotlinx.coroutines.CancellationException
@@ -107,6 +108,8 @@ private const val FAST_SCROLL_MIN_PAGES = 8
 @Composable
 fun DocumentViewer(
     uri: Uri,
+    name: String,
+    format: FileFormat,
     /** Changing this reopens the file even if [uri] is the same (after "다시 찾기"). */
     revision: Int,
     initialState: ViewerState,
@@ -126,11 +129,11 @@ fun DocumentViewer(
     var error by remember { mutableStateOf<Exception?>(null) }
     val currentOnDocumentOpened by rememberUpdatedState(onDocumentOpened)
 
-    LaunchedEffect(uri, revision) {
+    LaunchedEffect(uri, revision, format) {
         error = null
         val doc = try {
             // Not cancellable, so a document opened just as the page leaves is still closed below.
-            withContext(NonCancellable) { Documents.open(context, uri) }
+            withContext(NonCancellable) { Documents.open(context, uri, name, format) }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {

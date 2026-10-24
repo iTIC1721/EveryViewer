@@ -224,6 +224,8 @@ private fun ContextPager(
                 val tab = tabs[page]
                 DocumentViewer(
                     uri = tab.uri,
+                    name = tab.name,
+                    format = tab.format,
                     revision = tab.revision,
                     initialState = viewModel.viewerState(tab.id),
                     onStateChange = { viewModel.updateViewerState(tab.id, it) },

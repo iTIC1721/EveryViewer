@@ -1,6 +1,7 @@
 package com.tabpdf.data
 
 import android.net.Uri
+import com.tabpdf.doc.FileFormat
 import com.tabpdf.tabs.DocTab
 import com.tabpdf.tabs.SessionState
 import com.tabpdf.tabs.TabGroup
@@ -54,8 +55,8 @@ class SessionRepository(private val dao: SessionDao) {
 
     suspend fun saveViewerStates(states: Map<String, ViewerState>) = dao.updateViewerStates(states)
 
-    private fun TabEntity.toTab() = DocTab(id, groupId, Uri.parse(uri), displayName, isInternalCopy)
+    private fun TabEntity.toTab() = DocTab(id, groupId, Uri.parse(uri), displayName, isInternalCopy, FileFormat.fromKey(format))
 
     private fun DocTab.placement(position: Int) =
-        TabPlacement(id, groupId, position, uri.toString(), isInternalCopy, name)
+        TabPlacement(id, groupId, position, uri.toString(), isInternalCopy, name, format.key)
 }

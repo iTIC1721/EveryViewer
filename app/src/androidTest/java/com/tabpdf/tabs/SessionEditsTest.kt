@@ -1,5 +1,6 @@
 package com.tabpdf.tabs
 
+import com.tabpdf.doc.FileFormat
 import android.net.Uri
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Assert.assertEquals
@@ -11,7 +12,7 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class SessionEditsTest {
     private fun tab(id: String, groupId: String? = null) =
-        DocTab(id, groupId, Uri.parse("content://test/$id"), "$id.pdf", isInternalCopy = false)
+        DocTab(id, groupId, Uri.parse("content://test/$id"), "$id.pdf", isInternalCopy = false, FileFormat.Pdf)
 
     private fun group(id: String, color: Int = 0) = TabGroup(id, "", color)
 

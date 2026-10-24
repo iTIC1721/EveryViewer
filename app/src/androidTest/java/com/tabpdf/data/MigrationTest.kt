@@ -1,5 +1,6 @@
 package com.tabpdf.data
 
+import com.tabpdf.doc.FileFormat
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.net.Uri
@@ -16,8 +17,8 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 /**
- * v1 → v2 (MIGRATION_1_2) on a database written with the v1 schema exactly as Room exported it
- * (app/schemas/.../1.json).
+ * Migrations on databases written with an old schema exactly as Room exported it
+ * (app/schemas/.../1.json, 2.json), then opened at the current version.
  */
 @RunWith(AndroidJUnit4::class)
 class MigrationTest {
@@ -58,8 +59,31 @@ class MigrationTest {
             arrayOf<Any>(id, groupId, position, "content://test/$id", "$id.pdf", page),
         )
 
-    private fun loadV2() = runBlocking {
-        val db = Room.databaseBuilder(context, AppDatabase::class.java, name).addMigrations(MIGRATION_1_2).build()
+    private fun writeV2(fill: SQLiteDatabase.() -> Unit) {
+        context.deleteDatabase(name)
+        val db = SQLiteDatabase.openOrCreateDatabase(context.getDatabasePath(name), null)
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS `tab_groups` (`id` TEXT NOT NULL, `name` TEXT NOT NULL, " +
+                "`color` INTEGER NOT NULL, `position` INTEGER NOT NULL, PRIMARY KEY(`id`))"
+        )
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS `tabs` (`id` TEXT NOT NULL, `groupId` TEXT, `position` INTEGER NOT NULL, " +
+                "`uri` TEXT NOT NULL, `isInternalCopy` INTEGER NOT NULL, `displayName` TEXT NOT NULL, " +
+                "`page` INTEGER NOT NULL, `pageOffset` REAL NOT NULL, `zoom` REAL NOT NULL, `panX` REAL NOT NULL, " +
+                "`lastOpenedAt` INTEGER NOT NULL, PRIMARY KEY(`id`), FOREIGN KEY(`groupId`) " +
+                "REFERENCES `tab_groups`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )"
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_tabs_groupId` ON `tabs` (`groupId`)")
+        db.execSQL("CREATE TABLE IF NOT EXISTS `app_state` (`id` INTEGER NOT NULL, `currentTabId` TEXT, PRIMARY KEY(`id`))")
+        db.fill()
+        db.version = 2
+        db.close()
+    }
+
+    private fun load() = runBlocking {
+        val db = Room.databaseBuilder(context, AppDatabase::class.java, name)
+            .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+            .build()
         try {
             SessionRepository(db.sessionDao()).load()
         } finally {
@@ -68,7 +92,7 @@ class MigrationTest {
     }
 
     private fun tab(id: String, groupId: String? = null) =
-        DocTab(id, groupId, Uri.parse("content://test/$id"), "$id.pdf", isInternalCopy = false)
+        DocTab(id, groupId, Uri.parse("content://test/$id"), "$id.pdf", isInternalCopy = false, FileFormat.Pdf)
 
     @Test
     fun defaultGroupBecomesUngroupedTabsAndOtherGroupsStay() {
@@ -80,7 +104,7 @@ class MigrationTest {
             tab("t3", "s", position = 0)
             execSQL("INSERT INTO app_state VALUES (0, 'd')")
         }
-        val (state, states) = loadV2()
+        val (state, states) = load()
         assertEquals(listOf(tab("t1"), tab("t2"), TabGroup("s", "Study", 2)), state.top)
         assertEquals(mapOf("s" to listOf(tab("t3", "s"))), state.groupTabs)
         // The active group's last tab becomes the current tab.
@@ -100,8 +124,23 @@ class MigrationTest {
             tab("t4", "e", position = 0)
             execSQL("INSERT INTO app_state VALUES (0, 's')")
         }
-        val (state, _) = loadV2()
+        val (state, _) = load()
         assertEquals(listOf(TabGroup("s", "Study", 2), tab("t1"), TabGroup("e", "Exam", 4)), state.top)
         assertEquals(null, state.currentTabId) // Study had no remembered tab
+    }
+
+    @Test
+    fun v2TabsBecomePdfTabsWithEverythingElseKept() {
+        writeV2 {
+            execSQL("INSERT INTO tab_groups VALUES ('g', 'Study', 3, 1)")
+            execSQL("INSERT INTO tabs VALUES ('a', NULL, 0, 'content://test/a', 0, 'a.pdf', 4, 0.5, 2.0, 0.2, 0)")
+            execSQL("INSERT INTO tabs VALUES ('b', 'g', 0, 'content://test/b', 0, 'b.pdf', 0, 0, 1, 0, 0)")
+            execSQL("INSERT INTO app_state VALUES (0, 'b')")
+        }
+        val (state, states) = load()
+        assertEquals(listOf(tab("a"), TabGroup("g", "Study", 3)), state.top)
+        assertEquals(mapOf("g" to listOf(tab("b", "g"))), state.groupTabs)
+        assertEquals("b", state.currentTabId)
+        assertEquals(ViewerState(page = 4, pageOffset = 0.5f, zoom = 2f, panX = 0.2f), states["a"])
     }
 }

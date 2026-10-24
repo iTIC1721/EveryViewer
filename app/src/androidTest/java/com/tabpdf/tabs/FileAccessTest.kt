@@ -1,6 +1,7 @@
 package com.tabpdf.tabs
 
 import android.net.Uri
+import com.tabpdf.doc.FileFormat
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import kotlinx.coroutines.runBlocking
@@ -30,12 +31,13 @@ class FileAccessTest {
 
         assertTrue(opened.isInternalCopy)
         assertEquals("shared.pdf", opened.name)
+        assertEquals(FileFormat.Pdf, opened.format)
         val copy = File(opened.uri.path!!)
         assertTrue(copy.path.startsWith(appContext.filesDir.path))
         val original = testContext.assets.open(TestPdfProvider.ASSET).use { it.readBytes() }
         assertArrayEquals(original, copy.readBytes())
 
-        FileAccess.release(appContext, DocTab("t", null, opened.uri, opened.name, opened.isInternalCopy))
+        FileAccess.release(appContext, DocTab("t", null, opened.uri, opened.name, opened.isInternalCopy, opened.format))
         assertFalse(copy.exists())
     }
 }
