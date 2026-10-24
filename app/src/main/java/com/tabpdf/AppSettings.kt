@@ -16,6 +16,13 @@ enum class FingerDrawing(val key: String) {
     Never("never"),
 }
 
+/** App colours (기획서 5.6): the system's light/dark setting, or always one of them. */
+enum class ThemeMode(val key: String) {
+    System("system"),
+    Light("light"),
+    Dark("dark"),
+}
+
 /** User preferences (기획서 5.6). Kept apart from the tab session; small enough for SharedPreferences. */
 class AppSettings(context: Context) {
     private val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
@@ -26,6 +33,16 @@ class AppSettings(context: Context) {
     fun setKeepScreenOn(on: Boolean) {
         _keepScreenOn.value = on
         prefs.edit().putBoolean(KEEP_SCREEN_ON, on).apply()
+    }
+
+    private val _theme = MutableStateFlow(
+        ThemeMode.entries.firstOrNull { it.key == prefs.getString(THEME, null) } ?: ThemeMode.System
+    )
+    val theme: StateFlow<ThemeMode> = _theme.asStateFlow()
+
+    fun setTheme(mode: ThemeMode) {
+        _theme.value = mode
+        prefs.edit().putString(THEME, mode.key).apply()
     }
 
     // ---- Handwriting (기획서 5.8) ----
@@ -103,6 +120,7 @@ class AppSettings(context: Context) {
 
     private companion object {
         const val KEEP_SCREEN_ON = "keep_screen_on"
+        const val THEME = "theme"
         const val INK_TOOL = "ink_tool"
         const val FINGER_DRAWING = "ink_finger_drawing"
         const val STYLUS_SEEN = "ink_stylus_seen"

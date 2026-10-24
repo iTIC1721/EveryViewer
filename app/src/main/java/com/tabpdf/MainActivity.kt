@@ -17,6 +17,11 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.ui.platform.LocalView
+import androidx.core.view.WindowCompat
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.getValue
@@ -49,7 +54,23 @@ class MainActivity : ComponentActivity() {
         val inkSurface = InkSurface(this)
         setContent {
             CompositionLocalProvider(LocalInkSurface provides inkSurface) {
-            MaterialTheme(colorScheme = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()) {
+            val theme by tabsViewModel.settings.theme.collectAsState()
+            val dark = when (theme) {
+                ThemeMode.System -> isSystemInDarkTheme()
+                ThemeMode.Light -> false
+                ThemeMode.Dark -> true
+            }
+            // Status and navigation bar icons follow the app's colours, not only the system's.
+            val view = LocalView.current
+            SideEffect {
+                WindowCompat.getInsetsController(window, view).apply {
+                    isAppearanceLightStatusBars = !dark
+                    isAppearanceLightNavigationBars = !dark
+                }
+            }
+            MaterialTheme(colorScheme = if (dark) darkColorScheme() else lightColorScheme()) {
+            // Gives text and icons outside any other Surface the theme's colour instead of black.
+            Surface(color = MaterialTheme.colorScheme.background) {
                 // Group the picked files go into (null: ungrouped); saved across the picker round trip.
                 var openingIntoGroup by rememberSaveable { mutableStateOf<String?>(null) }
                 val openFiles = rememberLauncherForActivityResult(
@@ -80,6 +101,7 @@ class MainActivity : ComponentActivity() {
                         relocate.launch(arrayOf(ANY_MIME))
                     },
                 )
+            }
             }
             }
         }
