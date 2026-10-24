@@ -35,11 +35,11 @@ Git 작업(브랜치, 커밋, 머지, 태그) 전에는 반드시 `git-workflow`
 에뮬레이터의 시스템 파일 선택기는 adb 입력으로 파일을 고를 수 없으므로, 디버그 빌드 전용 훅으로 PDF를 연다.
 
 ```bash
-# 1. 테스트 PDF를 앱 내부 저장소로 복사 (Git Bash; 파일마다)
+# 1. 테스트 파일을 앱 내부 저장소로 복사 (Git Bash; 파일마다, 형식은 무엇이든)
 #    새로 설치한 직후에는 files/ 폴더가 없으므로 먼저 만든다
 adb shell run-as com.tabpdf mkdir -p files
 adb exec-in run-as com.tabpdf sh -c "cat > files/Sample.pdf" < Sample.pdf
-# 2. files/의 PDF를 모두 탭으로 열며 실행
+# 2. files/의 파일을 모두 탭으로 열며 실행
 adb shell am start -n com.tabpdf/.MainActivity --ez debug_open_test_files true
 ```
 
@@ -49,6 +49,8 @@ adb shell am start -n com.tabpdf/.MainActivity --ez debug_open_test_files true
 - 버튼·메뉴는 좌표 대신 `uiautomator dump`로 텍스트나 content-desc의 bounds를 찾아 누른다 (화면 캡처는 축소본이라 좌표 환산이 틀리기 쉽다). 아이콘 버튼에는 화면 낭독기용 설명을 꼭 단다 — 테스트에서도 그것으로 찾는다.
 - 다른 앱에서 열기·공유 확인: 테스트 APK를 설치(`installDebugAndroidTest`)하면 그 안의 `TestPdfProvider`가 보내는 앱 역할을 한다.
   `adb shell am start -a android.intent.action.SEND -t application/pdf --eu android.intent.extra.STREAM content://com.tabpdf.test.pdfs/shared.pdf -n com.tabpdf/.MainActivity`
+- 파일 없이 글만 공유하는 경우: `adb shell am start -a android.intent.action.SEND -t text/plain --es android.intent.extra.TEXT "'공유할 글'" -n com.tabpdf/.MainActivity`
+- 테스트 파일은 경로가 짧은 곳(예: `%TEMP%\evtest`)에서 만든다. 세션 임시 폴더는 경로가 길어 Windows 프로그램(python 등)이 실행되지 않는다.
 - adb `input` 명령은 하나에 수백 ms가 걸려 실제 손가락보다 훨씬 느리다. 끌기처럼 시간에 민감한 제스처는 한 번의 `adb shell "..."` 안에 이어서 보낸다.
 - 닫기 후 실행 취소 스낵바는 약 10초. 스크립트로 확인할 때는 닫기와 실행 취소를 한 번에 보낸다.
 - Git Bash에서 adb 경로 인자(`/sdcard/...`)가 Windows 경로로 바뀌지 않게 `MSYS_NO_PATHCONV=1`을 설정한다.
@@ -60,9 +62,11 @@ app/src/main/java/com/tabpdf/
   TabPdfApp.kt           Application: DB 저장소, 순서 보장 DB 쓰기 큐
   MainActivity.kt        진입점, 파일 선택기, onStop 시 저장
   data/                  Room (그룹·탭·앱 상태), SessionRepository
-  pdf/                   PdfRenderer 래퍼 (렌더링 스레드 안전 처리), 탭 전환 화면 썸네일
+  doc/                   형식과 무관한 Document 인터페이스, 형식 판별(FileFormat), 형식별 여는 곳(Documents),
+                         흐르는 문서 조판·페이지 나누기(Flow), 텍스트·마크다운·이미지 문서, 인코딩 판별, 썸네일
+  pdf/                   PdfRenderer 래퍼 (렌더링 스레드 안전 처리)
   tabs/                  탭·그룹 구조(Session.kt), ViewModel, 읽던 위치, 파일 접근 권한·복사본 관리
-  ui/                    화면: 뷰어·스와이프 범위별 페이저·상단 바(TabsScreen), 탭 전환 화면·그룹 패널(TabSwitcher),
+  ui/                    화면: 뷰어(DocumentViewer)·스와이프 범위별 페이저·상단 바(TabsScreen), 탭 전환 화면·그룹 패널(TabSwitcher),
                          대화상자, 카드 목록 제스처(ItemGestures)
 app/schemas/             Room 스키마 (DB 버전마다 커밋)
 ```
