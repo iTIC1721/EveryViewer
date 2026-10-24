@@ -571,7 +571,7 @@ fun fontKind(name: String): FontKind {
     val n = name.lowercase()
     return when {
         listOf("courier", "consolas", "mono", "d2coding", "lucida console", "고정폭").any { it in n } -> FontKind.Mono
-        listOf("바탕", "batang", "명조", "myeongjo", "궁서", "gungsuh", "times", "georgia", "serif", "cambria", "garamond", "신명").any { it in n } &&
+        listOf("바탕", "batang", "명조", "myeongjo", "궁서", "gungsuh", "times", "georgia", "serif", "cambria", "garamond", "cooper", "신명").any { it in n } &&
             "sans" !in n -> FontKind.Serif
         else -> FontKind.Sans
     }

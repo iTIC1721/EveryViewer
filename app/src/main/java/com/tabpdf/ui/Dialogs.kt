@@ -259,5 +259,6 @@ val FileFormat.label: String
         FileFormat.Image -> "이미지"
         FileFormat.Docx -> "Word 문서"
         FileFormat.Hwpx -> "한글 문서"
+        FileFormat.Pptx -> "PowerPoint 프레젠테이션"
         FileFormat.Unsupported -> "지원하지 않는 형식"
     }

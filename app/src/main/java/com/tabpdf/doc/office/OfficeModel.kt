@@ -47,6 +47,11 @@ class Paragraph(
     val keepWords: Boolean = true,
     /** Text put before the first line (a list's bullet or number). */
     val label: Run? = null,
+    /**
+     * The label fills the hanging indent, so the text starts at [indentLeft] (PowerPoint's
+     * bullets); otherwise it is followed by a space.
+     */
+    val labelInHang: Boolean = false,
     /** Style of the paragraph mark: sets the height of an empty paragraph. */
     val markStyle: TextStyle? = null,
 ) : OfficeBlock

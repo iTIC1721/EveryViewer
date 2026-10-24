@@ -1,6 +1,6 @@
 # EveryViewer
 
-![version](https://img.shields.io/badge/version-0.7.0-blue)
+![version](https://img.shields.io/badge/version-0.8.0-blue)
 ![minSdk](https://img.shields.io/badge/Android-8.0%2B%20(API%2026)-3DDC84?logo=android&logoColor=white)
 ![Kotlin](https://img.shields.io/badge/Kotlin-Jetpack%20Compose-7F52FF?logo=kotlin&logoColor=white)
 
@@ -37,9 +37,9 @@
 | 이미지 | jpg, png, webp, gif, bmp, heic | 사진 회전 정보 반영 |
 | Word | docx | 문단·글자 모양, 표(병합·테두리·음영), 그림, 머리글/바닥글 |
 | 한글 | hwpx | docx와 같은 범위 + 장평·자간, 줄 간격 % |
-| PowerPoint | pptx | 개발 중 (다음 버전) |
+| PowerPoint | pptx | 슬라이드 한 장 = 한 페이지. 글상자, 도형, 연결선, 그림, 표, 레이아웃·마스터 |
 
-docx·hwpx는 직접 해석해 용지 크기 그대로 그립니다. 원본과 크게 틀어지지 않는 수준이 목표이며, 차트·수식·글상자처럼 지원하지 않는 개체는 자리만 표시합니다. 자세한 범위는 [기획서 5.7](docs/기획서.md#57-지원-형식-확장)에 있습니다.
+docx·hwpx·pptx는 직접 해석해 용지·슬라이드 크기 그대로 그립니다. 원본과 크게 틀어지지 않는 수준이 목표이며, 차트·수식·SmartArt처럼 지원하지 않는 개체는 자리만 표시합니다. 자세한 범위는 [기획서 5.7](docs/기획서.md#57-지원-형식-확장)에 있습니다.
 
 ## 설치
 
@@ -70,7 +70,7 @@ Windows에서는 `gradlew.bat`을 씁니다.
 | 필기 | [Jetpack Ink](https://developer.android.com/jetpack/androidx/releases/ink) (저지연 획 그리기, 브러시, 직렬화) |
 | 마크다운 | [commonmark-java](https://github.com/commonmark/commonmark-java) + GFM 확장 |
 | 인코딩 판별 | [juniversalchardet](https://github.com/albfernandez/juniversalchardet) |
-| docx·hwpx | 직접 해석 (zip + XmlPullParser) → 공통 문서 모델 → 용지 단위 조판 |
+| docx·hwpx·pptx | 직접 해석 (zip + XmlPullParser) → 문서·슬라이드 모델 → 용지·슬라이드 단위 조판 |
 | 저장 | Room |
 | 파일 접근 | Storage Access Framework (영구 URI 권한) |
 
@@ -79,7 +79,7 @@ Windows에서는 `gradlew.bat`을 씁니다.
 ```
 app/src/main/java/com/tabpdf/
   doc/          형식 판별, 형식별 문서(텍스트·마크다운·이미지), 조판·페이지 나누기, 썸네일
-  doc/office/   docx·hwpx 해석과 조판
+  doc/office/   docx·hwpx·pptx 해석과 조판
   pdf/          PdfRenderer 래퍼
   ink/          필기 도구·저장·입력 규칙
   tabs/         탭·그룹 구조, ViewModel, 파일 접근

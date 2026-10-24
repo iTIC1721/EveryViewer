@@ -64,6 +64,17 @@ class OfficeLayout private constructor(private val unit: Float) {
             return SheetDocument(body.blocks.toList(), boundaries, frame)
         }
 
+        /**
+         * [blocks] as one block [width] points wide, at [unit] flow units per point (a slide's text
+         * box or table). Without [wrap] lines are only broken where the text breaks them and the
+         * block is as wide as its longest line. Returns the block and its width in flow units.
+         */
+        fun box(blocks: List<OfficeBlock>, width: Float, unit: Float, wrap: Boolean = true): Pair<StackBlock, Float> {
+            val layout = OfficeLayout(unit)
+            val w = if (wrap) width * unit else max(width * unit, layout.naturalWidth(blocks))
+            return layout.stack(blocks, w) to w
+        }
+
         /** No break is allowed between two of these (Korean words kept whole, like both editors). */
         private fun isCjk(c: Char): Boolean {
             val block = Character.UnicodeBlock.of(c)
@@ -130,7 +141,15 @@ class OfficeLayout private constructor(private val unit: Float) {
         out.space(p.spaceAfter * unit)
     }
 
-    private fun paragraphLayout(p: Paragraph, width: Float, hanging: Float): StaticLayout {
+    /** Width the paragraphs of [list] take when no line is broken. */
+    private fun naturalWidth(list: List<OfficeBlock>): Float = list.filterIsInstance<Paragraph>().maxOfOrNull { p ->
+        val hanging = (-p.firstLine).coerceAtLeast(0f) * unit
+        val layout = paragraphLayout(p, 1_000_000f, hanging, Align.Left)
+        val lines = (0 until layout.lineCount).maxOfOrNull { layout.getLineWidth(it) } ?: 0f
+        lines + (p.indentLeft + p.indentRight) * unit - hanging + 1f
+    } ?: 0f
+
+    private fun paragraphLayout(p: Paragraph, width: Float, hanging: Float, align: Align = p.align): StaticLayout {
         val text = SpannableStringBuilder()
         var hasObjects = false
         val sizes = mutableListOf<Float>()
@@ -171,8 +190,14 @@ class OfficeLayout private constructor(private val unit: Float) {
             }
         }
         p.label?.let {
-            appendRun(it)
-            text.append(' ')
+            if (p.labelInHang && it is Run.Text) {
+                val start = text.length
+                text.append('￼')
+                text.setSpan(LabelSpan(it, unit, hanging), start, text.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            } else {
+                appendRun(it)
+                text.append(' ')
+            }
         }
         p.runs.forEach(::appendRun)
         val baseSize = sizes.maxOrNull() ?: p.markStyle?.size ?: (p.label as? Run.Text)?.style?.size ?: 10f
@@ -188,13 +213,13 @@ class OfficeLayout private constructor(private val unit: Float) {
 
         return StaticLayout.Builder.obtain(text, 0, text.length, paint, width.roundToInt().coerceAtLeast(1))
             .setAlignment(
-                when (p.align) {
+                when (align) {
                     Align.Center -> Layout.Alignment.ALIGN_CENTER
                     Align.Right -> Layout.Alignment.ALIGN_OPPOSITE
                     else -> Layout.Alignment.ALIGN_NORMAL
                 }
             )
-            .setJustificationMode(if (p.align == Align.Justify) Layout.JUSTIFICATION_MODE_INTER_WORD else Layout.JUSTIFICATION_MODE_NONE)
+            .setJustificationMode(if (align == Align.Justify) Layout.JUSTIFICATION_MODE_INTER_WORD else Layout.JUSTIFICATION_MODE_NONE)
             .setIncludePad(false)
             .setLineSpacing(0f, 1f)
             .build()
@@ -425,8 +450,39 @@ private class PictureSpan(bytes: ByteArray?, private val width: Float, private v
     }
 }
 
+/** A bullet or number drawn in the hanging indent, so the text after it starts at the indent. */
+private class LabelSpan(private val label: Run.Text, unit: Float, private val hanging: Float) : ReplacementSpan() {
+    private val paint = TextPaint(Paint.ANTI_ALIAS_FLAG).also {
+        RunStyleSpan(label.style, unit).updateDrawState(it)
+        it.color = label.style.color
+    }
+
+    override fun getSize(paint: Paint, text: CharSequence?, start: Int, end: Int, fm: Paint.FontMetricsInt?): Int =
+        max(hanging, this.paint.measureText(label.text) + this.paint.textSize * 0.3f).roundToInt()
+
+    override fun draw(canvas: Canvas, text: CharSequence?, start: Int, end: Int, x: Float, top: Int, y: Int, bottom: Int, paint: Paint) {
+        // Bullet dots and squares as shapes: the system font's are much smaller than Office fonts' ones.
+        val shape = SHAPES[label.text]
+        if (shape == null) {
+            canvas.drawText(label.text, x, y.toFloat(), this.paint)
+            return
+        }
+        val size = this.paint.textSize
+        val (round, extent) = shape
+        val half = size * extent / 2
+        val cx = x + half + size * 0.05f
+        val cy = y - size * 0.33f
+        if (round) canvas.drawCircle(cx, cy, half, this.paint) else canvas.drawRect(cx - half, cy - half, cx + half, cy + half, this.paint)
+    }
+
+    private companion object {
+        /** Bullet characters drawn as shapes: round or square, and size in ems. */
+        val SHAPES = mapOf("•" to (true to 0.36f), "●" to (true to 0.6f), "▪" to (false to 0.34f), "■" to (false to 0.55f))
+    }
+}
+
 /** Where something we can't draw sits: an empty dashed box of its size (기획서 5.7). */
-private class EmptyBoxSpan(private val width: Float, private val height: Float) : ReplacementSpan() {
+internal class EmptyBoxSpan(private val width: Float, private val height: Float) : ReplacementSpan() {
     override fun getSize(paint: Paint, text: CharSequence?, start: Int, end: Int, fm: Paint.FontMetricsInt?): Int {
         fm?.apply {
             ascent = -height.roundToInt()

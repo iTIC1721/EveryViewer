@@ -14,7 +14,7 @@ object Documents {
             FileFormat.Text -> TextDocument.open(context, uri, name)
             FileFormat.Image -> ImageDocument.open(context, uri)
             FileFormat.Markdown -> MarkdownDocument.open(context, uri)
-            FileFormat.Docx, FileFormat.Hwpx -> OfficeDocuments.open(context, uri, format)
+            FileFormat.Docx, FileFormat.Hwpx, FileFormat.Pptx -> OfficeDocuments.open(context, uri, format)
             // Detected again: this version may read what the one that opened the tab could not.
             FileFormat.Unsupported -> FileFormats.detect(context, uri, name).let {
                 if (it == FileFormat.Unsupported) throw DocumentOpenException(DocumentOpenException.Reason.Unsupported)
