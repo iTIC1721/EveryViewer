@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Only the window behind the Compose content: what shows for a moment while the app starts. -->
+    <style name="Theme.EveryViewer" parent="@android:style/Theme.Material.Light.NoActionBar" />
+</resources>

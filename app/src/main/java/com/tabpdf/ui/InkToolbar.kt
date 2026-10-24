@@ -28,18 +28,13 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.materialIcon
 import androidx.compose.material.icons.materialPath
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -70,7 +65,6 @@ import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
-import com.tabpdf.FingerDrawing
 import com.tabpdf.ink.Brushes
 import com.tabpdf.ink.INK_PAGE_WIDTH
 import com.tabpdf.ink.InkTool
@@ -96,7 +90,7 @@ fun InkToolbar(
     onRedo: () -> Unit,
 ) {
     var panelFor by remember { mutableStateOf<InkTool?>(null) }
-    Surface(color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f), tonalElevation = 2.dp) {
+    Surface(color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f), contentColor = MaterialTheme.colorScheme.onSurface, tonalElevation = 2.dp) {
         Row(
             Modifier.fillMaxWidth().height(52.dp).padding(horizontal = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -406,62 +400,6 @@ private fun HueStrip(hue: Float, onChange: (Float) -> Unit) {
 private fun DrawScope.thumb(at: Offset) {
     drawCircle(Color.White, 10.dp.toPx(), at, style = Stroke(width = 3.dp.toPx()))
     drawCircle(Color.Black.copy(alpha = 0.4f), 11.5.dp.toPx(), at, style = Stroke(width = 1.dp.toPx()))
-}
-
-/** Handwriting settings from the ⋮ menu (기획서 5.6). */
-@Composable
-fun InkSettingsDialog(
-    fingerDrawing: FingerDrawing,
-    stylusSeen: Boolean,
-    sideButtonErases: Boolean,
-    onFingerDrawing: (FingerDrawing) -> Unit,
-    onSideButtonErases: (Boolean) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("필기 설정") },
-        text = {
-            Column {
-                Text("필기 모드에서 손가락으로 그리기", style = MaterialTheme.typography.titleSmall)
-                Spacer(Modifier.height(4.dp))
-                val options = listOf(
-                    FingerDrawing.Auto to "자동 — 펜을 쓰면 펜만 그림" + if (stylusSeen) " (펜 사용 중)" else "",
-                    FingerDrawing.Always to "항상 — 펜이 있어도 손가락도 그림",
-                    FingerDrawing.Never to "안 함 — 손가락은 넘기기만",
-                )
-                for ((mode, label) in options) {
-                    Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .selectable(selected = mode == fingerDrawing, role = Role.RadioButton) { onFingerDrawing(mode) }
-                            .padding(vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        RadioButton(selected = mode == fingerDrawing, onClick = null)
-                        Spacer(Modifier.width(8.dp))
-                        Text(label, style = MaterialTheme.typography.bodyMedium)
-                    }
-                }
-                Spacer(Modifier.height(12.dp))
-                Row(
-                    Modifier.fillMaxWidth().clickable { onSideButtonErases(!sideButtonErases) },
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text("펜 측면 버튼으로 지우기", style = MaterialTheme.typography.titleSmall)
-                        Text(
-                            "버튼을 누른 채 그리면 지우개",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    Switch(checked = sideButtonErases, onCheckedChange = null)
-                }
-            }
-        },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("닫기") } },
-    )
 }
 
 // Material Symbols "undo" and "redo" (Apache 2.0); material-icons-core doesn't include them.

@@ -15,12 +15,10 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -35,7 +33,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
@@ -58,7 +55,6 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.input.ImeAction
 import com.tabpdf.doc.TextSearch
 import androidx.compose.material3.Button
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -84,7 +80,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalView
@@ -97,7 +92,6 @@ import com.tabpdf.tabs.DocTab
 import com.tabpdf.tabs.SessionState
 import com.tabpdf.tabs.TabGroup
 import com.tabpdf.tabs.TabsViewModel
-import com.tabpdf.tabs.displayName
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -120,6 +114,7 @@ fun TabsScreen(viewModel: TabsViewModel, onOpenFiles: (groupId: String?) -> Unit
     var barsVisible by rememberSaveable { mutableStateOf(true) }
     var showSwitcher by rememberSaveable { mutableStateOf(false) }
     var openGroupId by rememberSaveable { mutableStateOf<String?>(null) }
+    var showSettings by rememberSaveable { mutableStateOf(false) }
     val snackbar = remember { SnackbarHostState() }
 
     val keepScreenOn by viewModel.settings.keepScreenOn.collectAsState()
@@ -147,6 +142,7 @@ fun TabsScreen(viewModel: TabsViewModel, onOpenFiles: (groupId: String?) -> Unit
                     openGroupId = groupId
                     showSwitcher = true
                 },
+                onShowSettings = { showSettings = true },
             )
         }
 
@@ -170,6 +166,14 @@ fun TabsScreen(viewModel: TabsViewModel, onOpenFiles: (groupId: String?) -> Unit
                     showSwitcher = false
                 },
             )
+        }
+
+        AnimatedVisibility(
+            visible = showSettings,
+            enter = fadeIn() + slideInVertically { it / 8 },
+            exit = fadeOut() + slideOutVertically { it / 8 },
+        ) {
+            SettingsScreen(viewModel.settings, onDismiss = { showSettings = false })
         }
 
         SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).navigationBarsPadding())
@@ -204,6 +208,7 @@ private fun ContextPager(
     onOpenFiles: (groupId: String?) -> Unit,
     onRelocate: (DocTab) -> Unit,
     onShowSwitcher: (openGroupId: String?) -> Unit,
+    onShowSettings: () -> Unit,
 ) {
     val tabs = session.context(groupId)
     val group = groupId?.let { session.group(it) }
@@ -325,18 +330,16 @@ private fun ContextPager(
                 onClose = { searchOpen = false },
             ) else TopBar(
                 group = group,
-                groupTabCount = tabs.size,
                 totalTabCount = session.allTabs.size,
                 tabs = tabs,
                 pagerState = pagerState,
-                onGroupClick = { onShowSwitcher(groupId) },
                 onOpenFiles = { onOpenFiles(groupId) },
                 onTabCountClick = { onShowSwitcher(null) },
                 inkMode = inkMode,
                 onInkMode = { viewModel.setInkMode(!inkMode) },
                 menu = { dismiss ->
                     val canJump = session.currentTab?.let { viewModel.pageCount(it.id) } != null
-                    ViewerMenu(canJump, viewModel, open = { dialog = it }, onSearch = { searchOpen = true }, dismiss = dismiss)
+                    ViewerMenu(canJump, open = { dialog = it }, onSearch = { searchOpen = true }, onSettings = onShowSettings, dismiss = dismiss)
                 },
             )
             if (inkMode && tabs.isNotEmpty()) {
@@ -375,27 +378,17 @@ private fun ContextPager(
                 )
             }
         }
-        ViewerDialog.About -> AboutDialog(onDismiss = { dialog = null })
-        ViewerDialog.InkSettings -> InkSettingsDialog(
-            fingerDrawing = fingerDrawing,
-            stylusSeen = stylusSeen,
-            sideButtonErases = sideButtonErases,
-            onFingerDrawing = viewModel.settings::setFingerDrawing,
-            onSideButtonErases = viewModel.settings::setSideButtonErases,
-            onDismiss = { dialog = null },
-        )
         null -> Unit
     }
 }
 
 @Composable
 private fun TopBar(
+    /** The current tab's group, shown only as the tab button's colour so the file name keeps the room. */
     group: TabGroup?,
-    groupTabCount: Int,
     totalTabCount: Int,
     tabs: List<DocTab>,
     pagerState: PagerState,
-    onGroupClick: () -> Unit,
     onOpenFiles: () -> Unit,
     onTabCountClick: () -> Unit,
     inkMode: Boolean,
@@ -404,19 +397,15 @@ private fun TopBar(
     menu: @Composable (dismiss: () -> Unit) -> Unit,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
-    Surface(color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f), tonalElevation = 2.dp) {
+    Surface(color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f), contentColor = MaterialTheme.colorScheme.onSurface, tonalElevation = 2.dp) {
         Row(
             Modifier
                 .fillMaxWidth()
                 .statusBarsPadding()
                 .height(TOP_BAR_HEIGHT)
-                .padding(start = if (group != null) 8.dp else 16.dp, end = 4.dp),
+                .padding(start = 16.dp, end = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            if (group != null) {
-                GroupChip(group, groupTabCount, onGroupClick)
-                Spacer(Modifier.width(8.dp))
-            }
             TitleStrip(tabs, pagerState, Modifier.weight(1f))
             if (tabs.isNotEmpty()) {
                 IconButton(
@@ -434,7 +423,7 @@ private fun TopBar(
             IconButton(onClick = onOpenFiles) {
                 Icon(Icons.Default.Add, contentDescription = "파일 열기")
             }
-            TabCountButton(totalTabCount, onTabCountClick)
+            TabCountButton(totalTabCount, group, onTabCountClick)
             Box {
                 IconButton(onClick = { menuOpen = true }) {
                     Icon(Icons.Default.MoreVert, contentDescription = "메뉴")
@@ -447,7 +436,7 @@ private fun TopBar(
     }
 }
 
-private enum class ViewerDialog { PageJump, InkSettings, About }
+private enum class ViewerDialog { PageJump }
 
 /**
  * Find in the document, in place of the top bar (기획서 5.5), laid out like a browser's find bar:
@@ -467,7 +456,7 @@ private fun SearchBar(
     val focus = remember { FocusRequester() }
     LaunchedEffect(Unit) { focus.requestFocus() }
     val colors = MaterialTheme.colorScheme
-    Surface(color = colors.surface.copy(alpha = 0.95f), tonalElevation = 2.dp) {
+    Surface(color = colors.surface.copy(alpha = 0.95f), contentColor = colors.onSurface, tonalElevation = 2.dp) {
         Row(
             Modifier
                 .fillMaxWidth()
@@ -518,10 +507,9 @@ private fun SearchBar(
     }
 }
 
-/** ⋮ menu items: find, go to page, keep the screen on, app info (기획서 4.1, 5.6). */
+/** ⋮ menu items: find, go to page, settings (기획서 4.1, 5.6). */
 @Composable
-private fun ViewerMenu(canJump: Boolean, viewModel: TabsViewModel, open: (ViewerDialog) -> Unit, onSearch: () -> Unit, dismiss: () -> Unit) {
-    val keepScreenOn by viewModel.settings.keepScreenOn.collectAsState()
+private fun ViewerMenu(canJump: Boolean, open: (ViewerDialog) -> Unit, onSearch: () -> Unit, onSettings: () -> Unit, dismiss: () -> Unit) {
     DropdownMenuItem(
         text = { Text("찾기") },
         enabled = canJump,
@@ -532,37 +520,7 @@ private fun ViewerMenu(canJump: Boolean, viewModel: TabsViewModel, open: (Viewer
         enabled = canJump,
         onClick = { dismiss(); open(ViewerDialog.PageJump) },
     )
-    DropdownMenuItem(
-        text = { Text("화면 켜짐 유지") },
-        trailingIcon = { Checkbox(checked = keepScreenOn, onCheckedChange = null) },
-        onClick = { viewModel.settings.setKeepScreenOn(!keepScreenOn) },
-    )
-    DropdownMenuItem(text = { Text("필기 설정") }, onClick = { dismiss(); open(ViewerDialog.InkSettings) })
-    DropdownMenuItem(text = { Text("앱 정보") }, onClick = { dismiss(); open(ViewerDialog.About) })
-}
-
-/** Shown only while viewing a grouped tab: the group's colour and name; opens its panel. */
-@Composable
-private fun GroupChip(group: TabGroup, tabCount: Int, onClick: () -> Unit) {
-    val color = groupColor(group.color)
-    Row(
-        Modifier
-            .clip(RoundedCornerShape(16.dp))
-            .background(color.copy(alpha = 0.18f))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        GroupDot(group.color)
-        Spacer(Modifier.width(6.dp))
-        Text(
-            group.displayName(tabCount),
-            Modifier.widthIn(max = 96.dp),
-            style = MaterialTheme.typography.labelLarge,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-    }
+    DropdownMenuItem(text = { Text("설정") }, onClick = { dismiss(); onSettings() })
 }
 
 /**
@@ -594,14 +552,20 @@ private fun TitleStrip(tabs: List<DocTab>, pagerState: PagerState, modifier: Mod
     }
 }
 
-/** Total tab count, like a mobile browser's tab button; opens the tab switcher. */
+/**
+ * Total tab count, like a mobile browser's tab button; opens the tab switcher. While a grouped tab
+ * is shown, it takes the group's colour.
+ */
 @Composable
-private fun TabCountButton(count: Int, onClick: () -> Unit) {
-    IconButton(onClick = onClick, modifier = Modifier.semantics { contentDescription = "탭 ${count}개 보기" }) {
+private fun TabCountButton(count: Int, group: TabGroup?, onClick: () -> Unit) {
+    val description = "탭 ${count}개 보기" + if (group != null) ", 그룹 ${group.name.ifBlank { "이름 없음" }}" else ""
+    val color = group?.let { groupColor(it.color) }
+    IconButton(onClick = onClick, modifier = Modifier.semantics { contentDescription = description }) {
         Box(
             Modifier
                 .size(24.dp)
-                .border(2.dp, MaterialTheme.colorScheme.onSurface, RoundedCornerShape(5.dp)),
+                .then(if (color != null) Modifier.background(color.copy(alpha = 0.25f), RoundedCornerShape(5.dp)) else Modifier)
+                .border(2.dp, color ?: MaterialTheme.colorScheme.onSurface, RoundedCornerShape(5.dp)),
             contentAlignment = Alignment.Center,
         ) {
             Text(if (count > 99) "99+" else count.toString(), style = MaterialTheme.typography.labelMedium)
