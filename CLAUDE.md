@@ -21,6 +21,20 @@ Git 작업(브랜치, 커밋, 머지, 태그) 전에는 반드시 `git-workflow`
 .\gradlew.bat installDebug       # 연결된 기기/에뮬레이터에 설치
 ```
 
+## 에뮬레이터 테스트
+
+에뮬레이터의 시스템 파일 선택기는 adb 입력으로 파일을 고를 수 없으므로, 디버그 빌드 전용 훅으로 PDF를 연다.
+
+```bash
+# 1. 테스트 PDF를 앱 내부 저장소로 복사 (Git Bash; 파일마다)
+adb exec-in run-as com.tabpdf sh -c "cat > files/Sample.pdf" < Sample.pdf
+# 2. files/의 PDF를 모두 탭으로 열며 실행
+adb shell am start -n com.tabpdf/.MainActivity --ez debug_open_test_files true
+```
+
+- 제스처는 `adb shell input swipe/tap`으로 확인한다. 핀치는 adb로 재현할 수 없으므로 실기기에서 확인.
+- adb로 `/sdcard`에 push한 파일은 앱이 읽을 수 없다 (소유자가 shell).
+
 ## 코드 구조
 
 ```

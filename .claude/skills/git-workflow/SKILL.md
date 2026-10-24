@@ -69,7 +69,7 @@ PowerShell에서 `-m "한글"`은 인코딩이 깨질 수 있다. 메시지를 U
 git commit -F <메시지파일 경로>
 ```
 
-메시지 파일은 저장소 밖(임시 폴더)에 만든다.
+메시지 파일은 저장소 밖, **경로가 짧은 곳**에 만든다 (예: `%TEMP%\tabpdf-commit-msg.txt`). Git for Windows는 경로가 260자를 넘으면 `Filename too long`으로 실패한다.
 
 ## 3. 머지 절차
 
