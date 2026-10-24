@@ -29,7 +29,8 @@ class FileFormatTest {
         assertEquals(FileFormat.Text, detect("build.gradle.kts", "plugins {}".toByteArray()))
         assertEquals(FileFormat.Text, detect("log", "a\tb\r\nc".toByteArray(), "application/octet-stream"))
         // Zip-based documents look like nothing in particular; their name says what they are.
-        assertEquals(FileFormat.Unsupported, detect("slides.pptx", zip))
+        assertEquals(FileFormat.Pptx, detect("slides.pptx", zip))
+        assertEquals(FileFormat.Unsupported, detect("sheet.xlsx", zip))
         assertEquals(FileFormat.Unsupported, detect("data.bin", byteArrayOf(1, 2, 0, 3)))
         // "BM" at the start of text is not a bitmap.
         assertEquals(FileFormat.Text, detect("notes", "BMW service notes, 2024".toByteArray()))

@@ -8,18 +8,18 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.FileNotFoundException
 
-/** Opens a docx or hwpx file: read it into the shared model, then lay it out on sheets. */
+/** Opens a docx, hwpx or pptx file: read it into its model, then lay it out on sheets or slides. */
 object OfficeDocuments {
     suspend fun open(context: Context, uri: Uri, format: FileFormat): Document {
         val parts = withContext(Dispatchers.IO) {
             context.contentResolver.openInputStream(uri)?.use { ZipParts.read(it) } ?: throw FileNotFoundException(uri.toString())
         }
         return withContext(Dispatchers.Default) {
-            val document = when (format) {
-                FileFormat.Hwpx -> HwpxReader.read(parts)
-                else -> DocxReader.read(parts)
+            when (format) {
+                FileFormat.Pptx -> SlideDocument.layOut(PptxReader.read(parts))
+                FileFormat.Hwpx -> OfficeLayout.layOut(HwpxReader.read(parts))
+                else -> OfficeLayout.layOut(DocxReader.read(parts))
             }
-            OfficeLayout.layOut(document)
         }
     }
 }
