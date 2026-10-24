@@ -59,6 +59,19 @@ class AppSettings(context: Context) {
         )
     }
 
+    /** Colours picked by hand for each tool, most recent first, shown after the presets. */
+    private val _recentColors = MutableStateFlow(InkTool.entries.associateWith { loadRecent(it) })
+    val recentColors: StateFlow<Map<InkTool, List<Int>>> = _recentColors.asStateFlow()
+
+    fun addRecentColor(tool: InkTool, color: Int) {
+        val list = (listOf(color) + _recentColors.value[tool].orEmpty().filter { it != color }).take(MAX_RECENT_COLORS)
+        _recentColors.value = _recentColors.value + (tool to list)
+        prefs.edit().putString("ink_${tool.key}_recent", list.joinToString(",")).apply()
+    }
+
+    private fun loadRecent(tool: InkTool): List<Int> =
+        prefs.getString("ink_${tool.key}_recent", null)?.split(',')?.mapNotNull { it.toIntOrNull() }.orEmpty()
+
     private val _fingerDrawing = MutableStateFlow(
         FingerDrawing.entries.firstOrNull { it.key == prefs.getString(FINGER_DRAWING, null) } ?: FingerDrawing.Auto
     )
@@ -94,5 +107,6 @@ class AppSettings(context: Context) {
         const val FINGER_DRAWING = "ink_finger_drawing"
         const val STYLUS_SEEN = "ink_stylus_seen"
         const val SIDE_BUTTON_ERASES = "ink_side_button_erases"
+        const val MAX_RECENT_COLORS = 4
     }
 }

@@ -208,6 +208,7 @@ private fun ContextPager(
     val stylusSeen by viewModel.settings.stylusSeen.collectAsState()
     val sideButtonErases by viewModel.settings.sideButtonErases.collectAsState()
     val inkHistory by viewModel.ink.history.collectAsState()
+    val recentColors by viewModel.settings.recentColors.collectAsState()
     val fingerDraws = when (fingerDrawing) {
         FingerDrawing.Always -> true
         FingerDrawing.Never -> false
@@ -307,10 +308,12 @@ private fun ContextPager(
                 InkToolbar(
                     tool = inkTool,
                     styles = toolStyles,
+                    recentColors = recentColors,
                     canUndo = inkHistory >= 0 && currentId != null && viewModel.ink.canUndo(currentId),
                     canRedo = inkHistory >= 0 && currentId != null && viewModel.ink.canRedo(currentId),
                     onTool = viewModel.settings::setInkTool,
                     onStyle = viewModel.settings::setToolStyle,
+                    onCustomColor = viewModel.settings::addRecentColor,
                     onUndo = { viewModel.undoInk() },
                     onRedo = { viewModel.redoInk() },
                 )

@@ -1,14 +1,20 @@
 package com.tabpdf.ui
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -17,10 +23,14 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.materialIcon
 import androidx.compose.material.icons.materialPath
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -39,53 +49,77 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
 import com.tabpdf.FingerDrawing
 import com.tabpdf.ink.Brushes
+import com.tabpdf.ink.INK_PAGE_WIDTH
 import com.tabpdf.ink.InkTool
 import com.tabpdf.ink.ToolStyle
 import kotlin.math.roundToInt
 
 /**
- * Handwriting tools under the top bar while handwriting mode is on (기획서 4.1): pen, highlighter,
- * eraser, undo, redo. Tapping the chosen tool again opens its colour and size panel.
+ * Handwriting tools under the top bar while handwriting mode is on (기획서 4.1). No words: each
+ * tool is drawn as itself — pen, highlighter, eraser — standing up, its tip in the colour it
+ * writes with, the chosen one raised. Tapping the chosen tool again opens its colour and size panel.
  */
 @Composable
 fun InkToolbar(
     tool: InkTool,
     styles: Map<InkTool, ToolStyle>,
+    recentColors: Map<InkTool, List<Int>>,
     canUndo: Boolean,
     canRedo: Boolean,
     onTool: (InkTool) -> Unit,
     onStyle: (InkTool, ToolStyle) -> Unit,
+    onCustomColor: (InkTool, Int) -> Unit,
     onUndo: () -> Unit,
     onRedo: () -> Unit,
 ) {
     var panelFor by remember { mutableStateOf<InkTool?>(null) }
     Surface(color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f), tonalElevation = 2.dp) {
         Row(
-            Modifier.fillMaxWidth().height(48.dp).padding(horizontal = 8.dp),
+            Modifier.fillMaxWidth().height(52.dp).padding(horizontal = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             for (t in InkTool.entries) {
                 Box {
-                    ToolChip(
+                    ToolPictogram(
                         tool = t,
-                        style = styles.getValue(t),
+                        color = Color(styles.getValue(t).color),
                         selected = t == tool,
                         onClick = { if (t == tool) panelFor = t else onTool(t) },
                     )
                     DropdownMenu(expanded = panelFor == t, onDismissRequest = { panelFor = null }) {
-                        StylePanel(t, styles.getValue(t)) { onStyle(t, it) }
+                        StylePanel(
+                            tool = t,
+                            style = styles.getValue(t),
+                            recent = recentColors[t].orEmpty(),
+                            onStyle = { onStyle(t, it) },
+                            onCustomColor = { onCustomColor(t, it) },
+                        )
                     }
                 }
-                Spacer(Modifier.width(4.dp))
+                Spacer(Modifier.width(6.dp))
             }
             Spacer(Modifier.weight(1f))
             IconButton(onClick = onUndo, enabled = canUndo) { Icon(UndoIcon, contentDescription = "필기 되돌리기") }
@@ -100,92 +134,95 @@ private val InkTool.label get() = when (this) {
     InkTool.Eraser -> "지우개"
 }
 
+/** The tool itself, standing in the bar; the chosen one stands taller. Its name is for screen readers. */
 @Composable
-private fun ToolChip(tool: InkTool, style: ToolStyle, selected: Boolean, onClick: () -> Unit) {
-    val scheme = MaterialTheme.colorScheme
-    Row(
+private fun ToolPictogram(tool: InkTool, color: Color, selected: Boolean, onClick: () -> Unit) {
+    val body = MaterialTheme.colorScheme.surfaceVariant
+    val outline = MaterialTheme.colorScheme.outline
+    Box(
         Modifier
-            .clip(RoundedCornerShape(16.dp))
-            .background(if (selected) scheme.secondaryContainer else Color.Transparent)
+            .width(40.dp)
+            .fillMaxHeight()
+            .clipToBounds()
             .selectable(selected = selected, role = Role.Tab, onClick = onClick)
-            .semantics { contentDescription = tool.label + if (selected) " (다시 누르면 색·굵기)" else "" }
-            .padding(horizontal = 12.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
+            .semantics { contentDescription = tool.label },
     ) {
-        if (tool != InkTool.Eraser) {
-            ColorDot(Color(style.color), 12.dp)
-            Spacer(Modifier.width(6.dp))
+        Canvas(Modifier.fillMaxWidth().fillMaxHeight()) {
+            val u = size.width / 40f // drawn on a 40 × 52 grid
+            val lift = if (selected) 0f else 14f
+            shifted(0f, lift * u) { drawTool(tool, color.copy(alpha = 1f), body, outline, u) }
         }
-        Text(tool.label, style = MaterialTheme.typography.labelLarge)
     }
 }
 
-@Composable
-private fun ColorDot(color: Color, size: androidx.compose.ui.unit.Dp, selected: Boolean = false) {
-    Box(
-        Modifier
-            .size(size)
-            .clip(CircleShape)
-            .background(Color.White)
-            .background(color)
-            .border(if (selected) 3.dp else 1.dp, if (selected) MaterialTheme.colorScheme.primary else Color.Gray, CircleShape)
-    )
+private inline fun DrawScope.shifted(x: Float, y: Float, block: DrawScope.() -> Unit) {
+    drawContext.transform.translate(x, y)
+    block()
+    drawContext.transform.translate(-x, -y)
 }
 
-/** Colours (with "직접 고르기") and size for one tool (기획서 5.8.2). */
+/** A tool drawn on a 40 × 52 grid ([u] px per unit), tip up, running off the bottom edge. */
+private fun DrawScope.drawTool(tool: InkTool, ink: Color, body: Color, outline: Color, u: Float) {
+    fun path(vararg points: Pair<Float, Float>) = Path().apply {
+        moveTo(points[0].first * u, points[0].second * u)
+        for (p in points.drop(1)) lineTo(p.first * u, p.second * u)
+        close()
+    }
+    val line = Stroke(width = 1.2f * u)
+    when (tool) {
+        InkTool.Pen -> {
+            val barrel = path(13f to 20f, 27f to 20f, 27f to 60f, 13f to 60f)
+            val cone = path(13f to 20f, 27f to 20f, 20f to 5f)
+            drawPath(barrel, body); drawPath(barrel, outline, style = line)
+            drawPath(cone, body); drawPath(cone, outline, style = line)
+            drawPath(path(16.8f to 12f, 23.2f to 12f, 20f to 5f), ink) // the nib, in the ink's colour
+            drawRect(ink, Offset(13f * u, 26f * u), Size(14f * u, 4f * u)) // and a band on the barrel
+        }
+        InkTool.Highlighter -> {
+            val barrel = path(11f to 22f, 29f to 22f, 29f to 60f, 11f to 60f)
+            val tip = path(14f to 22f, 26f to 22f, 26f to 10f, 14f to 15f) // chisel tip
+            drawPath(barrel, body); drawPath(barrel, outline, style = line)
+            drawPath(tip, ink); drawPath(tip, outline, style = line)
+            drawRect(ink, Offset(11f * u, 28f * u), Size(18f * u, 6f * u))
+        }
+        InkTool.Eraser -> {
+            drawRoundRect(Color(0xFFF4A7B9), Offset(12f * u, 6f * u), Size(16f * u, 16f * u), CornerRadius(4f * u))
+            drawRoundRect(outline, Offset(12f * u, 6f * u), Size(16f * u, 16f * u), CornerRadius(4f * u), style = line)
+            val barrel = path(12f to 20f, 28f to 20f, 28f to 60f, 12f to 60f)
+            drawPath(barrel, body); drawPath(barrel, outline, style = line)
+            drawRect(outline.copy(alpha = 0.6f), Offset(12f * u, 20f * u), Size(16f * u, 5f * u))
+        }
+    }
+}
+
+/** Colour swatches and the size, shown live (기획서 5.8.2). */
 @Composable
-private fun StylePanel(tool: InkTool, style: ToolStyle, onStyle: (ToolStyle) -> Unit) {
+private fun StylePanel(
+    tool: InkTool,
+    style: ToolStyle,
+    recent: List<Int>,
+    onStyle: (ToolStyle) -> Unit,
+    onCustomColor: (Int) -> Unit,
+) {
     var picking by remember { mutableStateOf(false) }
-    Column(Modifier.width(280.dp).padding(horizontal = 16.dp, vertical = 8.dp)) {
+    Column(Modifier.width(288.dp).padding(horizontal = 16.dp, vertical = 12.dp)) {
         if (tool != InkTool.Eraser) {
-            Text("색", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(Modifier.height(8.dp))
-            val palette = if (tool == InkTool.Pen) Brushes.penColors else Brushes.highlighterColors
+            val presets = if (tool == InkTool.Pen) Brushes.penColors else Brushes.highlighterColors
             FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                for (c in palette) {
-                    Box(Modifier.clickable { onStyle(style.copy(color = c)) }.semantics { selected = c == style.color }) {
-                        ColorDot(Color(c), 28.dp, selected = c == style.color)
-                    }
+                for (c in presets + recent.filter { it !in presets }) {
+                    Swatch(Color(c), selected = c == style.color) { onStyle(style.copy(color = c)) }
                 }
-                Box(
-                    Modifier
-                        .size(28.dp)
-                        .clip(CircleShape)
-                        .border(1.dp, Color.Gray, CircleShape)
-                        .clickable { picking = true }
-                        .semantics { contentDescription = "색 직접 고르기" },
-                    contentAlignment = Alignment.Center,
-                ) { Text("+", style = MaterialTheme.typography.titleMedium) }
+                CustomColorSwatch { picking = true }
             }
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(12.dp))
         }
-        Text("굵기", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        val presets = when (tool) {
-            InkTool.Pen -> Brushes.penSizes
-            InkTool.Highlighter -> Brushes.highlighterSizes
-            InkTool.Eraser -> Brushes.eraserSizes
-        }
-        Row(Modifier.padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            presets.forEachIndexed { i, size ->
-                val dot = (8 + i * 8).dp
-                Box(
-                    Modifier
-                        .size(36.dp)
-                        .clip(CircleShape)
-                        .background(if (style.size == size) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent)
-                        .clickable { onStyle(style.copy(size = size)) }
-                        .semantics { contentDescription = listOf("가늘게", "보통", "굵게")[i] },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Box(Modifier.size(dot).clip(CircleShape).background(MaterialTheme.colorScheme.onSurface))
-                }
-            }
-        }
+        SizePreview(tool, style, Modifier.fillMaxWidth().height(64.dp))
         val range = Brushes.sizeRange(tool)
         Slider(
             value = style.size.coerceIn(range),
             onValueChange = { onStyle(style.copy(size = (it * 2).roundToInt() / 2f)) },
             valueRange = range,
+            modifier = Modifier.semantics { contentDescription = "굵기" },
         )
     }
     if (picking) {
@@ -193,39 +230,182 @@ private fun StylePanel(tool: InkTool, style: ToolStyle, onStyle: (ToolStyle) -> 
             initial = style.color,
             onPick = {
                 picking = false
-                onStyle(style.copy(color = if (tool == InkTool.Highlighter) Brushes.highlighterAlpha(it) else it))
+                val color = if (tool == InkTool.Highlighter) Brushes.highlighterAlpha(it) else it
+                onStyle(style.copy(color = color))
+                onCustomColor(color)
             },
             onDismiss = { picking = false },
         )
     }
 }
 
-/** Hue, saturation and brightness sliders with a preview. */
+/** A colour to pick, on white so see-through highlighter colours look as they will on paper. */
+@Composable
+private fun Swatch(color: Color, selected: Boolean, onClick: () -> Unit) {
+    val ring = MaterialTheme.colorScheme.primary
+    Box(
+        Modifier
+            .size(32.dp)
+            .clip(CircleShape)
+            .clickable(onClick = onClick)
+            .semantics { this.selected = selected },
+        contentAlignment = Alignment.Center,
+    ) {
+        Canvas(Modifier.size(32.dp)) {
+            val r = size.minDimension / 2
+            if (selected) drawCircle(ring, r, style = Stroke(width = 2.5.dp.toPx()))
+            val inner = if (selected) r - 5.dp.toPx() else r - 1.dp.toPx()
+            drawCircle(Color.White, inner)
+            drawCircle(color, inner)
+            drawCircle(Color.Gray.copy(alpha = 0.5f), inner, style = Stroke(width = 1.dp.toPx()))
+        }
+    }
+}
+
+/** The usual "any colour" button: a rainbow ring. */
+@Composable
+private fun CustomColorSwatch(onClick: () -> Unit) {
+    Box(
+        Modifier
+            .size(32.dp)
+            .clip(CircleShape)
+            .clickable(onClick = onClick)
+            .semantics { contentDescription = "색 직접 고르기" },
+    ) {
+        Canvas(Modifier.size(32.dp)) {
+            val r = size.minDimension / 2
+            drawCircle(Brush.sweepGradient(HueColors), r)
+            drawCircle(Color.White, r - 6.dp.toPx())
+        }
+    }
+}
+
+private val HueColors = listOf(Color.Red, Color.Yellow, Color.Green, Color.Cyan, Color.Blue, Color.Magenta, Color.Red)
+
+/**
+ * The tool's mark at its real size on screen (at normal zoom): a curve in the pen's or
+ * highlighter's colour and width, or the eraser's reach as a circle.
+ */
+@Composable
+private fun SizePreview(tool: InkTool, style: ToolStyle, modifier: Modifier) {
+    val density = LocalDensity.current
+    // Page units to pixels at normal zoom, where a page is as wide as the screen.
+    val unit = with(density) { LocalConfiguration.current.screenWidthDp.dp.toPx() } / INK_PAGE_WIDTH
+    val paper = Color.White
+    val edge = MaterialTheme.colorScheme.outlineVariant
+    Canvas(modifier.clip(RoundedCornerShape(8.dp)).background(paper).border(1.dp, edge, RoundedCornerShape(8.dp))) {
+        val width = style.size * unit
+        if (tool == InkTool.Eraser) {
+            drawCircle(Color.Gray, width / 2, center, style = Stroke(width = 1.5.dp.toPx()))
+            return@Canvas
+        }
+        val pad = 24.dp.toPx()
+        val w = size.width - 2 * pad
+        val h = size.height
+        val curve = Path().apply {
+            moveTo(pad, h * 0.62f)
+            cubicTo(pad + w * 0.25f, h * 0.05f, pad + w * 0.45f, h * 0.05f, pad + w * 0.5f, h * 0.5f)
+            cubicTo(pad + w * 0.55f, h * 0.95f, pad + w * 0.75f, h * 0.95f, pad + w, h * 0.38f)
+        }
+        drawPath(
+            curve,
+            Color(style.color),
+            style = Stroke(width = width, cap = if (tool == InkTool.Highlighter) StrokeCap.Butt else StrokeCap.Round),
+        )
+    }
+}
+
+/**
+ * Picking any colour, as drawing apps do: a saturation × brightness square for the chosen hue and
+ * a hue strip under it, with the old and new colour side by side. Icons only.
+ */
 @Composable
 private fun ColorPickerDialog(initial: Int, onPick: (Int) -> Unit, onDismiss: () -> Unit) {
     val hsv = remember { FloatArray(3).also { android.graphics.Color.colorToHSV(initial or 0xFF000000.toInt(), it) } }
     var hue by remember { mutableFloatStateOf(hsv[0]) }
     var saturation by remember { mutableFloatStateOf(hsv[1]) }
     var value by remember { mutableFloatStateOf(hsv[2]) }
-    val color = android.graphics.Color.HSVToColor(floatArrayOf(hue, saturation, value))
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("색 고르기") },
-        text = {
-            Column {
-                Box(Modifier.fillMaxWidth().height(40.dp).clip(RoundedCornerShape(8.dp)).background(Color(color)))
-                Spacer(Modifier.height(12.dp))
-                Text("색상", style = MaterialTheme.typography.labelMedium)
-                Slider(hue, { hue = it }, valueRange = 0f..360f)
-                Text("채도", style = MaterialTheme.typography.labelMedium)
-                Slider(saturation, { saturation = it })
-                Text("밝기", style = MaterialTheme.typography.labelMedium)
-                Slider(value, { value = it })
+    val picked = Color(android.graphics.Color.HSVToColor(floatArrayOf(hue, saturation, value)))
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(shape = RoundedCornerShape(24.dp), tonalElevation = 6.dp) {
+            Column(Modifier.width(300.dp).padding(20.dp)) {
+                SaturationValueSquare(hue, saturation, value) { s, v ->
+                    saturation = s
+                    value = v
+                }
+                Spacer(Modifier.height(16.dp))
+                HueStrip(hue) { hue = it }
+                Spacer(Modifier.height(20.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    // Before → after
+                    Row(Modifier.height(36.dp).width(96.dp).clip(RoundedCornerShape(18.dp))) {
+                        Box(Modifier.weight(1f).fillMaxHeight().background(Color(initial or 0xFF000000.toInt())))
+                        Box(Modifier.weight(1f).fillMaxHeight().background(picked))
+                    }
+                    Spacer(Modifier.weight(1f))
+                    IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, contentDescription = "취소") }
+                    Spacer(Modifier.width(8.dp))
+                    FilledIconButton(onClick = { onPick(picked.toArgb()) }) {
+                        Icon(Icons.Default.Check, contentDescription = "이 색 쓰기")
+                    }
+                }
             }
-        },
-        confirmButton = { TextButton(onClick = { onPick(color) }) { Text("확인") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } },
-    )
+        }
+    }
+}
+
+@Composable
+private fun SaturationValueSquare(hue: Float, saturation: Float, value: Float, onChange: (Float, Float) -> Unit) {
+    val pure = Color(android.graphics.Color.HSVToColor(floatArrayOf(hue, 1f, 1f)))
+    Canvas(
+        Modifier
+            .fillMaxWidth()
+            .aspectRatio(1.3f)
+            .pointerInput(Unit) {
+                fun set(p: Offset) = onChange(
+                    (p.x / size.width).coerceIn(0f, 1f),
+                    1f - (p.y / size.height).coerceIn(0f, 1f),
+                )
+                awaitEachGesture {
+                    val down = awaitFirstDown()
+                    set(down.position)
+                    drag(down.id) { set(it.position); it.consume() }
+                }
+            }
+            .semantics { contentDescription = "채도와 밝기" },
+    ) {
+        // Rounded by drawing, not clipping, so the thumb stays whole at the edges.
+        val corner = CornerRadius(12.dp.toPx())
+        drawRoundRect(Brush.horizontalGradient(listOf(Color.White, pure)), cornerRadius = corner)
+        drawRoundRect(Brush.verticalGradient(listOf(Color.Transparent, Color.Black)), cornerRadius = corner)
+        thumb(Offset(saturation * size.width, (1f - value) * size.height))
+    }
+}
+
+@Composable
+private fun HueStrip(hue: Float, onChange: (Float) -> Unit) {
+    Canvas(
+        Modifier
+            .fillMaxWidth()
+            .height(28.dp)
+            .pointerInput(Unit) {
+                fun set(p: Offset) = onChange((p.x / size.width).coerceIn(0f, 1f) * 360f)
+                awaitEachGesture {
+                    val down = awaitFirstDown()
+                    set(down.position)
+                    drag(down.id) { set(it.position); it.consume() }
+                }
+            }
+            .semantics { contentDescription = "색상" },
+    ) {
+        drawRoundRect(Brush.horizontalGradient(HueColors), cornerRadius = CornerRadius(size.height / 2))
+        thumb(Offset(hue / 360f * size.width, size.height / 2))
+    }
+}
+
+private fun DrawScope.thumb(at: Offset) {
+    drawCircle(Color.White, 10.dp.toPx(), at, style = Stroke(width = 3.dp.toPx()))
+    drawCircle(Color.Black.copy(alpha = 0.4f), 11.5.dp.toPx(), at, style = Stroke(width = 1.dp.toPx()))
 }
 
 /** Handwriting settings from the ⋮ menu (기획서 5.6). */
