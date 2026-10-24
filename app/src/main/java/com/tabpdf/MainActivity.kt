@@ -1,8 +1,10 @@
 package com.tabpdf
 
+import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.net.Uri
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -17,6 +19,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.core.content.IntentCompat
 import androidx.lifecycle.lifecycleScope
 import com.tabpdf.tabs.FileAccess
 import com.tabpdf.tabs.OpenedFile
@@ -32,7 +35,11 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        if (savedInstanceState == null) openDebugTestFiles()
+        // After a recreation (rotation, process restore) the intent was already handled.
+        if (savedInstanceState == null) {
+            openIncomingFiles(intent)
+            openDebugTestFiles()
+        }
         setContent {
             MaterialTheme(colorScheme = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()) {
                 // Group the picked files go into (null: ungrouped); saved across the picker round trip.
@@ -69,6 +76,27 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        openIncomingFiles(intent)
+    }
+
+    /**
+     * PDFs handed over by another app ("열기"/"공유") open as ungrouped tabs (기획서 5.1). Their
+     * read grants are temporary, so FileAccess usually copies them into app storage.
+     */
+    private fun openIncomingFiles(intent: Intent) {
+        val uris = when (intent.action) {
+            Intent.ACTION_VIEW -> listOfNotNull(intent.data)
+            Intent.ACTION_SEND -> listOfNotNull(IntentCompat.getParcelableExtra(intent, Intent.EXTRA_STREAM, Uri::class.java))
+            Intent.ACTION_SEND_MULTIPLE ->
+                IntentCompat.getParcelableArrayListExtra(intent, Intent.EXTRA_STREAM, Uri::class.java).orEmpty()
+            else -> emptyList()
+        }
+        prepare(uris) { tabsViewModel.open(it, groupId = null) }
+    }
+
     override fun onStop() {
         super.onStop()
         // Last chance to save reading positions before the process may be killed (기획서 5.3).
@@ -86,6 +114,14 @@ class MainActivity : ComponentActivity() {
                     android.util.Log.w("TabPDF", "Could not open $uri", e)
                     null
                 }
+            }
+            if (files.size < uris.size) {
+                val failed = uris.size - files.size
+                Toast.makeText(
+                    this@MainActivity,
+                    if (uris.size == 1) "파일을 열 수 없습니다" else "파일 ${failed}개를 열 수 없습니다",
+                    Toast.LENGTH_SHORT,
+                ).show()
             }
             onReady(files)
         }

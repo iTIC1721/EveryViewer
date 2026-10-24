@@ -11,6 +11,7 @@ import kotlinx.coroutines.launch
 
 class TabPdfApp : Application() {
     val repository by lazy { SessionRepository(AppDatabase.create(this).sessionDao()) }
+    val settings by lazy { AppSettings(this) }
 
     /** Outlives screens, so saves started as the app goes to the background still finish. */
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)

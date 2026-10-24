@@ -25,6 +25,9 @@ data class DuplicatePrompt(
 /** Something just closed that the snackbar can bring back. */
 data class UndoOffer(val id: Long, val message: String)
 
+/** A request for tab [tabId]'s viewer to show [page]; [id] makes repeated jumps distinct. */
+data class PageJump(val id: Long, val tabId: String, val page: Int)
+
 /**
  * Tabs and tab groups, Chrome-style (기획서 3장), persisted so they come back after the app is
  * closed (기획서 5.3). Every structural change goes through [commit], which saves the whole
@@ -47,8 +50,15 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
     private var undoable: Closed? = null
     private var nextUndoId = 0L
 
+    private val _pageJump = MutableStateFlow<PageJump?>(null)
+    val pageJump: StateFlow<PageJump?> = _pageJump.asStateFlow()
+    private var nextJumpId = 0L
+
+    val settings = app.settings
+
     private val viewerStates = mutableMapOf<String, ViewerState>()
     private val unsavedStates = mutableMapOf<String, ViewerState>()
+    private val pageCounts = mutableMapOf<String, Int>()
     private var saveJob: Job? = null
 
     private val loadJob = viewModelScope.launch {
@@ -264,103 +274,53 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
 
     // ---- Arranging ----
 
-    /** New top-level order (ungrouped tabs and groups), by id. */
-    fun reorderTop(ids: List<String>) {
-        val s = current()
-        val byId = s.top.associateBy { it.id }
-        commit(s.copy(top = ids.mapNotNull { byId[it] }))
-    }
+    // The rules live in SessionEdits.kt; these only commit the result.
 
-    fun reorderGroup(groupId: String, ids: List<String>) {
-        val s = current()
-        val byId = s.tabsOf(groupId).associateBy { it.id }
-        commit(s.copy(groupTabs = s.groupTabs + (groupId to ids.mapNotNull { byId[it] })))
-    }
+    fun reorderTop(ids: List<String>) = commit(current().reorderTop(ids))
 
-    /** Dropping ungrouped tab [draggedId] onto ungrouped tab [targetId] makes a new group of the two. */
-    fun groupTogether(draggedId: String, targetId: String) {
-        val s = current()
-        val dragged = s.tab(draggedId)?.takeIf { it.groupId == null } ?: return
-        val target = s.tab(targetId)?.takeIf { it.groupId == null } ?: return
-        val group = newGroup(s, "")
-        val topIndex = s.top.indexOf(target)
-        val top = s.top.toMutableList().apply {
-            set(topIndex, group)
-            remove(dragged)
-        }
-        commit(
-            s.copy(
-                top = top,
-                groupTabs = s.groupTabs + (group.id to listOf(target.copy(groupId = group.id), dragged.copy(groupId = group.id))),
-            )
-        )
-    }
+    fun reorderGroup(groupId: String, ids: List<String>) = current().reorderGroup(groupId, ids)?.let(::commit)
 
-    /** Moves tab [tabId] to the end of group [groupId]. */
-    fun addToGroup(tabId: String, groupId: String) {
-        val s = current()
-        val tab = s.tab(tabId) ?: return
-        if (tab.groupId == groupId || s.group(groupId) == null) return
-        commit(s.removeTab(tabId).appendTab(tab.copy(groupId = groupId)))
-    }
+    /** Dropping ungrouped tab [draggedId] onto ungrouped tab [targetId] makes a new, unnamed group of the two. */
+    fun groupTogether(draggedId: String, targetId: String) =
+        current().let { it.groupTogether(draggedId, targetId, newGroup(it, "")) }?.let(::commit)
 
-    /** Puts tab [tabId] into a new group named [name], where the tab (or its old group) was. */
-    fun addToNewGroup(tabId: String, name: String) {
-        val s = current()
-        val tab = s.tab(tabId) ?: return
-        val group = newGroup(s, name.trim())
-        val anchor = s.top.indexOfFirst { it.id == (tab.groupId ?: tab.id) }
-        val removed = s.removeTab(tabId)
-        // An ungrouped tab is replaced by its new group; a tab from a group lands after that group.
-        val at = if (tab.groupId == null) anchor else anchor + if (removed.group(tab.groupId) != null) 1 else 0
-        commit(
-            removed.insertTop(at, group)
-                .copy(groupTabs = removed.groupTabs + (group.id to listOf(tab.copy(groupId = group.id))))
-        )
-    }
+    fun addToGroup(tabId: String, groupId: String) = current().addToGroup(tabId, groupId)?.let(::commit)
 
-    /** Takes tab [tabId] out of its group; it lands right after the group in the top-level list. */
-    fun removeFromGroup(tabId: String) {
-        val s = current()
-        val tab = s.tab(tabId) ?: return
-        val groupId = tab.groupId ?: return
-        val groupIndex = s.top.indexOfFirst { it.id == groupId }
-        val removed = s.removeTab(tabId)
-        val at = if (removed.group(groupId) != null) groupIndex + 1 else groupIndex
-        commit(removed.insertTop(at, tab.copy(groupId = null)))
-    }
+    fun addToNewGroup(tabId: String, name: String) =
+        current().let { it.addToNewGroup(tabId, newGroup(it, name.trim())) }?.let(::commit)
 
-    /** Dissolves a group: its tabs take its place in the top-level list, in order. */
-    fun ungroup(groupId: String) {
-        val s = current()
-        val group = s.group(groupId) ?: return
-        val index = s.top.indexOf(group)
-        val top = s.top.toMutableList().apply {
-            removeAt(index)
-            addAll(index, s.tabsOf(groupId).map { it.copy(groupId = null) })
-        }
-        commit(s.copy(top = top, groupTabs = s.groupTabs - groupId))
-    }
+    fun removeFromGroup(tabId: String) = current().removeFromGroup(tabId)?.let(::commit)
 
-    fun renameGroup(groupId: String, name: String) = updateGroup(groupId) { it.copy(name = name.trim()) }
+    fun ungroup(groupId: String) = current().ungroup(groupId)?.let(::commit)
 
-    fun setGroupColor(groupId: String, color: Int) = updateGroup(groupId) { it.copy(color = color) }
+    fun renameGroup(groupId: String, name: String) =
+        current().updateGroup(groupId) { it.copy(name = name.trim()) }?.let(::commit)
 
-    private fun updateGroup(groupId: String, change: (TabGroup) -> TabGroup) {
-        val s = current()
-        commit(s.copy(top = s.top.map { if (it is TabGroup && it.id == groupId) change(it) else it }))
-    }
+    fun setGroupColor(groupId: String, color: Int) =
+        current().updateGroup(groupId) { it.copy(color = color) }?.let(::commit)
 
-    /** A group with the first palette colour not in use yet. */
-    private fun newGroup(s: SessionState, name: String): TabGroup {
-        val used = s.groups.map { it.color }.toSet()
-        val color = (0 until GROUP_COLOR_COUNT).firstOrNull { it !in used } ?: (s.groups.size % GROUP_COLOR_COUNT)
-        return TabGroup(UUID.randomUUID().toString(), name, color)
-    }
+    private fun newGroup(s: SessionState, name: String) =
+        TabGroup(UUID.randomUUID().toString(), name, s.nextGroupColor(GROUP_COLOR_COUNT))
 
     // ---- Reading positions ----
 
     fun viewerState(id: String): ViewerState = viewerStates[id] ?: ViewerState()
+
+    /** Page count of tab [id], once its viewer has opened the file. */
+    fun pageCount(id: String): Int? = pageCounts[id]
+
+    fun onDocumentOpened(id: String, pageCount: Int) {
+        pageCounts[id] = pageCount
+    }
+
+    /** Asks tab [tabId]'s viewer to go to [page] (0-based). */
+    fun jumpToPage(tabId: String, page: Int) {
+        _pageJump.value = PageJump(nextJumpId++, tabId, page)
+    }
+
+    fun onPageJumpHandled(jump: PageJump) {
+        if (_pageJump.value == jump) _pageJump.value = null
+    }
 
     fun updateViewerState(id: String, state: ViewerState) {
         val s = _state.value ?: return
@@ -392,42 +352,3 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
     }
 }
 
-// ---- Pure structure edits ----
-
-/** Removes a tab; a group left empty is removed too. */
-private fun SessionState.removeTab(id: String): SessionState {
-    val tab = tab(id) ?: return this
-    val groupId = tab.groupId ?: return copy(top = top.filterNot { it.id == id })
-    val rest = tabsOf(groupId).filterNot { it.id == id }
-    return if (rest.isEmpty()) {
-        copy(top = top.filterNot { it.id == groupId }, groupTabs = groupTabs - groupId)
-    } else {
-        copy(groupTabs = groupTabs + (groupId to rest))
-    }
-}
-
-/** Adds [tab] at the end of its place: its group, or the top-level list. */
-private fun SessionState.appendTab(tab: PdfTab): SessionState =
-    if (tab.groupId == null) copy(top = top + tab)
-    else copy(groupTabs = groupTabs + (tab.groupId to tabsOf(tab.groupId) + tab))
-
-private fun SessionState.insertTop(index: Int, item: TopItem): SessionState =
-    copy(top = top.toMutableList().apply { add(index.coerceIn(0, size), item) })
-
-private fun SessionState.insertInGroup(groupId: String, index: Int, tab: PdfTab): SessionState =
-    copy(groupTabs = groupTabs + (groupId to tabsOf(groupId).toMutableList().apply { add(index.coerceIn(0, size), tab) }))
-
-private fun SessionState.replaceTab(tab: PdfTab): SessionState =
-    if (tab.groupId == null) copy(top = top.map { if (it.id == tab.id) tab else it })
-    else copy(groupTabs = groupTabs + (tab.groupId to tabsOf(tab.groupId).map { if (it.id == tab.id) tab else it }))
-
-/**
- * Keeps the current tab if it still exists; otherwise picks the one now at [index] of the same
- * place ([groupId] or ungrouped), or its previous neighbour, or else any tab.
- */
-private fun SessionState.withValidCurrent(groupId: String?, index: Int): SessionState {
-    if (currentTab != null) return this
-    val context = context(groupId)
-    val next = context.getOrNull(index.coerceAtMost(context.size - 1)) ?: allTabs.firstOrNull()
-    return copy(currentTabId = next?.id)
-}

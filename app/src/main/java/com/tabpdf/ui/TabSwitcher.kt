@@ -11,6 +11,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -161,6 +162,7 @@ fun TabSwitcher(
                                 }
                             },
                             onSwipeAway = { key -> closeItem(order.byKey(key), viewModel) },
+                            scrollBy = { gridState.scrollBy(it) },
                         ),
                     // Top padding would shift item offsets away from pointer coordinates; see itemGestures.
                     contentPadding = PaddingValues(
@@ -329,6 +331,7 @@ private fun GroupPanel(
                                 viewModel.reorderGroup(group.id, order.map { it.id })
                             },
                             onSwipeAway = { viewModel.close(it as String) },
+                            scrollBy = { gridState.scrollBy(it) },
                         ),
                     contentPadding = PaddingValues(bottom = 12.dp),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -587,11 +590,17 @@ private fun CloseBadge(description: String, onClick: () -> Unit, modifier: Modif
 @Composable
 private fun Thumbnail(tab: PdfTab, page: Int, modifier: Modifier) {
     val context = LocalContext.current
-    val bitmap by produceState<Bitmap?>(null, tab.id, tab.uri, page) {
-        value = Thumbnails.load(context.applicationContext, tab.id, tab.uri, page)
+    // null while loading; a failed load (missing or unreadable file) gives Result.failure.
+    val result by produceState<Result<Bitmap>?>(null, tab.id, tab.uri, page) {
+        val bitmap = Thumbnails.load(context.applicationContext, tab.id, tab.uri, page)
+        value = if (bitmap != null) Result.success(bitmap) else Result.failure(IllegalStateException())
     }
-    val image = remember(bitmap) { bitmap?.asImageBitmap() }
-    if (image != null) {
-        Image(image, contentDescription = null, modifier, contentScale = ContentScale.Crop, alignment = Alignment.TopCenter)
+    val image = remember(result) { result?.getOrNull()?.asImageBitmap() }
+    when {
+        image != null ->
+            Image(image, contentDescription = null, modifier, contentScale = ContentScale.Crop, alignment = Alignment.TopCenter)
+        result?.isFailure == true -> Box(modifier, contentAlignment = Alignment.Center) {
+            Text("열 수 없음", style = MaterialTheme.typography.labelMedium, color = Color.Gray)
+        }
     }
 }

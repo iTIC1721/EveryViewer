@@ -17,9 +17,16 @@ Git 작업(브랜치, 커밋, 머지, 태그) 전에는 반드시 `git-workflow`
 - JDK 17, Android SDK 경로는 `local.properties`(커밋 안 함)
 
 ```powershell
-.\gradlew.bat assembleDebug      # 디버그 APK 빌드
-.\gradlew.bat installDebug       # 연결된 기기/에뮬레이터에 설치
+.\gradlew.bat assembleDebug                 # 디버그 APK 빌드
+.\gradlew.bat installDebug                  # 연결된 기기/에뮬레이터에 설치
+.\gradlew.bat connectedDebugAndroidTest     # 계측 테스트 (기기/에뮬레이터 필요)
 ```
+
+- 계측 테스트(`app/src/androidTest`)는 구조 편집 규칙, 저장·불러오기, DB 마이그레이션, 파일 복사를 다룬다. 구조 규칙(`SessionEdits.kt`)이나 DB를 바꾸면 반드시 돌린다.
+- `connectedDebugAndroidTest`는 끝나면 앱을 지운다 → 에뮬레이터의 탭 데이터도 사라진다.
+- 테스트 APK의 컴포넌트(예: `TestPdfProvider`)는 별도 프로세스에서 돌고 Kotlin 런타임이 없다. 그런 클래스는 Java로 쓴다.
+- 시작 시간·용량은 릴리스 빌드로 잰다. 서명 설정을 커밋하지 않고 디버그 키로 서명하려면:
+  `.\gradlew.bat assembleRelease -Pandroid.injected.signing.store.file=$env:USERPROFILE\.android\debug.keystore -Pandroid.injected.signing.store.password=android -Pandroid.injected.signing.key.alias=androiddebugkey -Pandroid.injected.signing.key.password=android`
 
 ## 에뮬레이터 테스트
 
@@ -37,7 +44,10 @@ adb shell am start -n com.tabpdf/.MainActivity --ez debug_open_test_files true
 - 제스처는 `adb shell input swipe/tap`으로 확인한다. 핀치는 adb로 재현할 수 없으므로 실기기에서 확인.
 - adb로 `/sdcard`에 push한 파일은 앱이 읽을 수 없다 (소유자가 shell).
 - 세션 복원 확인: `adb shell am force-stop com.tabpdf` 후 훅 없이 `am start`로 다시 실행한다. 이전 세션은 DB에 남으므로, 처음부터 확인하려면 앱을 삭제 후 재설치.
-- 버튼·메뉴는 좌표 대신 `uiautomator dump`로 텍스트의 bounds를 찾아 누른다 (화면 캡처는 축소본이라 좌표 환산이 틀리기 쉽다).
+- 버튼·메뉴는 좌표 대신 `uiautomator dump`로 텍스트나 content-desc의 bounds를 찾아 누른다 (화면 캡처는 축소본이라 좌표 환산이 틀리기 쉽다). 아이콘 버튼에는 화면 낭독기용 설명을 꼭 단다 — 테스트에서도 그것으로 찾는다.
+- 다른 앱에서 열기·공유 확인: 테스트 APK를 설치(`installDebugAndroidTest`)하면 그 안의 `TestPdfProvider`가 보내는 앱 역할을 한다.
+  `adb shell am start -a android.intent.action.SEND -t application/pdf --eu android.intent.extra.STREAM content://com.tabpdf.test.pdfs/shared.pdf -n com.tabpdf/.MainActivity`
+- adb `input` 명령은 하나에 수백 ms가 걸려 실제 손가락보다 훨씬 느리다. 끌기처럼 시간에 민감한 제스처는 한 번의 `adb shell "..."` 안에 이어서 보낸다.
 - 닫기 후 실행 취소 스낵바는 약 10초. 스크립트로 확인할 때는 닫기와 실행 취소를 한 번에 보낸다.
 - Git Bash에서 adb 경로 인자(`/sdcard/...`)가 Windows 경로로 바뀌지 않게 `MSYS_NO_PATHCONV=1`을 설정한다.
 
