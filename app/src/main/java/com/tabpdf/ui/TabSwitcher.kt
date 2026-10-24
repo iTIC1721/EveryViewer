@@ -3,6 +3,7 @@ package com.tabpdf.ui
 import android.graphics.Bitmap
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
@@ -59,6 +60,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.toMutableStateList
 import androidx.compose.ui.Alignment
@@ -69,7 +71,11 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntRect
@@ -115,6 +121,35 @@ fun TabSwitcher(
     )
     var menuFor by remember { mutableStateOf<String?>(null) }
     var dialog by remember { mutableStateOf<SwitcherDialog?>(null) }
+    // A tab dragged out of a group panel and still under the finger (like an app dragged out of a
+    // launcher folder). The panel keeps the gesture, hidden; its moves drive this grid's drag.
+    var carried by remember { mutableStateOf<String?>(null) }
+    val gridOrigin = remember { Origin() }
+    val haptics = LocalHapticFeedback.current
+
+    fun drop(dragged: String) {
+        when (val target = order.byKey(reorder.drop())) {
+            is DocTab -> viewModel.groupTogether(dragged, target.id)
+            is TabGroup -> viewModel.addToGroup(dragged, target.id)
+            null -> viewModel.reorderTop(order.map { it.id })
+        }
+    }
+
+    fun carryMove(pointerInRoot: Offset) {
+        val dragged = carried ?: return
+        val position = pointerInRoot - gridOrigin.value
+        gestures.pointer = position
+        val target = gridState.keyAt(position)
+        val rect = target?.let { gridState.rectOf(it) }
+        val inTarget = if (rect == null) Offset.Zero else Offset(
+            (position.x - rect.left) / rect.width,
+            (position.y - rect.top) / rect.height,
+        )
+        reorder.dragMove(dragged, target, inTarget)
+    }
+
+    val latestCarryMove = rememberUpdatedState<(Offset) -> Unit> { carryMove(it) }
+    val latestDrop = rememberUpdatedState<(String) -> Unit> { drop(it) }
 
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
         Column(Modifier.fillMaxSize()) {
@@ -144,6 +179,7 @@ fun TabSwitcher(
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(horizontal = 12.dp)
+                        .onGloballyPositioned { gridOrigin.value = it.positionInRoot() }
                         .itemGestures(
                             state = gestures,
                             keyAt = { gridState.keyAt(it) },
@@ -160,13 +196,7 @@ fun TabSwitcher(
                             },
                             onLongPress = { menuFor = it as String },
                             onDragMove = reorder::dragMove,
-                            onDrop = { dragged ->
-                                when (val target = order.byKey(reorder.drop())) {
-                                    is DocTab -> viewModel.groupTogether(dragged as String, target.id)
-                                    is TabGroup -> viewModel.addToGroup(dragged as String, target.id)
-                                    null -> viewModel.reorderTop(order.map { it.id })
-                                }
-                            },
+                            onDrop = { drop(it as String) },
                             onSwipeAway = { key -> closeItem(order.byKey(key), viewModel) },
                             scrollBy = { gridState.scrollBy(it) },
                         ),
@@ -218,13 +248,22 @@ fun TabSwitcher(
 
     val openGroup = openGroupId?.let { state.group(it) }
     // The group can disappear while its panel is open (closed, ungrouped, emptied).
-    LaunchedEffect(openGroupId, openGroup) { if (openGroupId != null && openGroup == null) onOpenGroup(null) }
+    LaunchedEffect(openGroupId, openGroup, carried) {
+        // A carried tab may have been the group's last; the hidden panel still holds its gesture.
+        if (openGroupId != null && openGroup == null && carried == null) onOpenGroup(null)
+    }
     // Keep showing the last group while the panel animates out.
     val lastGroup = remember { arrayOfNulls<TabGroup>(1) }
     if (openGroup != null) lastGroup[0] = openGroup
-    AnimatedVisibility(openGroup != null, enter = fadeIn() + scaleIn(initialScale = 0.95f), exit = fadeOut() + scaleOut(targetScale = 0.95f)) {
+    AnimatedVisibility(
+        openGroup != null || carried != null,
+        enter = fadeIn() + scaleIn(initialScale = 0.95f),
+        exit = fadeOut() + scaleOut(targetScale = 0.95f),
+    ) {
         val group = lastGroup[0] ?: return@AnimatedVisibility
+        val panelAlpha by animateFloatAsState(if (carried != null) 0f else 1f, label = "panel")
         GroupPanel(
+            modifier = Modifier.graphicsLayer { alpha = panelAlpha },
             group = group,
             tabs = state.tabsOf(group.id),
             currentTabId = state.currentTabId,
@@ -236,6 +275,23 @@ fun TabSwitcher(
             },
             onOpenFiles = { onOpenFiles(group.id) },
             onDismiss = { onOpenGroup(null) },
+            onDragOut = { tabId, pointerInRoot, grab ->
+                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                carried = tabId
+                // From here on it is an ungrouped tab, dragged like any other in the switcher.
+                viewModel.removeFromGroup(tabId)
+                gestures.grab = grab
+                gestures.pointer = pointerInRoot - gridOrigin.value
+                gestures.draggingKey = tabId
+            },
+            // Through the latest functions: the panel's gesture began before the tab joined [order].
+            onCarryMove = { latestCarryMove.value(it) },
+            onCarryDrop = {
+                carried?.let { latestDrop.value(it) }
+                gestures.draggingKey = null
+                carried = null
+                onOpenGroup(null)
+            },
         )
     }
     BackHandler { if (openGroupId != null) onOpenGroup(null) else onDismiss() }
@@ -250,6 +306,7 @@ fun TabSwitcher(
  */
 @Composable
 private fun GroupPanel(
+    modifier: Modifier,
     group: TabGroup,
     tabs: List<DocTab>,
     currentTabId: String?,
@@ -257,6 +314,12 @@ private fun GroupPanel(
     onOpenTab: (String) -> Unit,
     onOpenFiles: () -> Unit,
     onDismiss: () -> Unit,
+    /** A tab was dragged up out of the panel, with the finger at [pointerInRoot], [grab] into the card. */
+    onDragOut: (tabId: String, pointerInRoot: Offset, grab: Offset) -> Unit,
+    /** The finger moved while carrying a tab out. */
+    onCarryMove: (pointerInRoot: Offset) -> Unit,
+    /** The finger lifted while carrying a tab out. */
+    onCarryDrop: () -> Unit,
 ) {
     val order = remember(tabs) { tabs.toMutableStateList() }
     val gridState = rememberLazyGridState()
@@ -265,11 +328,12 @@ private fun GroupPanel(
     var menuFor by remember { mutableStateOf<String?>(null) }
     var headerMenu by remember { mutableStateOf(false) }
     var dialog by remember { mutableStateOf<SwitcherDialog?>(null) }
-    // The dragged tab is above the tabs: dropped now, it leaves the group.
-    var dragOut by remember { mutableStateOf(false) }
+    // The dragged tab went out above the tabs; the rest of the gesture belongs to the switcher.
+    var carrying by remember { mutableStateOf(false) }
+    val gridOrigin = remember { Origin() }
 
     Box(
-        Modifier
+        modifier
             .fillMaxSize()
             .background(Color.Black.copy(alpha = 0.4f))
             .clickable(onClick = onDismiss, indication = null, interactionSource = null),
@@ -287,7 +351,7 @@ private fun GroupPanel(
         ) {
             Column {
                 if (gestures.draggingKey != null) {
-                    DragOutZone(active = dragOut, color = groupColor(group.color))
+                    DragOutZone(groupColor(group.color))
                 } else Row(
                     Modifier.fillMaxWidth().height(60.dp).padding(start = 8.dp, end = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -330,6 +394,7 @@ private fun GroupPanel(
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(horizontal = 12.dp)
+                        .onGloballyPositioned { gridOrigin.value = it.positionInRoot() }
                         .itemGestures(
                             state = gestures,
                             keyAt = { gridState.keyAt(it) },
@@ -337,18 +402,24 @@ private fun GroupPanel(
                             onTap = { onOpenTab(it as String) },
                             onLongPress = { menuFor = it as String },
                             onDragMove = { dragged, target, inTarget ->
-                                // The grid starts right under the header, so above its top is the header.
-                                dragOut = gestures.pointer.y < 0f
-                                if (dragOut) reorder.dragMove(dragged, null, inTarget) else reorder.dragMove(dragged, target, inTarget)
+                                val pointerInRoot = gridOrigin.value + gestures.pointer
+                                when {
+                                    carrying -> onCarryMove(pointerInRoot)
+                                    // The grid starts right under the header, so above its top is out.
+                                    gestures.pointer.y < 0f -> {
+                                        carrying = true
+                                        reorder.drop()
+                                        onDragOut(dragged as String, pointerInRoot, gestures.grab)
+                                    }
+                                    else -> reorder.dragMove(dragged, target, inTarget)
+                                }
                             },
-                            onDrop = { dragged ->
-                                reorder.drop()
-                                if (dragOut) {
-                                    dragOut = false
-                                    viewModel.removeFromGroup(dragged as String)
-                                    // Back to the switcher, where the tab now is.
-                                    onDismiss()
+                            onDrop = {
+                                if (carrying) {
+                                    carrying = false
+                                    onCarryDrop()
                                 } else {
+                                    reorder.drop()
                                     viewModel.reorderGroup(group.id, order.map { it.id })
                                 }
                             },
@@ -381,9 +452,9 @@ private fun GroupPanel(
     SwitcherDialogs(dialog, null, viewModel, onDone = { dialog = null })
 }
 
-/** Takes the header's place while a tab is dragged in a group: drop the tab here to take it out. */
+/** Takes the header's place while a tab is dragged in a group: dragged up past it, the tab leaves the group. */
 @Composable
-private fun DragOutZone(active: Boolean, color: Color) {
+private fun DragOutZone(color: Color) {
     val colors = MaterialTheme.colorScheme
     Box(
         Modifier
@@ -391,15 +462,15 @@ private fun DragOutZone(active: Boolean, color: Color) {
             .height(60.dp)
             .padding(horizontal = 12.dp, vertical = 6.dp)
             .clip(RoundedCornerShape(12.dp))
-            .background(if (active) color.copy(alpha = 0.45f) else colors.surfaceVariant)
-            .border(2.dp, if (active) color else colors.outlineVariant, RoundedCornerShape(12.dp)),
+            .background(color.copy(alpha = 0.2f))
+            .border(2.dp, color, RoundedCornerShape(12.dp)),
         contentAlignment = Alignment.Center,
     ) {
         Icon(
             Icons.AutoMirrored.Filled.ExitToApp,
             contentDescription = "그룹에서 빼기",
-            tint = if (active) colors.onSurface else colors.onSurfaceVariant,
-            modifier = Modifier.size(if (active) 32.dp else 24.dp).graphicsLayer { rotationZ = -90f },
+            tint = colors.onSurface,
+            modifier = Modifier.size(28.dp).graphicsLayer { rotationZ = -90f },
         )
     }
 }
@@ -511,6 +582,11 @@ private fun LazyGridItemScope.DraggableCard(
             )
         }
     }
+}
+
+/** Where a grid sits in the window, for carrying a drag from the group panel's grid to the switcher's. */
+private class Origin {
+    var value = Offset.Zero
 }
 
 private fun <T : TopItem> List<T>.byKey(key: Any?): T? = key?.let { k -> firstOrNull { it.id == k } }
