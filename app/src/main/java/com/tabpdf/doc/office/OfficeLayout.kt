@@ -23,6 +23,7 @@ import android.text.style.UnderlineSpan
 import com.tabpdf.doc.FLOW_WIDTH
 import com.tabpdf.doc.FlowBlock
 import com.tabpdf.doc.FlowBuilder
+import com.tabpdf.doc.Found
 import com.tabpdf.doc.LinkSpan
 import com.tabpdf.doc.Placed
 import com.tabpdf.doc.SheetDocument
@@ -30,6 +31,7 @@ import com.tabpdf.doc.SheetFrame
 import com.tabpdf.doc.StackBlock
 import com.tabpdf.doc.TextBlock
 import com.tabpdf.doc.flowPaint
+import com.tabpdf.doc.offset
 import com.tabpdf.doc.paginate
 import kotlin.math.max
 import kotlin.math.roundToInt
@@ -349,6 +351,10 @@ class OfficeLayout private constructor(private val unit: Float) {
             // Hairlines (0.1 mm) would vanish at normal zoom; keep every border visible.
             linePaint.strokeWidth = max(border.width * unit, 0.9f)
             canvas.drawLine(x0, y0, x1, y1, linePaint)
+        }
+
+        override fun find(query: String): List<Found> = cells.flatMap { (c, content) ->
+            content.find(query).map { it.offset(rect(c).left + c.padding.left * unit, contentTop(c, content)) }
         }
 
         override fun linkAt(x: Float, y: Float): String? {

@@ -43,6 +43,20 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Search
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.input.ImeAction
+import com.tabpdf.doc.TextSearch
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
@@ -215,6 +229,18 @@ private fun ContextPager(
         FingerDrawing.Auto -> !stylusSeen
     }
 
+    // Text search (기획서 5.5): runs on the current tab; the query stays while swiping to another.
+    var searchOpen by rememberSaveable { mutableStateOf(false) }
+    var searchQuery by rememberSaveable { mutableStateOf("") }
+    var searchIndex by remember { mutableIntStateOf(0) }
+    var searchCount by remember { mutableStateOf<Int?>(null) }
+    LaunchedEffect(searchQuery, session.currentTabId) { searchIndex = 0 }
+    fun step(by: Int) {
+        val count = searchCount ?: return
+        if (count > 0) searchIndex = (searchIndex + by + count) % count
+    }
+    BackHandler(enabled = searchOpen) { searchOpen = false }
+
     // Swiping picks the current tab…
     LaunchedEffect(pagerState) {
         snapshotFlow { pagerState.settledPage }.collect { page ->
@@ -275,18 +301,29 @@ private fun ContextPager(
                     onDocumentOpened = { viewModel.onDocumentOpened(tab.id, it) },
                     strokes = strokes,
                     ink = ink,
+                    searchQuery = searchQuery.takeIf { searchOpen && tab.id == session.currentTabId },
+                    searchIndex = searchIndex,
+                    onSearchResults = { searchCount = it },
                 )
             }
         }
 
         AnimatedVisibility(
-            visible = barsVisible || tabs.isEmpty(),
+            visible = barsVisible || tabs.isEmpty() || searchOpen,
             modifier = Modifier.align(Alignment.TopCenter),
             enter = fadeIn(),
             exit = fadeOut(),
         ) {
             Column {
-            TopBar(
+            if (searchOpen && tabs.isNotEmpty()) SearchBar(
+                query = searchQuery,
+                onQuery = { searchQuery = it },
+                count = searchCount,
+                index = searchIndex,
+                onPrevious = { step(-1) },
+                onNext = { step(1) },
+                onClose = { searchOpen = false },
+            ) else TopBar(
                 group = group,
                 groupTabCount = tabs.size,
                 totalTabCount = session.allTabs.size,
@@ -299,7 +336,7 @@ private fun ContextPager(
                 onInkMode = { viewModel.setInkMode(!inkMode) },
                 menu = { dismiss ->
                     val canJump = session.currentTab?.let { viewModel.pageCount(it.id) } != null
-                    ViewerMenu(canJump, viewModel, open = { dialog = it }, dismiss = dismiss)
+                    ViewerMenu(canJump, viewModel, open = { dialog = it }, onSearch = { searchOpen = true }, dismiss = dismiss)
                 },
             )
             if (inkMode && tabs.isNotEmpty()) {
@@ -412,10 +449,84 @@ private fun TopBar(
 
 private enum class ViewerDialog { PageJump, InkSettings, About }
 
-/** ⋮ menu items: go to page, keep the screen on, app info (기획서 4.1, 5.6). */
+/**
+ * Find in the document, in place of the top bar (기획서 5.5), laid out like a browser's find bar:
+ * the text, which match of how many, previous and next, close.
+ */
 @Composable
-private fun ViewerMenu(canJump: Boolean, viewModel: TabsViewModel, open: (ViewerDialog) -> Unit, dismiss: () -> Unit) {
+private fun SearchBar(
+    query: String,
+    onQuery: (String) -> Unit,
+    /** Matches found; null while searching. */
+    count: Int?,
+    index: Int,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
+    onClose: () -> Unit,
+) {
+    val focus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { focus.requestFocus() }
+    val colors = MaterialTheme.colorScheme
+    Surface(color = colors.surface.copy(alpha = 0.95f), tonalElevation = 2.dp) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .statusBarsPadding()
+                .height(TOP_BAR_HEIGHT)
+                .padding(start = 16.dp, end = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            BasicTextField(
+                value = query,
+                onValueChange = onQuery,
+                singleLine = true,
+                textStyle = MaterialTheme.typography.bodyLarge.copy(color = colors.onSurface),
+                cursorBrush = SolidColor(colors.primary),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                keyboardActions = KeyboardActions(onSearch = { onNext() }),
+                modifier = Modifier
+                    .weight(1f)
+                    .focusRequester(focus)
+                    .semantics { contentDescription = "찾을 내용" },
+                decorationBox = { field ->
+                    Box(contentAlignment = Alignment.CenterStart) {
+                        if (query.isEmpty()) Icon(Icons.Default.Search, contentDescription = null, tint = colors.onSurfaceVariant)
+                        field()
+                    }
+                },
+            )
+            if (query.isNotEmpty() && count != null) {
+                val total = if (count >= TextSearch.MAX_MATCHES) "$count+" else "$count"
+                Text(
+                    if (count == 0) "0/0" else "${index + 1}/$total",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = if (count == 0) colors.error else colors.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 8.dp),
+                )
+            }
+            val any = (count ?: 0) > 0
+            IconButton(onClick = onPrevious, enabled = any) {
+                Icon(Icons.Default.KeyboardArrowUp, contentDescription = "이전 결과")
+            }
+            IconButton(onClick = onNext, enabled = any) {
+                Icon(Icons.Default.KeyboardArrowDown, contentDescription = "다음 결과")
+            }
+            IconButton(onClick = onClose) {
+                Icon(Icons.Default.Close, contentDescription = "찾기 닫기")
+            }
+        }
+    }
+}
+
+/** ⋮ menu items: find, go to page, keep the screen on, app info (기획서 4.1, 5.6). */
+@Composable
+private fun ViewerMenu(canJump: Boolean, viewModel: TabsViewModel, open: (ViewerDialog) -> Unit, onSearch: () -> Unit, dismiss: () -> Unit) {
     val keepScreenOn by viewModel.settings.keepScreenOn.collectAsState()
+    DropdownMenuItem(
+        text = { Text("찾기") },
+        enabled = canJump,
+        onClick = { dismiss(); onSearch() },
+    )
     DropdownMenuItem(
         text = { Text("페이지 이동") },
         enabled = canJump,

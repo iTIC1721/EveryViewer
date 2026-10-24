@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.RectF
 import android.graphics.Typeface
 import android.text.Layout
 import android.text.Spanned
@@ -11,6 +12,7 @@ import android.text.StaticLayout
 import android.text.TextPaint
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -37,6 +39,9 @@ abstract class FlowBlock {
     /** Web link at ([x], [y]) in block coordinates. */
     open fun linkAt(x: Float, y: Float): String? = null
 
+    /** Where [query] (normalized by [TextSearch]) occurs in the block's text, in block coordinates. */
+    open fun find(query: String): List<Found> = emptyList()
+
     private companion object {
         val NO_BREAKS = FloatArray(0)
     }
@@ -54,6 +59,8 @@ open class TextBlock(val layout: StaticLayout) : FlowBlock() {
     override val breaks: FloatArray = FloatArray((layout.lineCount - 1).coerceAtLeast(0)) { layout.getLineTop(it + 1).toFloat() }
 
     override fun draw(canvas: Canvas) = layout.draw(canvas)
+
+    override fun find(query: String): List<Found> = TextSearch.find(layout, query)
 
     override fun linkAt(x: Float, y: Float): String? {
         val text = layout.text as? Spanned ?: return null
@@ -194,6 +201,26 @@ class FlowDocument(
         }
     }
 
+    override suspend fun search(query: String): List<SearchMatch> = withContext(Dispatchers.Default) {
+        val q = TextSearch.normalize(query)
+        mutex.withLock {
+            val result = mutableListOf<SearchMatch>()
+            if (closed || q.isEmpty()) return@withLock result
+            for (p in placed) {
+                ensureActive()
+                for (found in p.block.find(q)) {
+                    val rects = found.offset(p.x, p.y)
+                    val page = pageOf(boundaries, rects.first().centerY())
+                    val top = boundaries[page]
+                    val height = boundaries[page + 1] - top
+                    result += SearchMatch(page, rects.map { RectF(it.left / FLOW_WIDTH, (it.top - top) / height, it.right / FLOW_WIDTH, (it.bottom - top) / height) })
+                    if (result.size >= TextSearch.MAX_MATCHES) return@withLock result
+                }
+            }
+            result
+        }
+    }
+
     override fun linkAt(index: Int, x: Float, y: Float): String? {
         val top = boundaries[index]
         val flowY = top + y * (boundaries[index + 1] - top)
@@ -223,6 +250,17 @@ class FlowDocument(
     override suspend fun close() = withContext(NonCancellable) {
         mutex.withLock { closed = true }
     }
+}
+
+/** The page (between two of [boundaries]) that flow position [y] falls on. */
+fun pageOf(boundaries: FloatArray, y: Float): Int {
+    var lo = 0
+    var hi = boundaries.size - 1 // pages
+    while (lo < hi - 1) {
+        val mid = (lo + hi) / 2
+        if (boundaries[mid] <= y) lo = mid else hi = mid
+    }
+    return lo.coerceIn(0, (boundaries.size - 2).coerceAtLeast(0))
 }
 
 /** Paint for flow text. Linear (unhinted) metrics, since every page is drawn scaled. */

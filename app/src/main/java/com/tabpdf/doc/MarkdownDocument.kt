@@ -434,6 +434,8 @@ private class Decorated(
 
     override fun linkAt(x: Float, y: Float) = inner.linkAt(x - innerX, y)
 
+    override fun find(query: String) = inner.find(query).map { it.offset(innerX, 0f) }
+
     private companion object {
         val barPaint = Paint().apply { color = Md.RULE }
         val markerPaint = flowPaint(Md.BODY, color = Md.TEXT)
@@ -482,6 +484,8 @@ private class CodeBlock(private val layout: StaticLayout, private val width: Flo
         canvas.restore()
     }
 
+    override fun find(query: String) = TextSearch.find(layout, query).map { it.offset(Md.CELL_PAD, Md.CELL_PAD) }
+
     private companion object {
         val background = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Md.CODE_BG }
     }
@@ -528,6 +532,15 @@ private class TableGridBlock(
         for (w in listOf(0f) + widths.toList()) {
             x += w
             canvas.drawRect(x - 1f, 0f, x + 1f, height, linePaint)
+        }
+    }
+
+    override fun find(query: String): List<Found> = cells.flatMapIndexed { r, row ->
+        var left = 0f
+        row.flatMapIndexed { c, layout ->
+            val x = left
+            left += widths[c]
+            TextSearch.find(layout, query).map { it.offset(x + Md.CELL_PAD, rowTops[r] + Md.CELL_PAD) }
         }
     }
 

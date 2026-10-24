@@ -41,5 +41,11 @@ interface Document {
      */
     fun linkAt(index: Int, x: Float, y: Float): String? = null
 
+    /**
+     * Where [query] occurs, in page order (기획서 5.5), at most [TextSearch.MAX_MATCHES].
+     * Documents without text (images) find nothing.
+     */
+    suspend fun search(query: String): List<SearchMatch> = emptyList()
+
     suspend fun close()
 }
