@@ -11,7 +11,8 @@ object Documents {
         when (format) {
             FileFormat.Pdf -> PdfDocument.open(context, uri)
             FileFormat.Text -> TextDocument.open(context, uri, name)
-            FileFormat.Markdown, FileFormat.Image ->
+            FileFormat.Image -> ImageDocument.open(context, uri)
+            FileFormat.Markdown ->
                 throw DocumentOpenException(DocumentOpenException.Reason.Unsupported)
             // Detected again: this version may read what the one that opened the tab could not.
             FileFormat.Unsupported -> FileFormats.detect(context, uri, name).let {
