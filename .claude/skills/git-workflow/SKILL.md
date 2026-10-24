@@ -1,9 +1,9 @@
 ---
 name: git-workflow
-description: AllTab(옛 TabPDF) 저장소의 Git 관리 규약(브랜치 전략, 커밋 메시지 규약, 머지·태그 절차). 브랜치를 만들거나, 커밋하거나, main에 머지하거나, 버전 태그를 붙이는 등 Git 작업을 하기 전에 반드시 읽는다.
+description: EveryViewer(옛 가칭 TabPDF) 저장소의 Git 관리 규약(브랜치 전략, 커밋 메시지 규약, 머지·태그 절차). 브랜치를 만들거나, 커밋하거나, main에 머지하거나, 버전 태그를 붙이는 등 Git 작업을 하기 전에 반드시 읽는다.
 ---
 
-# AllTab Git 관리 규약
+# EveryViewer Git 관리 규약
 
 이 저장소는 **로컬 전용**이다. 원격 저장소가 없으므로 `git push`, `git pull`, `git fetch`, 원격 추가는 하지 않는다. 원격을 연결하게 되면 이 문서부터 갱신한다.
 
