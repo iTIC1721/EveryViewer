@@ -25,6 +25,9 @@ data class DuplicatePrompt(
 /** Something just closed that the snackbar can bring back. */
 data class UndoOffer(val id: Long, val message: String)
 
+/** A request for tab [tabId]'s viewer to show [page]; [id] makes repeated jumps distinct. */
+data class PageJump(val id: Long, val tabId: String, val page: Int)
+
 /**
  * Tabs and tab groups, Chrome-style (기획서 3장), persisted so they come back after the app is
  * closed (기획서 5.3). Every structural change goes through [commit], which saves the whole
@@ -47,8 +50,15 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
     private var undoable: Closed? = null
     private var nextUndoId = 0L
 
+    private val _pageJump = MutableStateFlow<PageJump?>(null)
+    val pageJump: StateFlow<PageJump?> = _pageJump.asStateFlow()
+    private var nextJumpId = 0L
+
+    val settings = app.settings
+
     private val viewerStates = mutableMapOf<String, ViewerState>()
     private val unsavedStates = mutableMapOf<String, ViewerState>()
+    private val pageCounts = mutableMapOf<String, Int>()
     private var saveJob: Job? = null
 
     private val loadJob = viewModelScope.launch {
@@ -361,6 +371,22 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
     // ---- Reading positions ----
 
     fun viewerState(id: String): ViewerState = viewerStates[id] ?: ViewerState()
+
+    /** Page count of tab [id], once its viewer has opened the file. */
+    fun pageCount(id: String): Int? = pageCounts[id]
+
+    fun onDocumentOpened(id: String, pageCount: Int) {
+        pageCounts[id] = pageCount
+    }
+
+    /** Asks tab [tabId]'s viewer to go to [page] (0-based). */
+    fun jumpToPage(tabId: String, page: Int) {
+        _pageJump.value = PageJump(nextJumpId++, tabId, page)
+    }
+
+    fun onPageJumpHandled(jump: PageJump) {
+        if (_pageJump.value == jump) _pageJump.value = null
+    }
 
     fun updateViewerState(id: String, state: ViewerState) {
         val s = _state.value ?: return

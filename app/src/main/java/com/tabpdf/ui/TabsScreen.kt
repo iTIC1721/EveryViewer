@@ -34,7 +34,11 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -45,6 +49,7 @@ import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -60,6 +65,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -91,6 +99,13 @@ fun TabsScreen(viewModel: TabsViewModel, onOpenFiles: (groupId: String?) -> Unit
     var showSwitcher by rememberSaveable { mutableStateOf(false) }
     var openGroupId by rememberSaveable { mutableStateOf<String?>(null) }
     val snackbar = remember { SnackbarHostState() }
+
+    val keepScreenOn by viewModel.settings.keepScreenOn.collectAsState()
+    val view = LocalView.current
+    DisposableEffect(keepScreenOn) {
+        view.keepScreenOn = keepScreenOn
+        onDispose { view.keepScreenOn = false }
+    }
 
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant)) {
         // Swiping stays within the current tab's group, or among ungrouped tabs (기획서 5.2).
@@ -168,6 +183,8 @@ private fun ContextPager(
 ) {
     val tabs = session.context(groupId)
     val group = groupId?.let { session.group(it) }
+    val pageJump by viewModel.pageJump.collectAsState()
+    var dialog by remember { mutableStateOf<ViewerDialog?>(null) }
     val pagerState = rememberPagerState(
         initialPage = tabs.indexOfFirst { it.id == session.currentTabId }.coerceAtLeast(0)
     ) { tabs.size }
@@ -214,6 +231,9 @@ private fun ContextPager(
                     onRelocate = { onRelocate(tab) },
                     onClose = { viewModel.close(tab.id) },
                     contentPadding = contentPadding,
+                    pageJump = pageJump?.takeIf { it.tabId == tab.id },
+                    onPageJumpHandled = viewModel::onPageJumpHandled,
+                    onDocumentOpened = { viewModel.onDocumentOpened(tab.id, it) },
                 )
             }
         }
@@ -233,8 +253,32 @@ private fun ContextPager(
                 onGroupClick = { onShowSwitcher(groupId) },
                 onOpenFiles = { onOpenFiles(groupId) },
                 onTabCountClick = { onShowSwitcher(null) },
+                menu = { dismiss ->
+                    val canJump = session.currentTab?.let { viewModel.pageCount(it.id) } != null
+                    ViewerMenu(canJump, viewModel, open = { dialog = it }, dismiss = dismiss)
+                },
             )
         }
+    }
+
+    val current = session.currentTab
+    when (dialog) {
+        ViewerDialog.PageJump -> {
+            val pageCount = current?.let { viewModel.pageCount(it.id) }
+            if (current != null && pageCount != null) {
+                PageJumpDialog(
+                    current = viewModel.viewerState(current.id).page,
+                    pageCount = pageCount,
+                    onJump = { page ->
+                        dialog = null
+                        viewModel.jumpToPage(current.id, page)
+                    },
+                    onDismiss = { dialog = null },
+                )
+            }
+        }
+        ViewerDialog.About -> AboutDialog(onDismiss = { dialog = null })
+        null -> Unit
     }
 }
 
@@ -248,7 +292,10 @@ private fun TopBar(
     onGroupClick: () -> Unit,
     onOpenFiles: () -> Unit,
     onTabCountClick: () -> Unit,
+    /** Items of the ⋮ menu; call the given function to close it. */
+    menu: @Composable (dismiss: () -> Unit) -> Unit,
 ) {
+    var menuOpen by remember { mutableStateOf(false) }
     Surface(color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f), tonalElevation = 2.dp) {
         Row(
             Modifier
@@ -267,8 +314,35 @@ private fun TopBar(
                 Icon(Icons.Default.Add, contentDescription = "PDF 열기")
             }
             TabCountButton(totalTabCount, onTabCountClick)
+            Box {
+                IconButton(onClick = { menuOpen = true }) {
+                    Icon(Icons.Default.MoreVert, contentDescription = "메뉴")
+                }
+                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                    menu { menuOpen = false }
+                }
+            }
         }
     }
+}
+
+private enum class ViewerDialog { PageJump, About }
+
+/** ⋮ menu items: go to page, keep the screen on, app info (기획서 4.1, 5.6). */
+@Composable
+private fun ViewerMenu(canJump: Boolean, viewModel: TabsViewModel, open: (ViewerDialog) -> Unit, dismiss: () -> Unit) {
+    val keepScreenOn by viewModel.settings.keepScreenOn.collectAsState()
+    DropdownMenuItem(
+        text = { Text("페이지 이동") },
+        enabled = canJump,
+        onClick = { dismiss(); open(ViewerDialog.PageJump) },
+    )
+    DropdownMenuItem(
+        text = { Text("화면 켜짐 유지") },
+        trailingIcon = { Checkbox(checked = keepScreenOn, onCheckedChange = null) },
+        onClick = { viewModel.settings.setKeepScreenOn(!keepScreenOn) },
+    )
+    DropdownMenuItem(text = { Text("앱 정보") }, onClick = { dismiss(); open(ViewerDialog.About) })
 }
 
 /** Shown only while viewing a grouped tab: the group's colour and name; opens its panel. */
@@ -327,7 +401,7 @@ private fun TitleStrip(tabs: List<PdfTab>, pagerState: PagerState, modifier: Mod
 /** Total tab count, like a mobile browser's tab button; opens the tab switcher. */
 @Composable
 private fun TabCountButton(count: Int, onClick: () -> Unit) {
-    IconButton(onClick = onClick) {
+    IconButton(onClick = onClick, modifier = Modifier.semantics { contentDescription = "탭 ${count}개 보기" }) {
         Box(
             Modifier
                 .size(24.dp)

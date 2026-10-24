@@ -11,6 +11,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.shape.CircleShape
@@ -32,7 +34,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -95,6 +100,58 @@ fun ColorDialog(selected: Int, onSelect: (Int) -> Unit, onDismiss: () -> Unit) {
                         )
                     }
                 }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("닫기") } },
+    )
+}
+
+/** Go to a page by number (기획서 5.5). [current] and the result are 0-based. */
+@Composable
+fun PageJumpDialog(current: Int, pageCount: Int, onJump: (page: Int) -> Unit, onDismiss: () -> Unit) {
+    val initial = (current + 1).toString()
+    var value by remember { mutableStateOf(TextFieldValue(initial, TextRange(0, initial.length))) }
+    val number = value.text.toIntOrNull()
+    val valid = number != null && number in 1..pageCount
+    val focus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { focus.requestFocus() }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("페이지 이동") },
+        text = {
+            OutlinedTextField(
+                value = value,
+                onValueChange = { new -> value = new.copy(text = new.text.filter(Char::isDigit).take(6)) },
+                singleLine = true,
+                label = { Text("1 – $pageCount") },
+                isError = value.text.isNotEmpty() && !valid,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Go),
+                keyboardActions = KeyboardActions(onGo = { if (valid) onJump(number!! - 1) }),
+                modifier = Modifier.focusRequester(focus),
+            )
+        },
+        confirmButton = { TextButton(onClick = { onJump(number!! - 1) }, enabled = valid) { Text("이동") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } },
+    )
+}
+
+@Composable
+fun AboutDialog(onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    val version = remember {
+        context.packageManager.getPackageInfo(context.packageName, 0).versionName.orEmpty()
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("TabPDF $version") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("여러 PDF를 탭으로 열어 두고 넘겨 보는 뷰어")
+                Text(
+                    "오픈소스: Kotlin, AndroidX (Jetpack Compose, Room 등) — Apache License 2.0",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("닫기") } },

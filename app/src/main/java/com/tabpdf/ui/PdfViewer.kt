@@ -14,6 +14,7 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculateCentroid
 import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -21,11 +22,15 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -63,6 +68,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import com.tabpdf.pdf.PdfDocument
 import com.tabpdf.pdf.PdfOpenException
+import com.tabpdf.tabs.PageJump
 import com.tabpdf.tabs.ViewerState
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
@@ -86,6 +92,9 @@ private val PAGE_GAP = 8.dp
 /** Largest bitmap we render for one page, to keep memory bounded on big zooms (~32 MB). */
 private const val MAX_RENDER_PIXELS = 8_000_000f
 
+/** Shorter documents scroll fine by hand; no fast-scroll handle for them. */
+private const val FAST_SCROLL_MIN_PAGES = 8
+
 /**
  * Vertically scrolling, zoomable view of one PDF.
  *
@@ -105,11 +114,16 @@ fun PdfViewer(
     onRelocate: () -> Unit,
     onClose: () -> Unit,
     contentPadding: PaddingValues,
+    /** A "go to page" request for this viewer, handled once via [onPageJumpHandled]. */
+    pageJump: PageJump?,
+    onPageJumpHandled: (PageJump) -> Unit,
+    onDocumentOpened: (pageCount: Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
     var document by remember { mutableStateOf<PdfDocument?>(null) }
     var error by remember { mutableStateOf<Exception?>(null) }
+    val currentOnDocumentOpened by rememberUpdatedState(onDocumentOpened)
 
     LaunchedEffect(uri, revision) {
         error = null
@@ -123,6 +137,7 @@ fun PdfViewer(
             return@LaunchedEffect
         }
         document = doc
+        currentOnDocumentOpened(doc.pageCount)
         try {
             awaitCancellation()
         } finally {
@@ -150,6 +165,8 @@ fun PdfViewer(
                 onStateChange = onStateChange,
                 onTap = onTap,
                 contentPadding = contentPadding,
+                pageJump = pageJump,
+                onPageJumpHandled = onPageJumpHandled,
             )
         }
     }
@@ -163,9 +180,12 @@ private fun PdfPages(
     onStateChange: (ViewerState) -> Unit,
     onTap: () -> Unit,
     contentPadding: PaddingValues,
+    pageJump: PageJump?,
+    onPageJumpHandled: (PageJump) -> Unit,
 ) {
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
+    var fastScrolling by remember { mutableStateOf(false) }
 
     /** Height of page [index] at [zoom], in px — the unit the saved fractional offset is relative to. */
     fun pageHeight(index: Int, zoom: Float) = viewportWidth * zoom * document.pageSizes[index].aspect
@@ -196,6 +216,12 @@ private fun PdfPages(
 
     LaunchedEffect(Unit) {
         snapshotFlow { currentState() }.distinctUntilChanged().collect { currentOnStateChange(it) }
+    }
+
+    LaunchedEffect(pageJump) {
+        val jump = pageJump ?: return@LaunchedEffect
+        listState.scrollToItem(jump.page.coerceIn(0, document.pageCount - 1))
+        onPageJumpHandled(jump)
     }
 
     fun maxPan() = viewportWidth * (zoom - 1f)
@@ -332,7 +358,14 @@ private fun PdfPages(
                 )
             }
         }
-        PageIndicator(listState, document.pageCount, Modifier.align(Alignment.BottomEnd))
+        FastScroller(
+            listState = listState,
+            pageCount = document.pageCount,
+            contentPadding = contentPadding,
+            onDraggingChange = { fastScrolling = it },
+            modifier = Modifier.align(Alignment.TopEnd),
+        )
+        PageIndicator(listState, document.pageCount, active = fastScrolling, Modifier.align(Alignment.BottomEnd))
     }
 }
 
@@ -406,9 +439,90 @@ private fun OpenFailure(error: Exception, onRelocate: () -> Unit, onClose: () ->
     }
 }
 
-/** "12 / 240", shown while scrolling and briefly after. */
+/**
+ * Draggable handle on the right edge for jumping through long documents (기획서 5.5). Appears
+ * while scrolling, like Android's fast scroller, so it never sits on top of the page otherwise.
+ */
 @Composable
-private fun PageIndicator(listState: LazyListState, pageCount: Int, modifier: Modifier) {
+private fun FastScroller(
+    listState: LazyListState,
+    pageCount: Int,
+    contentPadding: PaddingValues,
+    onDraggingChange: (Boolean) -> Unit,
+    modifier: Modifier,
+) {
+    if (pageCount < FAST_SCROLL_MIN_PAGES) return
+    val scope = rememberCoroutineScope()
+    var dragging by remember { mutableStateOf(false) }
+    var visible by remember { mutableStateOf(false) }
+    LaunchedEffect(listState.isScrollInProgress, dragging) {
+        if (listState.isScrollInProgress || dragging) {
+            visible = true
+        } else {
+            delay(1500)
+            visible = false
+        }
+    }
+    // How far through the document, 0..1, from the first visible page and how much of it is scrolled.
+    val progress by remember {
+        derivedStateOf {
+            if (!listState.canScrollForward) return@derivedStateOf 1f
+            val first = listState.layoutInfo.visibleItemsInfo.firstOrNull() ?: return@derivedStateOf 0f
+            val within = listState.firstVisibleItemScrollOffset.toFloat() / first.size.coerceAtLeast(1)
+            ((first.index + within) / (pageCount - 1)).coerceIn(0f, 1f)
+        }
+    }
+    AnimatedVisibility(
+        visible,
+        modifier
+            .fillMaxHeight()
+            .padding(top = contentPadding.calculateTopPadding(), bottom = contentPadding.calculateBottomPadding()),
+        enter = fadeIn(),
+        exit = fadeOut(),
+    ) {
+        BoxWithConstraints(Modifier.fillMaxHeight().width(36.dp)) {
+            val trackHeight = constraints.maxHeight.toFloat()
+            val thumbHeight = with(LocalDensity.current) { 48.dp.toPx() }
+            fun jumpTo(y: Float) {
+                val fraction = ((y - thumbHeight / 2) / (trackHeight - thumbHeight)).coerceIn(0f, 1f)
+                scope.launch { listState.scrollToItem((fraction * (pageCount - 1)).roundToInt()) }
+            }
+            fun setDragging(value: Boolean) {
+                dragging = value
+                onDraggingChange(value)
+            }
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .pointerInput(Unit) {
+                        detectVerticalDragGestures(
+                            onDragStart = { setDragging(true); jumpTo(it.y) },
+                            onDragEnd = { setDragging(false) },
+                            onDragCancel = { setDragging(false) },
+                        ) { change, _ ->
+                            change.consume()
+                            jumpTo(change.position.y)
+                        }
+                    }
+            )
+            Box(
+                Modifier
+                    .align(Alignment.TopEnd)
+                    .offset { IntOffset(0, (progress * (trackHeight - thumbHeight)).roundToInt()) }
+                    .padding(end = 4.dp)
+                    .size(width = if (dragging) 8.dp else 6.dp, height = 48.dp)
+                    .background(
+                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = if (dragging) 0.9f else 0.6f),
+                        RoundedCornerShape(4.dp),
+                    )
+            )
+        }
+    }
+}
+
+/** "12 / 240", shown while scrolling (or [active]) and briefly after. */
+@Composable
+private fun PageIndicator(listState: LazyListState, pageCount: Int, active: Boolean, modifier: Modifier) {
     val currentPage by remember {
         derivedStateOf {
             val info = listState.layoutInfo
@@ -419,15 +533,16 @@ private fun PageIndicator(listState: LazyListState, pageCount: Int, modifier: Mo
         }
     }
     var visible by remember { mutableStateOf(false) }
-    LaunchedEffect(listState.isScrollInProgress, currentPage) {
-        if (listState.isScrollInProgress) {
+    LaunchedEffect(listState.isScrollInProgress, active, currentPage) {
+        if (listState.isScrollInProgress || active) {
             visible = true
         } else {
             delay(1200)
             visible = false
         }
     }
-    AnimatedVisibility(visible, modifier.navigationBarsPadding().padding(16.dp), enter = fadeIn(), exit = fadeOut()) {
+    // Extra end padding keeps it clear of the fast-scroll handle.
+    AnimatedVisibility(visible, modifier.navigationBarsPadding().padding(start = 16.dp, top = 16.dp, bottom = 16.dp, end = 44.dp), enter = fadeIn(), exit = fadeOut()) {
         Text(
             "$currentPage / $pageCount",
             Modifier
