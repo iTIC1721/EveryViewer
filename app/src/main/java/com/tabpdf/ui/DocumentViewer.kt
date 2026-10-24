@@ -66,8 +66,9 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
-import com.tabpdf.pdf.PdfDocument
-import com.tabpdf.pdf.PdfOpenException
+import com.tabpdf.doc.Document
+import com.tabpdf.doc.DocumentOpenException
+import com.tabpdf.doc.Documents
 import com.tabpdf.tabs.PageJump
 import com.tabpdf.tabs.ViewerState
 import kotlinx.coroutines.CancellationException
@@ -96,7 +97,7 @@ private const val MAX_RENDER_PIXELS = 8_000_000f
 private const val FAST_SCROLL_MIN_PAGES = 8
 
 /**
- * Vertically scrolling, zoomable view of one PDF.
+ * Vertically scrolling, zoomable view of one file, whatever its format (기획서 5.7).
  *
  * Gesture rule (기획서 5.2): a horizontal drag is left unconsumed — so the enclosing tab pager
  * turns the tab — unless the page is zoomed in *and* can still pan in that direction when the
@@ -104,7 +105,7 @@ private const val FAST_SCROLL_MIN_PAGES = 8
  * has to lift and swipe again to change tabs, like a photo gallery.
  */
 @Composable
-fun PdfViewer(
+fun DocumentViewer(
     uri: Uri,
     /** Changing this reopens the file even if [uri] is the same (after "다시 찾기"). */
     revision: Int,
@@ -121,7 +122,7 @@ fun PdfViewer(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
-    var document by remember { mutableStateOf<PdfDocument?>(null) }
+    var document by remember { mutableStateOf<Document?>(null) }
     var error by remember { mutableStateOf<Exception?>(null) }
     val currentOnDocumentOpened by rememberUpdatedState(onDocumentOpened)
 
@@ -129,7 +130,7 @@ fun PdfViewer(
         error = null
         val doc = try {
             // Not cancellable, so a document opened just as the page leaves is still closed below.
-            withContext(NonCancellable) { PdfDocument.open(context, uri) }
+            withContext(NonCancellable) { Documents.open(context, uri) }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -158,7 +159,7 @@ fun PdfViewer(
         when {
             failure != null -> OpenFailure(failure, onRelocate, onClose, Modifier.align(Alignment.Center))
             doc == null -> CircularProgressIndicator(Modifier.align(Alignment.Center))
-            else -> PdfPages(
+            else -> DocumentPages(
                 document = doc,
                 viewportWidth = constraints.maxWidth.toFloat(),
                 initialState = initialState,
@@ -173,8 +174,8 @@ fun PdfViewer(
 }
 
 @Composable
-private fun PdfPages(
-    document: PdfDocument,
+private fun DocumentPages(
+    document: Document,
     viewportWidth: Float,
     initialState: ViewerState,
     onStateChange: (ViewerState) -> Unit,
@@ -254,7 +255,7 @@ private fun PdfPages(
         }
     }
 
-    val gapPx = with(density) { PAGE_GAP.toPx() }
+    val gapPx = if (document.pageGaps) with(density) { PAGE_GAP.toPx() } else 0f
 
     Box(
         Modifier
@@ -348,7 +349,7 @@ private fun PdfPages(
         ) {
             items(document.pageCount) { index ->
                 val aspect = document.pageSizes[index].aspect
-                PdfPage(
+                PageImage(
                     document = document,
                     index = index,
                     pageWidth = pageWidth,
@@ -384,8 +385,8 @@ private fun renderWidthFor(viewportWidth: Float, zoom: Float, aspect: Float): In
 }
 
 @Composable
-private fun PdfPage(
-    document: PdfDocument,
+private fun PageImage(
+    document: Document,
     index: Int,
     pageWidth: Float,
     height: Dp,
@@ -418,12 +419,12 @@ private fun OpenFailure(error: Exception, onRelocate: () -> Unit, onClose: () ->
     // A SecurityException here comes from opening the file (access lost), not from PdfRenderer —
     // PdfDocument turns the renderer's one into PasswordProtected.
     val missing = error is FileNotFoundException || error is SecurityException
-    val reason = (error as? PdfOpenException)?.reason
+    val reason = (error as? DocumentOpenException)?.reason
     val (title, detail) = when {
         missing -> "파일을 찾을 수 없습니다" to "이동되었거나 삭제되었을 수 있습니다."
-        reason == PdfOpenException.Reason.PasswordProtected ->
+        reason == DocumentOpenException.Reason.PasswordProtected ->
             "암호가 걸린 PDF입니다" to "암호 PDF는 아직 지원하지 않습니다."
-        reason == PdfOpenException.Reason.NoPages -> "빈 PDF입니다" to "페이지가 하나도 없습니다."
+        reason == DocumentOpenException.Reason.NoPages -> "빈 PDF입니다" to "페이지가 하나도 없습니다."
         else -> "PDF를 열 수 없습니다" to "손상되었거나 지원하지 않는 파일입니다."
     }
     Column(modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {

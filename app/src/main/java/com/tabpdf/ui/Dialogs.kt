@@ -42,7 +42,7 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.tabpdf.tabs.DuplicatePrompt
-import com.tabpdf.tabs.PdfTab
+import com.tabpdf.tabs.DocTab
 import com.tabpdf.tabs.TabGroup
 import com.tabpdf.tabs.displayName
 
@@ -170,7 +170,7 @@ fun ConfirmDialog(title: String, message: String, confirmLabel: String, onConfir
 }
 
 @Composable
-fun FileInfoDialog(tab: PdfTab, page: Int, onDismiss: () -> Unit) {
+fun FileInfoDialog(tab: DocTab, page: Int, onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(tab.name, maxLines = 2, overflow = TextOverflow.Ellipsis) },

@@ -111,7 +111,7 @@ class MainActivity : ComponentActivity() {
                 try {
                     FileAccess.prepare(applicationContext, uri)
                 } catch (e: Exception) {
-                    android.util.Log.w("TabPDF", "Could not open $uri", e)
+                    android.util.Log.w("EveryViewer", "Could not open $uri", e)
                     null
                 }
             }

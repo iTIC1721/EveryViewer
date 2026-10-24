@@ -17,7 +17,7 @@ data class DuplicatePrompt(
     val file: OpenedFile,
     /** Where the file was to be opened: a group, or null for ungrouped. */
     val targetGroupId: String?,
-    val existing: PdfTab,
+    val existing: DocTab,
     /** Name of the group the existing tab is in, or null if it is ungrouped. */
     val existingPlace: String?,
 )
@@ -93,7 +93,7 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
             loadJob.join()
             var s = current()
             val target = groupId?.takeIf { s.group(it) != null }
-            val added = mutableListOf<PdfTab>()
+            val added = mutableListOf<DocTab>()
             var show: String? = null
             for (file in files) {
                 val here = (s.context(target) + added).firstOrNull { it.uri == file.uri }
@@ -119,7 +119,7 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
         s.group(groupId)?.displayName(s.tabsOf(groupId).size).orEmpty()
 
     private fun newTab(file: OpenedFile, groupId: String?) =
-        PdfTab(UUID.randomUUID().toString(), groupId, file.uri, file.name, file.isInternalCopy)
+        DocTab(UUID.randomUUID().toString(), groupId, file.uri, file.name, file.isInternalCopy)
 
     private fun showNextDuplicate() {
         if (_duplicatePrompt.value == null) _duplicatePrompt.value = pendingDuplicates.removeFirstOrNull()
@@ -187,7 +187,7 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
     private sealed interface Closed {
         /** [emptiedGroup] is set when closing the tab removed its (now empty) group. */
         data class Tab(
-            val tab: PdfTab,
+            val tab: DocTab,
             val index: Int,
             val topIndex: Int,
             val emptiedGroup: TabGroup?,
@@ -197,7 +197,7 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
         data class Group(
             val group: TabGroup,
             val topIndex: Int,
-            val tabs: List<PdfTab>,
+            val tabs: List<DocTab>,
             val states: Map<String, ViewerState>,
         ) : Closed
     }

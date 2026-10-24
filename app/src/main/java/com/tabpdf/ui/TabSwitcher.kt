@@ -75,8 +75,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.round
 import androidx.compose.ui.unit.toRect
 import androidx.compose.ui.zIndex
-import com.tabpdf.pdf.Thumbnails
-import com.tabpdf.tabs.PdfTab
+import com.tabpdf.doc.Thumbnails
+import com.tabpdf.tabs.DocTab
 import com.tabpdf.tabs.SessionState
 import com.tabpdf.tabs.TabGroup
 import com.tabpdf.tabs.TabsViewModel
@@ -105,7 +105,7 @@ fun TabSwitcher(
     val gestures = rememberItemGestureState()
     val reorder = rememberReorderController(
         onMove = { from, to -> order.move(from, to) },
-        canMerge = { dragged, target -> order.byKey(dragged) is PdfTab && order.byKey(target) != null },
+        canMerge = { dragged, target -> order.byKey(dragged) is DocTab && order.byKey(target) != null },
     )
     var menuFor by remember { mutableStateOf<String?>(null) }
     var dialog by remember { mutableStateOf<SwitcherDialog?>(null) }
@@ -144,7 +144,7 @@ fun TabSwitcher(
                             itemRect = { gridState.rectOf(it) },
                             onTap = { key ->
                                 when (val item = order.byKey(key)) {
-                                    is PdfTab -> {
+                                    is DocTab -> {
                                         viewModel.select(item.id)
                                         onDismiss()
                                     }
@@ -156,7 +156,7 @@ fun TabSwitcher(
                             onDragMove = reorder::dragMove,
                             onDrop = { dragged ->
                                 when (val target = order.byKey(reorder.drop())) {
-                                    is PdfTab -> viewModel.groupTogether(dragged as String, target.id)
+                                    is DocTab -> viewModel.groupTogether(dragged as String, target.id)
                                     is TabGroup -> viewModel.addToGroup(dragged as String, target.id)
                                     null -> viewModel.reorderTop(order.map { it.id })
                                 }
@@ -174,7 +174,7 @@ fun TabSwitcher(
                     items(order, key = { it.id }) { item ->
                         DraggableCard(item.id, gestures, isMergeTarget = reorder.mergeTarget == item.id) {
                             when (item) {
-                                is PdfTab -> TabCard(
+                                is DocTab -> TabCard(
                                     tab = item,
                                     page = viewModel.viewerState(item.id).page,
                                     isCurrent = item.id == state.currentTabId,
@@ -190,7 +190,7 @@ fun TabSwitcher(
                             }
                             DropdownMenu(expanded = menuFor == item.id, onDismissRequest = { menuFor = null }) {
                                 when (item) {
-                                    is PdfTab -> {
+                                    is DocTab -> {
                                         MenuItem("그룹에 추가") { menuFor = null; dialog = SwitcherDialog.AddToGroup(item) }
                                         MenuItem("파일 정보") { menuFor = null; dialog = SwitcherDialog.Info(item) }
                                         MenuItem("닫기") { menuFor = null; viewModel.close(item.id) }
@@ -244,7 +244,7 @@ fun TabSwitcher(
 @Composable
 private fun GroupPanel(
     group: TabGroup,
-    tabs: List<PdfTab>,
+    tabs: List<DocTab>,
     currentTabId: String?,
     viewModel: TabsViewModel,
     onOpenTab: (String) -> Unit,
@@ -360,9 +360,9 @@ private fun GroupPanel(
 }
 
 private sealed interface SwitcherDialog {
-    data class AddToGroup(val tab: PdfTab) : SwitcherDialog
-    data class NewGroupFor(val tab: PdfTab) : SwitcherDialog
-    data class Info(val tab: PdfTab) : SwitcherDialog
+    data class AddToGroup(val tab: DocTab) : SwitcherDialog
+    data class NewGroupFor(val tab: DocTab) : SwitcherDialog
+    data class Info(val tab: DocTab) : SwitcherDialog
     data class Rename(val group: TabGroup) : SwitcherDialog
     data class Color(val group: TabGroup) : SwitcherDialog
 }
@@ -405,7 +405,7 @@ private fun SwitcherDialogs(dialog: SwitcherDialog?, state: SessionState?, viewM
 
 private fun closeItem(item: TopItem?, viewModel: TabsViewModel) {
     when (item) {
-        is PdfTab -> viewModel.close(item.id)
+        is DocTab -> viewModel.close(item.id)
         is TabGroup -> viewModel.closeGroup(item.id)
         null -> Unit
     }
@@ -487,7 +487,7 @@ private fun LazyGridState.rectOf(key: Any): Rect? =
 private val CardShape = RoundedCornerShape(12.dp)
 
 @Composable
-private fun TabCard(tab: PdfTab, page: Int, isCurrent: Boolean, onClose: () -> Unit) {
+private fun TabCard(tab: DocTab, page: Int, isCurrent: Boolean, onClose: () -> Unit) {
     Surface(
         shape = CardShape,
         tonalElevation = 2.dp,
@@ -514,7 +514,7 @@ private fun TabCard(tab: PdfTab, page: Int, isCurrent: Boolean, onClose: () -> U
 @Composable
 private fun GroupCard(
     group: TabGroup,
-    tabs: List<PdfTab>,
+    tabs: List<DocTab>,
     pageOf: (String) -> Int,
     containsCurrent: Boolean,
     onClose: () -> Unit,
@@ -588,7 +588,7 @@ private fun CloseBadge(description: String, onClick: () -> Unit, modifier: Modif
 }
 
 @Composable
-private fun Thumbnail(tab: PdfTab, page: Int, modifier: Modifier) {
+private fun Thumbnail(tab: DocTab, page: Int, modifier: Modifier) {
     val context = LocalContext.current
     // null while loading; a failed load (missing or unreadable file) gives Result.failure.
     val result by produceState<Result<Bitmap>?>(null, tab.id, tab.uri, page) {

@@ -35,7 +35,7 @@ class FileAccessTest {
         val original = testContext.assets.open(TestPdfProvider.ASSET).use { it.readBytes() }
         assertArrayEquals(original, copy.readBytes())
 
-        FileAccess.release(appContext, PdfTab("t", null, opened.uri, opened.name, opened.isInternalCopy))
+        FileAccess.release(appContext, DocTab("t", null, opened.uri, opened.name, opened.isInternalCopy))
         assertFalse(copy.exists())
     }
 }

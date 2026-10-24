@@ -19,17 +19,17 @@ internal fun SessionState.removeTab(id: String): SessionState {
 }
 
 /** Adds [tab] at the end of its place: its group, or the top-level list. */
-internal fun SessionState.appendTab(tab: PdfTab): SessionState =
+internal fun SessionState.appendTab(tab: DocTab): SessionState =
     if (tab.groupId == null) copy(top = top + tab)
     else copy(groupTabs = groupTabs + (tab.groupId to tabsOf(tab.groupId) + tab))
 
 internal fun SessionState.insertTop(index: Int, item: TopItem): SessionState =
     copy(top = top.toMutableList().apply { add(index.coerceIn(0, size), item) })
 
-internal fun SessionState.insertInGroup(groupId: String, index: Int, tab: PdfTab): SessionState =
+internal fun SessionState.insertInGroup(groupId: String, index: Int, tab: DocTab): SessionState =
     copy(groupTabs = groupTabs + (groupId to tabsOf(groupId).toMutableList().apply { add(index.coerceIn(0, size), tab) }))
 
-internal fun SessionState.replaceTab(tab: PdfTab): SessionState =
+internal fun SessionState.replaceTab(tab: DocTab): SessionState =
     if (tab.groupId == null) copy(top = top.map { if (it.id == tab.id) tab else it })
     else copy(groupTabs = groupTabs + (tab.groupId to tabsOf(tab.groupId).map { if (it.id == tab.id) tab else it }))
 

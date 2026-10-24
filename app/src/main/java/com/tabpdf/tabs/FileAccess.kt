@@ -31,7 +31,7 @@ object FileAccess {
     }
 
     /** Frees what [tab] held, once no tab uses its file any more. */
-    suspend fun release(context: Context, tab: PdfTab) = withContext(Dispatchers.IO) {
+    suspend fun release(context: Context, tab: DocTab) = withContext(Dispatchers.IO) {
         if (tab.isInternalCopy) {
             tab.uri.path?.let { File(it).delete() }
         } else if (tab.uri.scheme == "content") {

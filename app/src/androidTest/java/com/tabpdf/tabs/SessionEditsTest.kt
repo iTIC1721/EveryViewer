@@ -11,14 +11,14 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class SessionEditsTest {
     private fun tab(id: String, groupId: String? = null) =
-        PdfTab(id, groupId, Uri.parse("content://test/$id"), "$id.pdf", isInternalCopy = false)
+        DocTab(id, groupId, Uri.parse("content://test/$id"), "$id.pdf", isInternalCopy = false)
 
     private fun group(id: String, color: Int = 0) = TabGroup(id, "", color)
 
     /** Shorthand for asserting the top level: tab ids, and groups as "G:id[tab,tab]". */
     private fun SessionState.shape(): List<String> = top.map { item ->
         when (item) {
-            is PdfTab -> item.id
+            is DocTab -> item.id
             is TabGroup -> "G:${item.id}${tabsOf(item.id).map { it.id }}"
         }
     }
@@ -44,7 +44,7 @@ class SessionEditsTest {
         val s = abc.groupTogether("b", "a", group("g"))!!
         val after = s.removeTab("a").removeTab("b")
         assertEquals(listOf("c"), after.shape())
-        assertEquals(emptyMap<String, List<PdfTab>>(), after.groupTabs)
+        assertEquals(emptyMap<String, List<DocTab>>(), after.groupTabs)
     }
 
     @Test

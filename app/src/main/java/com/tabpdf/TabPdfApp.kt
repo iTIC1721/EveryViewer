@@ -25,7 +25,7 @@ class TabPdfApp : Application() {
                 try {
                     write()
                 } catch (e: Exception) {
-                    android.util.Log.e("TabPDF", "Session write failed", e)
+                    android.util.Log.e("EveryViewer", "Session write failed", e)
                 }
             }
         }

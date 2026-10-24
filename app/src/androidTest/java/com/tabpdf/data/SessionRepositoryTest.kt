@@ -4,7 +4,7 @@ import android.net.Uri
 import androidx.room.Room
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
-import com.tabpdf.tabs.PdfTab
+import com.tabpdf.tabs.DocTab
 import com.tabpdf.tabs.SessionState
 import com.tabpdf.tabs.TabGroup
 import com.tabpdf.tabs.ViewerState
@@ -32,7 +32,7 @@ class SessionRepositoryTest {
     fun tearDown() = db.close()
 
     private fun tab(id: String, groupId: String? = null) =
-        PdfTab(id, groupId, Uri.parse("content://test/$id"), "$id.pdf", isInternalCopy = false)
+        DocTab(id, groupId, Uri.parse("content://test/$id"), "$id.pdf", isInternalCopy = false)
 
     /** a, [g: b, c], d — a group between two ungrouped tabs. */
     private val mixed = SessionState(

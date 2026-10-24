@@ -1,4 +1,4 @@
-package com.tabpdf.pdf
+package com.tabpdf.doc
 
 import android.content.Context
 import android.graphics.Bitmap
@@ -24,7 +24,7 @@ object Thumbnails {
         override fun sizeOf(key: String, value: Bitmap) = value.byteCount
     }
 
-    /** Opening a PDF is the expensive part; don't open many at once while the grid fills in. */
+    /** Opening a file is the expensive part; don't open many at once while the grid fills in. */
     private val renders = Semaphore(2)
 
     /** Thumbnail of [page] of the file at [uri], or null if the file can't be read. */
@@ -47,7 +47,7 @@ object Thumbnails {
 
     private suspend fun render(context: Context, uri: Uri, page: Int): Bitmap? = renders.withPermit {
         try {
-            val document = PdfDocument.open(context, uri)
+            val document = Documents.open(context, uri)
             try {
                 document.renderPage(page.coerceIn(0, document.pageCount - 1), WIDTH_PX)
             } finally {
