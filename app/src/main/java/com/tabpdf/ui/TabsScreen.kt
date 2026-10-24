@@ -109,7 +109,6 @@ fun TabsScreen(viewModel: TabsViewModel, onOpenFiles: (groupId: String?) -> Unit
         Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant))
         return
     }
-    val duplicatePrompt by viewModel.duplicatePrompt.collectAsState()
     val undoOffer by viewModel.undoOffer.collectAsState()
     var barsVisible by rememberSaveable { mutableStateOf(true) }
     var showSwitcher by rememberSaveable { mutableStateOf(false) }
@@ -178,15 +177,6 @@ fun TabsScreen(viewModel: TabsViewModel, onOpenFiles: (groupId: String?) -> Unit
 
         SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).navigationBarsPadding())
     }
-    }
-
-    duplicatePrompt?.let { prompt ->
-        DuplicateDialog(
-            prompt,
-            onGoThere = { viewModel.resolveDuplicate(openHere = false) },
-            onOpenHere = { viewModel.resolveDuplicate(openHere = true) },
-            onCancel = { viewModel.resolveDuplicate(openHere = null) },
-        )
     }
 
     // Closing a tab or group offers undo; once the snackbar goes away, the close is final.

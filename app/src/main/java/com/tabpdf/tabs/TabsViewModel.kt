@@ -16,16 +16,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.util.UUID
 
-/** A file being opened that is already open in another place (기획서 5.1). */
-data class DuplicatePrompt(
-    val file: OpenedFile,
-    /** Where the file was to be opened: a group, or null for ungrouped. */
-    val targetGroupId: String?,
-    val existing: DocTab,
-    /** Name of the group the existing tab is in, or null if it is ungrouped. */
-    val existingPlace: String?,
-)
-
 /** Something just closed that the snackbar can bring back. */
 data class UndoOffer(val id: Long, val message: String)
 
@@ -44,10 +34,6 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _state = MutableStateFlow<SessionState?>(null)
     val state: StateFlow<SessionState?> = _state.asStateFlow()
-
-    private val _duplicatePrompt = MutableStateFlow<DuplicatePrompt?>(null)
-    val duplicatePrompt: StateFlow<DuplicatePrompt?> = _duplicatePrompt.asStateFlow()
-    private val pendingDuplicates = ArrayDeque<DuplicatePrompt>()
 
     private val _undoOffer = MutableStateFlow<UndoOffer?>(null)
     val undoOffer: StateFlow<UndoOffer?> = _undoOffer.asStateFlow()
@@ -97,7 +83,8 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
 
     /**
      * Opens [files] in [groupId] (null: as ungrouped tabs) and shows the first one. A file already
-     * open in that same place is not duplicated; one open elsewhere asks first ([duplicatePrompt]).
+     * open gets another tab all the same, as a browser opens a page twice (기획서 11장 3번): each
+     * tab keeps its own place and handwriting.
      */
     fun open(files: List<OpenedFile>, groupId: String?) {
         if (files.isEmpty()) return
@@ -105,55 +92,14 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
             loadJob.join()
             var s = current()
             val target = groupId?.takeIf { s.group(it) != null }
-            val added = mutableListOf<DocTab>()
-            var show: String? = null
-            for (file in files) {
-                val here = (s.context(target) + added).firstOrNull { it.uri == file.uri }
-                val elsewhere = s.allTabs.firstOrNull { it.uri == file.uri && it.groupId != target }
-                val tab = when {
-                    here != null -> here
-                    elsewhere != null -> {
-                        pendingDuplicates += DuplicatePrompt(file, target, elsewhere, elsewhere.groupId?.let { placeName(s, it) })
-                        null
-                    }
-                    else -> newTab(file, target).also { added += it }
-                }
-                if (show == null && tab != null) show = tab.id
-            }
+            val added = files.map { newTab(it, target) }
             for (tab in added) s = s.appendTab(tab)
-            if (show != null) s = s.copy(currentTabId = show)
-            if (s != current()) commit(s)
-            showNextDuplicate()
+            commit(s.copy(currentTabId = added.first().id))
         }
     }
-
-    private fun placeName(s: SessionState, groupId: String) =
-        s.group(groupId)?.displayName(s.tabsOf(groupId).size).orEmpty()
 
     private fun newTab(file: OpenedFile, groupId: String?) =
         DocTab(UUID.randomUUID().toString(), groupId, file.uri, file.name, file.isInternalCopy, file.format)
-
-    private fun showNextDuplicate() {
-        if (_duplicatePrompt.value == null) _duplicatePrompt.value = pendingDuplicates.removeFirstOrNull()
-    }
-
-    /**
-     * Answer to [duplicatePrompt]: open another tab for it where it was asked (true), go to the
-     * one already open (false), or neither (null — dialog dismissed).
-     */
-    fun resolveDuplicate(openHere: Boolean?) {
-        val prompt = _duplicatePrompt.value ?: return
-        _duplicatePrompt.value = null
-        when (openHere) {
-            true -> {
-                val tab = newTab(prompt.file, prompt.targetGroupId?.takeIf { current().group(it) != null })
-                commit(current().appendTab(tab).copy(currentTabId = tab.id))
-            }
-            false -> select(prompt.existing.id)
-            null -> Unit
-        }
-        showNextDuplicate()
-    }
 
     /** Shows tab [id] in the viewer. */
     fun select(id: String) {
