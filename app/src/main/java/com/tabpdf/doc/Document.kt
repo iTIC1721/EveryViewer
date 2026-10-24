@@ -1,6 +1,7 @@
 package com.tabpdf.doc
 
 import android.graphics.Bitmap
+import android.graphics.PointF
 import java.io.IOException
 
 /** A file that was read fine but can't be shown. */
@@ -46,6 +47,15 @@ interface Document {
      * Documents without text (images) find nothing.
      */
     suspend fun search(query: String): List<SearchMatch> = emptyList()
+
+    /**
+     * The text on page [index] between points [from] and [to] (fractions of the page, either
+     * order), for selecting and copying (기획서 5.5); null where the page has no text there.
+     */
+    suspend fun selectText(index: Int, from: PointF, to: PointF): TextSelection? = null
+
+    /** The word at [at] on page [index] (a long press), or null if there is no text there. */
+    suspend fun selectWord(index: Int, at: PointF): TextSelection? = null
 
     suspend fun close()
 }

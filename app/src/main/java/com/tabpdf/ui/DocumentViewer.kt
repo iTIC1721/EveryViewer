@@ -3,6 +3,15 @@ package com.tabpdf.ui
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.PointF
+import android.graphics.RectF
+import androidx.activity.compose.BackHandler
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.layout.boundsInParent
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import com.tabpdf.doc.TextSelection
 import android.widget.Toast
 import android.net.Uri
 import androidx.compose.animation.AnimatedVisibility
@@ -256,6 +265,21 @@ private fun DocumentPages(
     val currentOnStateChange by rememberUpdatedState(onStateChange)
     val context = LocalContext.current
 
+    // Text selection (기획서 5.5): two ends, each a point on a page; what lies between, page by page.
+    val selectionAnchors = remember(document) { mutableStateOf<SelectionAnchors?>(null) }
+    var selection by remember(document) { mutableStateOf<List<Pair<Int, TextSelection>>>(emptyList()) }
+    LaunchedEffect(selectionAnchors.value) {
+        selection = selectionAnchors.value?.let { selectRange(document, it) }.orEmpty()
+    }
+    LaunchedEffect(ink != null) { if (ink != null) selectionAnchors.value = null }
+    BackHandler(enabled = selectionAnchors.value != null) { selectionAnchors.value = null }
+    // A long press took the current gesture for selecting: no tap or pan for it.
+    val selectionClaimed = remember { booleanArrayOf(false) }
+    // Where the selection handles and toolbar are, so touches on them are left to them.
+    val handleBounds = remember { mutableMapOf<String, Rect>() }
+    fun onHandle(position: Offset) = selectionAnchors.value != null && handleBounds.values.any { it.contains(position) }
+    val haptics = LocalHapticFeedback.current
+
     /** The page under [position] (viewer coordinates), if any. */
     fun pageAt(position: Offset): PageHit? {
         val info = listState.layoutInfo
@@ -269,6 +293,22 @@ private fun DocumentPages(
         return PageHit(item.index, left = -panX, top = (item.offset - info.viewportStartOffset).toFloat(), scale = INK_PAGE_WIDTH / pageWidth)
     }
 
+    /** [position] (viewer coordinates) as a selection end: its page and where on it, in fractions. */
+    fun selectionEndAt(position: Offset): SelectionEnd? {
+        val hit = pageAt(position) ?: return null
+        val inPage = hit.toPage(position)
+        val aspect = document.pageSizes[hit.index].aspect
+        return SelectionEnd(hit.index, Offset((inPage.x / INK_PAGE_WIDTH).coerceIn(0f, 1f), (inPage.y / (INK_PAGE_WIDTH * aspect)).coerceIn(0f, 1f)))
+    }
+
+    /** A point on page [page] (fractions) in viewer coordinates, if that page is on screen. */
+    fun viewerPoint(page: Int, x: Float, y: Float): Offset? {
+        val info = listState.layoutInfo
+        val item = info.visibleItemsInfo.firstOrNull { it.index == page } ?: return null
+        val top = (item.offset - info.viewportStartOffset).toFloat()
+        return Offset(x * viewportWidth * zoom - panX, top + y * pageHeight(page, zoom))
+    }
+
     /** The web link under [position] (viewer coordinates), if the document has one there. */
     fun linkAt(position: Offset): String? {
         val hit = pageAt(position) ?: return null
@@ -278,6 +318,10 @@ private fun DocumentPages(
 
     /** A tap on a link opens it in the browser (기획서 5.7); any other tap shows or hides the bars. */
     fun tap(position: Offset) {
+        if (selectionAnchors.value != null) {
+            selectionAnchors.value = null
+            return
+        }
         val url = linkAt(position) ?: return currentOnTap()
         try {
             context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
@@ -400,6 +444,42 @@ private fun DocumentPages(
                     } while (event.changes.any { it.pressed })
                 }
             }
+            // Long press: select the word there; dragging on extends the selection. On the Initial
+            // pass, so once selecting, moves never reach the list or the pager. Not while drawing.
+            .pointerInput(Unit) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                    selectionClaimed[0] = false
+                    if (currentInk != null || onHandle(down.position)) return@awaitEachGesture
+                    val slop = viewConfiguration.touchSlop
+                    val letGo = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
+                        while (true) {
+                            val event = awaitPointerEvent(PointerEventPass.Initial)
+                            val change = event.changes.firstOrNull { it.id == down.id }
+                            if (change == null || !change.pressed || event.changes.count { it.pressed } > 1 ||
+                                (change.position - down.position).getDistance() > slop
+                            ) break
+                        }
+                        true
+                    }
+                    if (letGo != null || inkClaimed[0]) return@awaitEachGesture
+                    val start = selectionEndAt(down.position) ?: return@awaitEachGesture
+                    selectionClaimed[0] = true
+                    scope.launch {
+                        val word = document.selectWord(start.page, PointF(start.point.x, start.point.y)) ?: return@launch
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        selectionAnchors.value = SelectionAnchors.around(start.page, word)
+                    }
+                    while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                        change.consume()
+                        if (!change.pressed) break
+                        val end = selectionEndAt(change.position) ?: continue
+                        selectionAnchors.value?.let { selectionAnchors.value = it.copy(end = end) }
+                    }
+                }
+            }
             // One finger: horizontal pan while zoomed, taps. Main pass, after the list has seen
             // the event (so vertical scrolling and fling stay the list's) and before the pager.
             .pointerInput(Unit) {
@@ -412,6 +492,8 @@ private fun DocumentPages(
 
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
+                        // The selection handles move themselves.
+                        if (onHandle(down.position)) return@awaitEachGesture
                         var total = Offset.Zero
                         var decided = false
                         var panning = false
@@ -445,7 +527,7 @@ private fun DocumentPages(
                                 change.consume()
                             }
                         }
-                        if (released && !decided && !multiTouch && !inked) {
+                        if (released && !decided && !multiTouch && !inked && !selectionClaimed[0]) {
                             val now = down.uptimeMillis
                             val position = down.position
                             if (now - lastTapTime < doubleTapTimeout &&
@@ -485,6 +567,8 @@ private fun DocumentPages(
                     panX = { panX },
                     strokes = strokesByPage[index].orEmpty(),
                     found = matchesByPage[index].orEmpty(),
+                    selected = selection.firstOrNull { it.first == index }?.second?.rects.orEmpty(),
+                    selectionColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f),
                     currentMatch = searchIndex,
                 )
             }
@@ -497,6 +581,45 @@ private fun DocumentPages(
             modifier = Modifier.align(Alignment.TopEnd),
         )
         PageIndicator(listState, document.pageCount, active = fastScrolling, Modifier.align(Alignment.BottomEnd))
+        if (selection.isNotEmpty()) {
+            val first = selection.first()
+            val last = selection.last()
+            val startRect = first.second.rects.first()
+            val endRect = last.second.rects.last()
+            val startTip = viewerPoint(first.first, startRect.left, startRect.bottom)
+            val endTip = viewerPoint(last.first, endRect.right, endRect.bottom)
+            /** Moves one end of the selection to the text under [tip] (a handle's point, under the line). */
+            fun moveEnd(isStart: Boolean, tip: Offset, lift: Float) {
+                val end = selectionEndAt(tip - Offset(0f, lift)) ?: return
+                val (s, e) = selectionAnchors.value?.ordered() ?: return
+                selectionAnchors.value = if (isStart) SelectionAnchors(end, e) else SelectionAnchors(s, end)
+            }
+            val lineHeight = { r: RectF, page: Int -> r.height() * pageHeight(page, zoom) / 2 }
+            startTip?.let { tip ->
+                SelectionHandle(tip, isStart = true, onBounds = { handleBounds["start"] = it }) { at -> moveEnd(true, at, lineHeight(startRect, first.first)) }
+            } ?: handleBounds.remove("start")
+            endTip?.let { tip ->
+                SelectionHandle(tip, isStart = false, onBounds = { handleBounds["end"] = it }) { at -> moveEnd(false, at, lineHeight(endRect, last.first)) }
+            } ?: handleBounds.remove("end")
+            val topPx = with(density) { contentPadding.calculateTopPadding().toPx() }
+            val above = viewerPoint(first.first, startRect.left, startRect.top)?.y?.minus(with(density) { 64.dp.toPx() })
+            val below = endTip?.y?.plus(with(density) { 36.dp.toPx() })
+            val toolbarY = when {
+                above != null && above >= topPx -> above
+                below != null && below < viewportHeight - with(density) { 120.dp.toPx() } -> below
+                else -> topPx + with(density) { 8.dp.toPx() }
+            }
+            SelectionToolbar(
+                text = { joinSelection(selection) },
+                onDone = { selectionAnchors.value = null },
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .offset { IntOffset(0, toolbarY.roundToInt()) }
+                    .onGloballyPositioned { handleBounds["toolbar"] = it.boundsInParent() },
+            )
+        } else {
+            handleBounds.clear()
+        }
         // Where a hovering pen would draw or erase, and how wide (기획서 5.8.4).
         val hoverAt = hover
         val hoverInk = ink
@@ -537,6 +660,9 @@ private fun PageImage(
     /** Search matches on this page, with their number among all matches. */
     found: List<IndexedValue<SearchMatch>>,
     currentMatch: Int,
+    /** Selected text on this page. */
+    selected: List<RectF>,
+    selectionColor: Color,
 ) {
     var bitmap by remember { mutableStateOf<Bitmap?>(null) }
     LaunchedEffect(renderWidth) {
@@ -552,6 +678,13 @@ private fun PageImage(
             drawRect(Color.White, topLeft = Offset(left, 0f), size = dstSize.toSize())
         } else {
             drawImage(image, dstOffset = IntOffset(left.roundToInt(), 0), dstSize = dstSize)
+        }
+        for (r in selected) {
+            drawRect(
+                selectionColor,
+                topLeft = Offset(left + r.left * pageWidth, r.top * size.height),
+                size = androidx.compose.ui.geometry.Size(r.width() * pageWidth, r.height() * size.height),
+            )
         }
         // Found text in yellow, the current match in orange, as browsers mark it; under the handwriting.
         val pad = 1.dp.toPx()

@@ -24,6 +24,7 @@ import com.tabpdf.doc.FLOW_WIDTH
 import com.tabpdf.doc.FlowBlock
 import com.tabpdf.doc.FlowBuilder
 import com.tabpdf.doc.Found
+import com.tabpdf.doc.TextSink
 import com.tabpdf.doc.LinkSpan
 import com.tabpdf.doc.Placed
 import com.tabpdf.doc.SheetDocument
@@ -351,6 +352,10 @@ class OfficeLayout private constructor(private val unit: Float) {
             // Hairlines (0.1 mm) would vanish at normal zoom; keep every border visible.
             linePaint.strokeWidth = max(border.width * unit, 0.9f)
             canvas.drawLine(x0, y0, x1, y1, linePaint)
+        }
+
+        override fun collectText(sink: TextSink) {
+            for ((c, content) in cells) content.collectText(sink.offset(rect(c).left + c.padding.left * unit, contentTop(c, content)))
         }
 
         override fun find(query: String): List<Found> = cells.flatMap { (c, content) ->
