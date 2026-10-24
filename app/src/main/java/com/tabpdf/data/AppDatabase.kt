@@ -8,17 +8,18 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
-    entities = [GroupEntity::class, TabEntity::class, AppStateEntity::class],
-    version = 3,
+    entities = [GroupEntity::class, TabEntity::class, AppStateEntity::class, InkStrokeEntity::class],
+    version = 4,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun sessionDao(): SessionDao
+    abstract fun inkDao(): InkDao
 
     companion object {
         fun create(context: Context): AppDatabase =
             Room.databaseBuilder(context, AppDatabase::class.java, "tabpdf.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                 .build()
     }
 }
@@ -92,5 +93,17 @@ val MIGRATION_1_2 = object : Migration(1, 2) {
 val MIGRATION_2_3 = object : Migration(2, 3) {
     override fun migrate(db: SupportSQLiteDatabase) {
         db.execSQL("ALTER TABLE tabs ADD COLUMN `format` TEXT NOT NULL DEFAULT 'pdf'")
+    }
+}
+
+/** v3 → v4: handwriting (기획서 5.8). */
+val MIGRATION_3_4 = object : Migration(3, 4) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS `ink_strokes` (`id` TEXT NOT NULL, `tabId` TEXT NOT NULL, `page` INTEGER NOT NULL, " +
+                "`seq` INTEGER NOT NULL, `tool` TEXT NOT NULL, `color` INTEGER NOT NULL, `size` REAL NOT NULL, " +
+                "`inputs` BLOB NOT NULL, PRIMARY KEY(`id`))"
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_ink_strokes_tabId` ON `ink_strokes` (`tabId`)")
     }
 }
