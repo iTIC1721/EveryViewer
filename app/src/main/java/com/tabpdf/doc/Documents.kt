@@ -2,6 +2,7 @@ package com.tabpdf.doc
 
 import android.content.Context
 import android.net.Uri
+import com.tabpdf.doc.office.OfficeDocuments
 import com.tabpdf.pdf.PdfDocument
 
 /** Opens a tab's file as a [Document], by the format it was detected as. */
@@ -13,6 +14,7 @@ object Documents {
             FileFormat.Text -> TextDocument.open(context, uri, name)
             FileFormat.Image -> ImageDocument.open(context, uri)
             FileFormat.Markdown -> MarkdownDocument.open(context, uri)
+            FileFormat.Docx, FileFormat.Hwpx -> OfficeDocuments.open(context, uri, format)
             // Detected again: this version may read what the one that opened the tab could not.
             FileFormat.Unsupported -> FileFormats.detect(context, uri, name).let {
                 if (it == FileFormat.Unsupported) throw DocumentOpenException(DocumentOpenException.Reason.Unsupported)

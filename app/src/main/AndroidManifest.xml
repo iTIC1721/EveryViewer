@@ -31,6 +31,10 @@
                 <data android:mimeType="image/*" />
                 <data android:mimeType="application/json" />
                 <data android:mimeType="application/xml" />
+                <data android:mimeType="application/vnd.openxmlformats-officedocument.wordprocessingml.document" />
+                <data android:mimeType="application/hwp+zip" />
+                <data android:mimeType="application/haansofthwpx" />
+                <data android:mimeType="application/vnd.hancom.hwpx" />
                 <data android:mimeType="application/octet-stream" />
             </intent-filter>
             <!-- "Share" -->
@@ -43,6 +47,10 @@
                 <data android:mimeType="image/*" />
                 <data android:mimeType="application/json" />
                 <data android:mimeType="application/xml" />
+                <data android:mimeType="application/vnd.openxmlformats-officedocument.wordprocessingml.document" />
+                <data android:mimeType="application/hwp+zip" />
+                <data android:mimeType="application/haansofthwpx" />
+                <data android:mimeType="application/vnd.hancom.hwpx" />
                 <data android:mimeType="application/octet-stream" />
             </intent-filter>
         </activity>
