@@ -19,6 +19,13 @@ object TextDecoding {
     }
 
     /**
+     * The encoding of text whose non-ASCII part starts with [sample] (a file read in pieces, 기획서
+     * 5.7): UTF-8 if the sample is valid UTF-8 (a character cut off at its end allowed), else the
+     * detector's guess. Gives the same answer as [decode] when the sample runs to the end of the file.
+     */
+    fun charsetOf(sample: ByteArray): Charset = if (strictUtf8(sample) != null) Charsets.UTF_8 else detect(sample)
+
+    /**
      * Whether the start of a file reads as text: no NUL bytes (unless it is UTF-16) and almost no
      * control characters other than whitespace.
      */
@@ -34,7 +41,8 @@ object TextDecoding {
         return control * 100 < head.size
     }
 
-    private fun bom(bytes: ByteArray): Pair<Charset, Int>? = when {
+    /** The encoding a byte order mark at the start of [bytes] names, and the mark's length. */
+    fun bom(bytes: ByteArray): Pair<Charset, Int>? = when {
         bytes.size >= 3 && bytes[0] == 0xEF.toByte() && bytes[1] == 0xBB.toByte() && bytes[2] == 0xBF.toByte() ->
             Charsets.UTF_8 to 3
         bytes.size >= 2 && bytes[0] == 0xFF.toByte() && bytes[1] == 0xFE.toByte() -> Charsets.UTF_16LE to 2

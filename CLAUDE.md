@@ -68,7 +68,9 @@ app/src/main/java/com/tabpdf/
   MainActivity.kt        진입점, 파일 선택기, onStop 시 저장
   data/                  Room (그룹·탭·앱 상태), SessionRepository
   doc/                   형식과 무관한 Document 인터페이스, 형식 판별(FileFormat), 형식별 여는 곳(Documents),
-                         흐르는 문서 조판·페이지 나누기(Flow), 텍스트·마크다운·이미지 문서, 인코딩 판별, 썸네일
+                         흐르는 문서 조판·페이지 나누기(Flow), 텍스트·마크다운·이미지 문서, 인코딩 판별, 썸네일.
+                         텍스트는 크기 제한 없이 조각씩 읽고 뒤에서 이어서 조판(StreamedTextDocument: 쪽 목록이 자라는
+                         문서 — Document.progress). 쪽 나눔은 TextDocument.layOut(통째 조판)과 같아야 한다(LargeTextTest)
   doc/office/            docx·hwpx·pptx: 안전한 zip·XML 읽기, 형식별 해석기(DocxReader, HwpxReader) → 공통 모델(OfficeModel)
                          → 용지 단위 조판(OfficeLayout: 문단·줄 간격·표 병합·테두리·쪽 넘김) → SheetDocument.
                          pptx: PptxReader(레이아웃·마스터 상속, 테마 색) → 슬라이드 모델(SlideModel) → SlideDocument

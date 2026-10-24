@@ -2,6 +2,8 @@ package com.tabpdf.doc
 
 import android.graphics.Bitmap
 import android.graphics.PointF
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import java.io.IOException
 
 /** A file that was read fine but can't be shown. */
@@ -14,6 +16,9 @@ data class PageSize(val width: Float, val height: Float) {
     val aspect: Float get() = height / width
 }
 
+/** How far a document laid out while it is shown has got: [pages] so far, and whether that is all. */
+data class LayoutProgress(val pages: Int, val complete: Boolean)
+
 /**
  * Any opened file, as the viewer sees it (기획서 5.7): pages of fixed size stacked vertically.
  * Every format is turned into this, so the viewer, thumbnails and reading positions never deal
@@ -23,6 +28,16 @@ interface Document {
     val pageSizes: List<PageSize>
 
     val pageCount: Int get() = pageSizes.size
+
+    /**
+     * For documents laid out in the background while shown (text files, 기획서 5.7): [pageSizes]
+     * holds the pages laid out so far and grows until complete; earlier pages never change. Null
+     * for documents laid out in full when opened.
+     */
+    val progress: StateFlow<LayoutProgress>? get() = null
+
+    /** Something the reader should be told when the document is shown (it is shown other than usual). */
+    val notice: String? get() = null
 
     /**
      * Whether pages are shown apart, like sheets of paper. Text that just flows on is cut into
@@ -58,4 +73,14 @@ interface Document {
     suspend fun selectWord(index: Int, at: PointF): TextSelection? = null
 
     suspend fun close()
+}
+
+/** Suspends until the document has at least [count] pages, or all it will have. */
+suspend fun Document.awaitPages(count: Int) {
+    progress?.first { it.complete || it.pages >= count }
+}
+
+/** Suspends until the document is laid out in full. */
+suspend fun Document.awaitComplete() {
+    progress?.first { it.complete }
 }

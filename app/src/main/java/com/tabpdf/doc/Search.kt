@@ -26,21 +26,17 @@ object TextSearch {
 
     fun normalize(query: String): String = query.lowercase()
 
+    /** Whether [query] (already [normalize]d) occurs in [text], as [find] would find it once laid out. */
+    fun contains(text: CharSequence, query: String): Boolean =
+        query.isNotEmpty() && searchable(text, null).indexOf(query) >= 0
+
     /** Every match of [query] (already [normalize]d) in [layout]'s text. */
     fun find(layout: Layout, query: String): List<Found> {
         if (query.isEmpty()) return emptyList()
         val text = layout.text
-        // The searchable text, and where each of its characters sits in the layout's text.
-        val plain = StringBuilder(text.length)
+        // Where each searchable character sits in the layout's text.
         val at = IntArray(text.length)
-        for (i in text.indices) {
-            when (val c = text[i]) {
-                '⁠', '­' -> continue
-                '￼' -> { at[plain.length] = i; plain.append('\u0000') }
-                ' ', ' ' -> { at[plain.length] = i; plain.append(' ') }
-                else -> { at[plain.length] = i; plain.append(c.lowercaseChar()) }
-            }
-        }
+        val plain = searchable(text, at)
         val result = mutableListOf<Found>()
         var from = 0
         while (true) {
@@ -51,6 +47,25 @@ object TextSearch {
             from = end
         }
         return result
+    }
+
+    /**
+     * [text] as searched: lowercase, without the invisible characters layout adds. [at], if given,
+     * receives where each character of the result came from in [text].
+     */
+    private fun searchable(text: CharSequence, at: IntArray?): StringBuilder {
+        val plain = StringBuilder(text.length)
+        for (i in text.indices) {
+            val c = when (val raw = text[i]) {
+                '⁠', '­' -> continue
+                '￼' -> '\u0000'
+                ' ', ' ' -> ' '
+                else -> raw.lowercaseChar()
+            }
+            at?.set(plain.length, i)
+            plain.append(c)
+        }
+        return plain
     }
 
     /** The text from [start] to [end] in [layout], one rectangle per line, around the letters. */

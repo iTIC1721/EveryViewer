@@ -66,6 +66,7 @@ object Thumbnails {
         try {
             val document = Documents.open(context, tab.uri, tab.name, tab.format)
             try {
+                document.awaitPages(page + 1)
                 document.renderPage(page.coerceIn(0, document.pageCount - 1), WIDTH_PX)
             } finally {
                 document.close()
