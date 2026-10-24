@@ -75,6 +75,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.round
 import androidx.compose.ui.unit.toRect
 import androidx.compose.ui.zIndex
+import com.tabpdf.doc.FileFormat
 import com.tabpdf.doc.Thumbnails
 import com.tabpdf.tabs.DocTab
 import com.tabpdf.tabs.SessionState
@@ -597,6 +598,11 @@ private fun Thumbnail(tab: DocTab, page: Int, modifier: Modifier) {
     }
     val image = remember(result) { result?.getOrNull()?.asImageBitmap() }
     when {
+        // Text is read from the top at full width, however short its page; other pages fill the card.
+        image != null && (tab.format == FileFormat.Text || tab.format == FileFormat.Markdown) -> Image(
+            image, contentDescription = null, modifier.background(Color.White),
+            contentScale = ContentScale.FillWidth, alignment = Alignment.TopCenter,
+        )
         image != null ->
             Image(image, contentDescription = null, modifier, contentScale = ContentScale.Crop, alignment = Alignment.TopCenter)
         result?.isFailure == true -> Box(modifier, contentAlignment = Alignment.Center) {
