@@ -5,7 +5,11 @@ import android.content.pm.ApplicationInfo
 import android.net.Uri
 import android.os.Bundle
 import android.widget.Toast
+import android.view.ViewGroup
 import androidx.activity.ComponentActivity
+import androidx.compose.runtime.CompositionLocalProvider
+import com.tabpdf.ink.InkSurface
+import com.tabpdf.ink.LocalInkSurface
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -41,7 +45,10 @@ class MainActivity : ComponentActivity() {
             openIncomingFiles(intent)
             openDebugTestFiles()
         }
+        // Strokes being drawn are shown by Ink's low-latency view over the whole window (기획서 5.8.5).
+        val inkSurface = InkSurface(this)
         setContent {
+            CompositionLocalProvider(LocalInkSurface provides inkSurface) {
             MaterialTheme(colorScheme = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()) {
                 // Group the picked files go into (null: ungrouped); saved across the picker round trip.
                 var openingIntoGroup by rememberSaveable { mutableStateOf<String?>(null) }
@@ -74,7 +81,10 @@ class MainActivity : ComponentActivity() {
                     },
                 )
             }
+            }
         }
+        // Above the Compose content; it takes no touches, so they all reach the viewer.
+        addContentView(inkSurface.view, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
     }
 
     override fun onNewIntent(intent: Intent) {

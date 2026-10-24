@@ -77,6 +77,9 @@ import androidx.compose.ui.unit.toRect
 import androidx.compose.ui.zIndex
 import com.tabpdf.doc.FileFormat
 import com.tabpdf.doc.Thumbnails
+import com.tabpdf.ink.LocalInkStore
+import kotlinx.coroutines.flow.MutableStateFlow
+import androidx.compose.runtime.collectAsState
 import com.tabpdf.tabs.DocTab
 import com.tabpdf.tabs.SessionState
 import com.tabpdf.tabs.TabGroup
@@ -592,8 +595,10 @@ private fun CloseBadge(description: String, onClick: () -> Unit, modifier: Modif
 private fun Thumbnail(tab: DocTab, page: Int, modifier: Modifier) {
     val context = LocalContext.current
     // null while loading; a failed load (missing or unreadable file) gives Result.failure.
-    val result by produceState<Result<Bitmap>?>(null, tab.id, tab.uri, page) {
-        val bitmap = Thumbnails.load(context.applicationContext, tab, page)
+    val inkStore = LocalInkStore.current
+    val strokes by remember(tab.id, inkStore) { inkStore?.strokes(tab.id) ?: MutableStateFlow(emptyList()) }.collectAsState()
+    val result by produceState<Result<Bitmap>?>(null, tab.id, tab.uri, page, strokes) {
+        val bitmap = Thumbnails.load(context.applicationContext, tab, page, strokes)
         value = if (bitmap != null) Result.success(bitmap) else Result.failure(IllegalStateException())
     }
     val image = remember(result) { result?.getOrNull()?.asImageBitmap() }

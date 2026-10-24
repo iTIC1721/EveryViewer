@@ -1,5 +1,13 @@
 package com.tabpdf.ui
 
+import com.tabpdf.FingerDrawing
+import com.tabpdf.ink.InkBinding
+import com.tabpdf.ink.LocalInkStore
+import androidx.compose.runtime.CompositionLocalProvider
+import com.tabpdf.ink.InkTool
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material3.IconButtonDefaults
+import androidx.compose.foundation.layout.Column
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -107,6 +115,7 @@ fun TabsScreen(viewModel: TabsViewModel, onOpenFiles: (groupId: String?) -> Unit
         onDispose { view.keepScreenOn = false }
     }
 
+    CompositionLocalProvider(LocalInkStore provides viewModel.ink) {
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant)) {
         // Swiping stays within the current tab's group, or among ungrouped tabs (기획서 5.2).
         // A fresh pager per context, starting on the current tab.
@@ -151,6 +160,7 @@ fun TabsScreen(viewModel: TabsViewModel, onOpenFiles: (groupId: String?) -> Unit
 
         SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).navigationBarsPadding())
     }
+    }
 
     duplicatePrompt?.let { prompt ->
         DuplicateDialog(
@@ -190,6 +200,20 @@ private fun ContextPager(
     ) { tabs.size }
     val currentTabs by rememberUpdatedState(tabs)
 
+    // Handwriting (기획서 5.8)
+    val inkMode by viewModel.inkMode.collectAsState()
+    val inkTool by viewModel.settings.inkTool.collectAsState()
+    val toolStyles by viewModel.settings.toolStyles.collectAsState()
+    val fingerDrawing by viewModel.settings.fingerDrawing.collectAsState()
+    val stylusSeen by viewModel.settings.stylusSeen.collectAsState()
+    val sideButtonErases by viewModel.settings.sideButtonErases.collectAsState()
+    val inkHistory by viewModel.ink.history.collectAsState()
+    val fingerDraws = when (fingerDrawing) {
+        FingerDrawing.Always -> true
+        FingerDrawing.Never -> false
+        FingerDrawing.Auto -> !stylusSeen
+    }
+
     // Swiping picks the current tab…
     LaunchedEffect(pagerState) {
         snapshotFlow { pagerState.settledPage }.collect { page ->
@@ -222,6 +246,18 @@ private fun ContextPager(
                 pageSpacing = 8.dp,
             ) { page ->
                 val tab = tabs[page]
+                val strokes by remember(tab.id) { viewModel.ink.strokes(tab.id) }.collectAsState()
+                val ink = if (!inkMode) null else InkBinding(
+                    tool = inkTool,
+                    style = toolStyles.getValue(inkTool),
+                    eraserSize = toolStyles.getValue(InkTool.Eraser).size,
+                    fingerDraws = fingerDraws,
+                    sideButtonErases = sideButtonErases,
+                    strokes = strokes,
+                    onStylusSeen = viewModel.settings::markStylusSeen,
+                    onStroke = { p, tool, stroke -> viewModel.addStroke(tab.id, p, tool, stroke) },
+                    onErase = { ids, gesture -> viewModel.eraseStrokes(tab.id, ids, gesture) },
+                )
                 DocumentViewer(
                     uri = tab.uri,
                     name = tab.name,
@@ -236,6 +272,8 @@ private fun ContextPager(
                     pageJump = pageJump?.takeIf { it.tabId == tab.id },
                     onPageJumpHandled = viewModel::onPageJumpHandled,
                     onDocumentOpened = { viewModel.onDocumentOpened(tab.id, it) },
+                    strokes = strokes,
+                    ink = ink,
                 )
             }
         }
@@ -246,6 +284,7 @@ private fun ContextPager(
             enter = fadeIn(),
             exit = fadeOut(),
         ) {
+            Column {
             TopBar(
                 group = group,
                 groupTabCount = tabs.size,
@@ -255,11 +294,28 @@ private fun ContextPager(
                 onGroupClick = { onShowSwitcher(groupId) },
                 onOpenFiles = { onOpenFiles(groupId) },
                 onTabCountClick = { onShowSwitcher(null) },
+                inkMode = inkMode,
+                onInkMode = { viewModel.setInkMode(!inkMode) },
                 menu = { dismiss ->
                     val canJump = session.currentTab?.let { viewModel.pageCount(it.id) } != null
                     ViewerMenu(canJump, viewModel, open = { dialog = it }, dismiss = dismiss)
                 },
             )
+            if (inkMode && tabs.isNotEmpty()) {
+                val currentId = session.currentTabId
+                // inkHistory is read here so undo/redo availability updates with every edit.
+                InkToolbar(
+                    tool = inkTool,
+                    styles = toolStyles,
+                    canUndo = inkHistory >= 0 && currentId != null && viewModel.ink.canUndo(currentId),
+                    canRedo = inkHistory >= 0 && currentId != null && viewModel.ink.canRedo(currentId),
+                    onTool = viewModel.settings::setInkTool,
+                    onStyle = viewModel.settings::setToolStyle,
+                    onUndo = { viewModel.undoInk() },
+                    onRedo = { viewModel.redoInk() },
+                )
+            }
+            }
         }
     }
 
@@ -280,6 +336,14 @@ private fun ContextPager(
             }
         }
         ViewerDialog.About -> AboutDialog(onDismiss = { dialog = null })
+        ViewerDialog.InkSettings -> InkSettingsDialog(
+            fingerDrawing = fingerDrawing,
+            stylusSeen = stylusSeen,
+            sideButtonErases = sideButtonErases,
+            onFingerDrawing = viewModel.settings::setFingerDrawing,
+            onSideButtonErases = viewModel.settings::setSideButtonErases,
+            onDismiss = { dialog = null },
+        )
         null -> Unit
     }
 }
@@ -294,6 +358,8 @@ private fun TopBar(
     onGroupClick: () -> Unit,
     onOpenFiles: () -> Unit,
     onTabCountClick: () -> Unit,
+    inkMode: Boolean,
+    onInkMode: () -> Unit,
     /** Items of the ⋮ menu; call the given function to close it. */
     menu: @Composable (dismiss: () -> Unit) -> Unit,
 ) {
@@ -312,6 +378,19 @@ private fun TopBar(
                 Spacer(Modifier.width(8.dp))
             }
             TitleStrip(tabs, pagerState, Modifier.weight(1f))
+            if (tabs.isNotEmpty()) {
+                IconButton(
+                    onClick = onInkMode,
+                    modifier = Modifier.semantics { contentDescription = if (inkMode) "필기 끄기" else "필기" },
+                    colors = if (inkMode) {
+                        IconButtonDefaults.iconButtonColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
+                    } else {
+                        IconButtonDefaults.iconButtonColors()
+                    },
+                ) {
+                    Icon(Icons.Default.Edit, contentDescription = null)
+                }
+            }
             IconButton(onClick = onOpenFiles) {
                 Icon(Icons.Default.Add, contentDescription = "파일 열기")
             }
@@ -328,7 +407,7 @@ private fun TopBar(
     }
 }
 
-private enum class ViewerDialog { PageJump, About }
+private enum class ViewerDialog { PageJump, InkSettings, About }
 
 /** ⋮ menu items: go to page, keep the screen on, app info (기획서 4.1, 5.6). */
 @Composable
@@ -344,6 +423,7 @@ private fun ViewerMenu(canJump: Boolean, viewModel: TabsViewModel, open: (Viewer
         trailingIcon = { Checkbox(checked = keepScreenOn, onCheckedChange = null) },
         onClick = { viewModel.settings.setKeepScreenOn(!keepScreenOn) },
     )
+    DropdownMenuItem(text = { Text("필기 설정") }, onClick = { dismiss(); open(ViewerDialog.InkSettings) })
     DropdownMenuItem(text = { Text("앱 정보") }, onClick = { dismiss(); open(ViewerDialog.About) })
 }
 
