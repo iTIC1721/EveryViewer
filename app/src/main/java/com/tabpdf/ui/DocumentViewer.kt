@@ -80,6 +80,8 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import com.tabpdf.doc.Document
+import com.tabpdf.doc.LayoutProgress
+import com.tabpdf.doc.awaitPages
 import com.tabpdf.doc.SearchMatch
 import androidx.compose.ui.graphics.BlendMode
 import com.tabpdf.doc.DocumentOpenException
@@ -106,6 +108,8 @@ import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.MutableStateFlow
+import androidx.compose.runtime.collectAsState
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.FileNotFoundException
@@ -160,6 +164,8 @@ fun DocumentViewer(
     searchIndex: Int = 0,
     /** How many matches [searchQuery] has; null while searching. */
     onSearchResults: (Int?) -> Unit = {},
+    /** This is the tab being looked at (not a neighbour kept ready for swiping). */
+    active: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -178,13 +184,25 @@ fun DocumentViewer(
             error = e
             return@LaunchedEffect
         }
-        document = doc
-        currentOnDocumentOpened(doc.pageCount)
         try {
-            awaitCancellation()
+            // A document still being laid out is shown once it reaches the page last read.
+            doc.awaitPages(initialState.page + 1)
+            document = doc
+            currentOnDocumentOpened(doc.pageCount)
+            doc.progress?.collect { currentOnDocumentOpened(it.pages) } ?: awaitCancellation()
         } finally {
             document = null
             doc.close()
+        }
+    }
+
+    // Told once per opening, when the tab is the one being looked at.
+    var noticeShown by remember(document) { mutableStateOf(false) }
+    LaunchedEffect(document, active) {
+        val notice = document?.notice ?: return@LaunchedEffect
+        if (active && !noticeShown) {
+            Toast.makeText(context, notice, Toast.LENGTH_LONG).show()
+            noticeShown = true
         }
     }
 
@@ -238,6 +256,9 @@ private fun DocumentPages(
     onSearchResults: (Int?) -> Unit,
 ) {
     val density = LocalDensity.current
+    // Pages laid out so far: a document laid out in the background grows (기획서 5.7).
+    val progress by (document.progress ?: remember(document) { MutableStateFlow(LayoutProgress(document.pageCount, complete = true)) })
+        .collectAsState()
     val strokesByPage = remember(strokes) { strokes.groupBy { it.page } }
     val currentInk by rememberUpdatedState(ink)
     var hover by remember { mutableStateOf<Offset?>(null) }
@@ -556,7 +577,7 @@ private fun DocumentPages(
             contentPadding = contentPadding,
             verticalArrangement = Arrangement.spacedBy(with(density) { (gapPx * zoom).toDp() }),
         ) {
-            items(document.pageCount) { index ->
+            items(progress.pages) { index ->
                 val aspect = document.pageSizes[index].aspect
                 PageImage(
                     document = document,
@@ -575,12 +596,12 @@ private fun DocumentPages(
         }
         FastScroller(
             listState = listState,
-            pageCount = document.pageCount,
+            pageCount = progress.pages,
             contentPadding = contentPadding,
             onDraggingChange = { fastScrolling = it },
             modifier = Modifier.align(Alignment.TopEnd),
         )
-        PageIndicator(listState, document.pageCount, active = fastScrolling, Modifier.align(Alignment.BottomEnd))
+        PageIndicator(listState, progress.pages, progress.complete, active = fastScrolling, Modifier.align(Alignment.BottomEnd))
         if (selection.isNotEmpty()) {
             val first = selection.first()
             val last = selection.last()
@@ -822,9 +843,9 @@ private fun FastScroller(
     }
 }
 
-/** "12 / 240", shown while scrolling (or [active]) and briefly after. */
+/** "12 / 240", shown while scrolling (or [active]) and briefly after; "240+" while more pages are being laid out. */
 @Composable
-private fun PageIndicator(listState: LazyListState, pageCount: Int, active: Boolean, modifier: Modifier) {
+private fun PageIndicator(listState: LazyListState, pageCount: Int, complete: Boolean, active: Boolean, modifier: Modifier) {
     val currentPage by remember {
         derivedStateOf {
             val info = listState.layoutInfo
@@ -846,7 +867,7 @@ private fun PageIndicator(listState: LazyListState, pageCount: Int, active: Bool
     // Extra end padding keeps it clear of the fast-scroll handle.
     AnimatedVisibility(visible, modifier.navigationBarsPadding().padding(start = 16.dp, top = 16.dp, bottom = 16.dp, end = 44.dp), enter = fadeIn(), exit = fadeOut()) {
         Text(
-            "$currentPage / $pageCount",
+            "$currentPage / $pageCount" + if (complete) "" else "+",
             Modifier
                 .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(12.dp))
                 .padding(horizontal = 10.dp, vertical = 4.dp),

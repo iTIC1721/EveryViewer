@@ -55,6 +55,7 @@ import org.commonmark.node.Text
 import org.commonmark.node.ThematicBreak
 import org.commonmark.parser.Parser
 import java.io.FileNotFoundException
+import java.io.InputStream
 import kotlin.math.max
 
 /**
@@ -63,13 +64,26 @@ import kotlin.math.max
  * it can't be reached, and web images would need network access, which the app doesn't have.
  */
 object MarkdownDocument {
+    /** Markdown is parsed whole; bigger files are [DocumentOpenException.Reason.TooLarge] (shown as plain text instead). */
     private const val MAX_BYTES = 4 * 1024 * 1024
 
     suspend fun open(context: Context, uri: Uri): Document = withContext(Dispatchers.IO) {
-        val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+        val bytes = context.contentResolver.openInputStream(uri)?.use { it.readUpTo(MAX_BYTES + 1) }
             ?: throw FileNotFoundException(uri.toString())
         if (bytes.size > MAX_BYTES) throw DocumentOpenException(DocumentOpenException.Reason.TooLarge)
         render(TextDecoding.decode(bytes))
+    }
+
+    /** At most [limit] bytes from the start of the stream. */
+    private fun InputStream.readUpTo(limit: Int): ByteArray {
+        val out = java.io.ByteArrayOutputStream()
+        val buffer = ByteArray(64 * 1024)
+        while (out.size() < limit) {
+            val n = read(buffer, 0, minOf(buffer.size, limit - out.size()))
+            if (n < 0) break
+            out.write(buffer, 0, n)
+        }
+        return out.toByteArray()
     }
 
     private val parser: Parser = Parser.builder()

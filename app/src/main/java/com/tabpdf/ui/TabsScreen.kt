@@ -309,6 +309,7 @@ private fun ContextPager(
                     searchQuery = searchQuery.takeIf { searchOpen && tab.id == session.currentTabId },
                     searchIndex = searchIndex,
                     onSearchResults = { searchCount = it },
+                    active = tab.id == session.currentTabId,
                 )
             }
         }
