@@ -39,10 +39,21 @@ import androidx.compose.ui.unit.dp
 import com.tabpdf.tabs.DuplicatePrompt
 import com.tabpdf.tabs.PdfTab
 import com.tabpdf.tabs.TabGroup
+import com.tabpdf.tabs.displayName
 
-/** Single text field dialog, used for new group and rename. */
+/**
+ * Single text field dialog, used for new group and rename. With [allowBlank] an empty name is
+ * accepted (an unnamed group shows as "탭 n개").
+ */
 @Composable
-fun NameDialog(title: String, initial: String, confirmLabel: String, onConfirm: (String) -> Unit, onDismiss: () -> Unit) {
+fun NameDialog(
+    title: String,
+    initial: String,
+    confirmLabel: String,
+    onConfirm: (String) -> Unit,
+    onDismiss: () -> Unit,
+    allowBlank: Boolean = false,
+) {
     var value by remember { mutableStateOf(TextFieldValue(initial, TextRange(0, initial.length))) }
     val focus = remember { FocusRequester() }
     LaunchedEffect(Unit) { focus.requestFocus() }
@@ -59,7 +70,7 @@ fun NameDialog(title: String, initial: String, confirmLabel: String, onConfirm: 
             )
         },
         confirmButton = {
-            TextButton(onClick = { onConfirm(value.text) }, enabled = value.text.isNotBlank()) { Text(confirmLabel) }
+            TextButton(onClick = { onConfirm(value.text) }, enabled = allowBlank || value.text.isNotBlank()) { Text(confirmLabel) }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } },
     )
@@ -128,28 +139,28 @@ private fun InfoRow(label: String, value: String) {
     }
 }
 
-/** Pick the group to move a tab to, or start a new one. */
+/** Pick a group to add a tab to, or start a new one. */
 @Composable
-fun MoveToGroupDialog(
+fun AddToGroupDialog(
     groups: List<TabGroup>,
-    currentGroupId: String,
-    onMove: (groupId: String) -> Unit,
+    tabCount: (groupId: String) -> Int,
+    onPick: (groupId: String) -> Unit,
     onNewGroup: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("다른 그룹으로 이동") },
+        title = { Text("그룹에 추가") },
         text = {
             Column {
-                groups.filter { it.id != currentGroupId }.forEach { group ->
+                groups.forEach { group ->
                     Row(
-                        Modifier.fillMaxWidth().clickable { onMove(group.id) }.padding(vertical = 12.dp),
+                        Modifier.fillMaxWidth().clickable { onPick(group.id) }.padding(vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         GroupDot(group.color, size = 14.dp)
                         Spacer(Modifier.width(12.dp))
-                        Text(group.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(group.displayName(tabCount(group.id)), maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
                 Row(
@@ -158,7 +169,7 @@ fun MoveToGroupDialog(
                 ) {
                     Icon(Icons.Default.Add, contentDescription = null)
                     Spacer(Modifier.width(8.dp))
-                    Text("새 그룹으로 이동")
+                    Text("새 그룹")
                 }
             }
         },
@@ -166,13 +177,14 @@ fun MoveToGroupDialog(
     )
 }
 
-/** 기획서 5.1: the file is open in another group — go there, or open it here too. */
+/** 기획서 5.1: the file is already open somewhere else — go there, or open it here too. */
 @Composable
 fun DuplicateDialog(prompt: DuplicatePrompt, onGoThere: () -> Unit, onOpenHere: () -> Unit, onCancel: () -> Unit) {
+    val where = prompt.existingPlace?.let { "'$it' 그룹에" } ?: "그룹 밖 탭으로"
     AlertDialog(
         onDismissRequest = onCancel,
         title = { Text("이미 열려 있는 파일") },
-        text = { Text("'${prompt.file.name}' 파일이 '${prompt.existingGroup.name}' 그룹에 이미 열려 있습니다.") },
+        text = { Text("'${prompt.file.name}' 파일이 $where 이미 열려 있습니다.") },
         confirmButton = { TextButton(onClick = onGoThere) { Text("그 탭으로 이동") } },
         dismissButton = { TextButton(onClick = onOpenHere) { Text("여기에도 열기") } },
     )

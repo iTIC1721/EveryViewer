@@ -1,7 +1,6 @@
 package com.tabpdf.tabs
 
 import android.app.Application
-import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.tabpdf.TabPdfApp
@@ -10,52 +9,27 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.util.UUID
 
-data class PdfTab(
-    val id: String,
-    val groupId: String,
-    val uri: Uri,
-    val name: String,
-    val isInternalCopy: Boolean,
-    /** Bumped when the tab's file is replaced; not persisted. */
-    val revision: Int = 0,
+/** A file being opened that is already open in another place (기획서 5.1). */
+data class DuplicatePrompt(
+    val file: OpenedFile,
+    /** Where the file was to be opened: a group, or null for ungrouped. */
+    val targetGroupId: String?,
+    val existing: PdfTab,
+    /** Name of the group the existing tab is in, or null if it is ungrouped. */
+    val existingPlace: String?,
 )
-
-data class TabGroup(
-    val id: String,
-    val name: String,
-    /** Index into the group colour palette. */
-    val color: Int,
-    /** Tab to show when switching back to this group. */
-    val activeTabId: String?,
-)
-
-/** All groups and their tabs; the screen shows [activeGroupId]. */
-data class SessionState(
-    val groups: List<TabGroup>,
-    val tabsByGroup: Map<String, List<PdfTab>>,
-    val activeGroupId: String,
-) {
-    val activeGroup: TabGroup get() = groups.first { it.id == activeGroupId }
-    val activeTabs: List<PdfTab> get() = tabsOf(activeGroupId)
-    fun tabsOf(groupId: String): List<PdfTab> = tabsByGroup[groupId].orEmpty()
-    fun group(id: String): TabGroup? = groups.firstOrNull { it.id == id }
-}
-
-/** A file being opened that is already open in another group (기획서 5.1). */
-data class DuplicatePrompt(val file: OpenedFile, val existing: PdfTab, val existingGroup: TabGroup)
 
 /** Something just closed that the snackbar can bring back. */
 data class UndoOffer(val id: Long, val message: String)
 
 /**
- * Tab groups and their tabs, persisted so they come back after the app is closed (기획서 5.3).
- * Reading positions are saved 0.5 s after they stop changing, and immediately via [flush] when the
- * app goes to the background. All DB writes go through [TabPdfApp.enqueueWrite] so they apply in
- * order.
+ * Tabs and tab groups, Chrome-style (기획서 3장), persisted so they come back after the app is
+ * closed (기획서 5.3). Every structural change goes through [commit], which saves the whole
+ * structure via the ordered write queue; reading positions are saved separately, 0.5 s after they
+ * stop changing and immediately via [flush] when the app goes to the background.
  */
 class TabsViewModel(application: Application) : AndroidViewModel(application) {
     private val app = application as TabPdfApp
@@ -63,10 +37,6 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _state = MutableStateFlow<SessionState?>(null)
     val state: StateFlow<SessionState?> = _state.asStateFlow()
-
-    /** Tab the pager should move to next; cleared by [onNavigated]. */
-    private val _navigateTo = MutableStateFlow<String?>(null)
-    val navigateTo: StateFlow<String?> = _navigateTo.asStateFlow()
 
     private val _duplicatePrompt = MutableStateFlow<DuplicatePrompt?>(null)
     val duplicatePrompt: StateFlow<DuplicatePrompt?> = _duplicatePrompt.asStateFlow()
@@ -82,59 +52,63 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
     private var saveJob: Job? = null
 
     private val loadJob = viewModelScope.launch {
-        val saved = repository.load()
-        viewerStates += saved.viewerStates
-        _state.value = SessionState(
-            groups = saved.groups,
-            tabsByGroup = saved.tabs.groupBy { it.groupId },
-            activeGroupId = saved.activeGroupId,
-        )
-        app.enqueueWrite { FileAccess.releaseUnused(app, saved.tabs.map { it.uri }.toSet()) }
+        val (saved, states) = repository.load()
+        viewerStates += states
+        // Groups are never empty (as in Chrome), and something should be on screen if any tab is open.
+        val cleaned = saved.copy(top = saved.top.filter { it !is TabGroup || saved.tabsOf(it.id).isNotEmpty() })
+            .withValidCurrent(null, 0)
+        _state.value = cleaned
+        if (cleaned != saved) commit(cleaned)
+        app.enqueueWrite { FileAccess.releaseUnused(app, cleaned.allTabs.map { it.uri }.toSet()) }
     }
 
     private fun current(): SessionState = _state.value!!
 
-    private fun setTabs(groupId: String, tabs: List<PdfTab>) = _state.update {
-        it!!.copy(tabsByGroup = it.tabsByGroup + (groupId to tabs))
+    /** Shows [new] and saves its structure. */
+    private fun commit(new: SessionState) {
+        _state.value = new
+        val states = viewerStates.toMap()
+        app.enqueueWrite { repository.saveStructure(new, states) }
     }
 
-    // ---- Tabs ----
+    // ---- Opening and showing tabs ----
 
     /**
-     * Opens [files] in the active group and moves to the first one. A file already open in this
-     * group is not duplicated; one open in another group asks first ([duplicatePrompt]).
+     * Opens [files] in [groupId] (null: as ungrouped tabs) and shows the first one. A file already
+     * open in that same place is not duplicated; one open elsewhere asks first ([duplicatePrompt]).
      */
-    fun open(files: List<OpenedFile>) {
+    fun open(files: List<OpenedFile>, groupId: String?) {
         if (files.isEmpty()) return
         viewModelScope.launch {
             loadJob.join()
-            val s = current()
-            val groupTabs = s.activeTabs
+            var s = current()
+            val target = groupId?.takeIf { s.group(it) != null }
             val added = mutableListOf<PdfTab>()
-            var target: String? = null
+            var show: String? = null
             for (file in files) {
-                val here = (groupTabs + added).firstOrNull { it.uri == file.uri }
-                val elsewhere = s.tabsByGroup.values.flatten().firstOrNull { it.uri == file.uri && it.groupId != s.activeGroupId }
+                val here = (s.context(target) + added).firstOrNull { it.uri == file.uri }
+                val elsewhere = s.allTabs.firstOrNull { it.uri == file.uri && it.groupId != target }
                 val tab = when {
                     here != null -> here
                     elsewhere != null -> {
-                        pendingDuplicates += DuplicatePrompt(file, elsewhere, s.group(elsewhere.groupId)!!)
+                        pendingDuplicates += DuplicatePrompt(file, target, elsewhere, elsewhere.groupId?.let { placeName(s, it) })
                         null
                     }
-                    else -> newTab(file, s.activeGroupId).also { added += it }
+                    else -> newTab(file, target).also { added += it }
                 }
-                if (target == null && tab != null) target = tab.id
+                if (show == null && tab != null) show = tab.id
             }
-            if (added.isNotEmpty()) {
-                setTabs(s.activeGroupId, groupTabs + added)
-                app.enqueueWrite { repository.addTabs(added) }
-            }
-            if (target != null) _navigateTo.value = target
+            for (tab in added) s = s.appendTab(tab)
+            if (show != null) s = s.copy(currentTabId = show)
+            if (s != current()) commit(s)
             showNextDuplicate()
         }
     }
 
-    private fun newTab(file: OpenedFile, groupId: String) =
+    private fun placeName(s: SessionState, groupId: String) =
+        s.group(groupId)?.displayName(s.tabsOf(groupId).size).orEmpty()
+
+    private fun newTab(file: OpenedFile, groupId: String?) =
         PdfTab(UUID.randomUUID().toString(), groupId, file.uri, file.name, file.isInternalCopy)
 
     private fun showNextDuplicate() {
@@ -142,183 +116,79 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * Answer to [duplicatePrompt]: open another tab for it here (true), go to the one already open
-     * (false), or neither (null — dialog dismissed).
+     * Answer to [duplicatePrompt]: open another tab for it where it was asked (true), go to the
+     * one already open (false), or neither (null — dialog dismissed).
      */
     fun resolveDuplicate(openHere: Boolean?) {
         val prompt = _duplicatePrompt.value ?: return
         _duplicatePrompt.value = null
-        if (openHere == true) {
-            val groupId = current().activeGroupId
-            val tab = newTab(prompt.file, groupId)
-            setTabs(groupId, current().tabsOf(groupId) + tab)
-            app.enqueueWrite { repository.addTabs(listOf(tab)) }
-            _navigateTo.value = tab.id
-        } else if (openHere == false) {
-            switchGroup(prompt.existingGroup.id, showTabId = prompt.existing.id)
+        when (openHere) {
+            true -> {
+                val tab = newTab(prompt.file, prompt.targetGroupId?.takeIf { current().group(it) != null })
+                commit(current().appendTab(tab).copy(currentTabId = tab.id))
+            }
+            false -> select(prompt.existing.id)
+            null -> Unit
         }
         showNextDuplicate()
     }
 
+    /** Shows tab [id] in the viewer. */
+    fun select(id: String) {
+        val s = current()
+        if (s.tab(id) == null || s.currentTabId == id) return
+        _state.value = s.copy(currentTabId = id)
+        app.enqueueWrite { repository.setCurrentTab(id) }
+    }
+
+    /** The pager settled on [id]. */
+    fun onTabShown(id: String) = select(id)
+
+    // ---- Closing (with undo) ----
+
     fun close(id: String) {
         val s = current()
-        val tab = s.tabsByGroup.values.flatten().firstOrNull { it.id == id } ?: return
-        val groupTabs = s.tabsOf(tab.groupId)
-        setTabs(tab.groupId, groupTabs - tab)
+        val tab = s.tab(id) ?: return
+        val context = s.context(tab.groupId)
+        val index = context.indexOf(tab)
+        val group = tab.groupId?.let { s.group(it) }
+        val topIndex = s.top.indexOfFirst { it.id == (group?.id ?: id) }
+        val emptiedGroup = group?.takeIf { context.size == 1 }
+        commit(s.removeTab(id).withValidCurrent(tab.groupId, index))
         unsavedStates -= id
-        offerUndo(Closed.Tab(tab, groupTabs.indexOf(tab), viewerState(id)), "탭을 닫았습니다")
-        app.enqueueWrite { repository.removeTab(id) }
+        offerUndo(Closed.Tab(tab, index, topIndex, emptiedGroup, viewerState(id)), "탭을 닫았습니다")
     }
 
-    /**
-     * Points a tab whose file went missing at a newly chosen file, keeping its place in the list.
-     * If that file is already open in another tab of the group, the broken tab is closed and the
-     * other one shown instead, so a file is never open twice in a group (기획서 5.1).
-     */
-    fun replaceFile(id: String, file: OpenedFile) {
+    /** Closes a group and all its tabs. */
+    fun closeGroup(groupId: String) {
         val s = current()
-        val old = s.tabsByGroup.values.flatten().firstOrNull { it.id == id } ?: return
-        val groupTabs = s.tabsOf(old.groupId)
-        val existing = groupTabs.firstOrNull { it.id != id && it.uri == file.uri }
-        if (existing != null) {
-            setTabs(old.groupId, groupTabs - old)
-            app.enqueueWrite {
-                repository.removeTab(id)
-                releaseIfUnused(old)
-            }
-            select(existing.id)
-            return
-        }
-        // Bumping the revision makes the viewer retry even when the same location was picked again.
-        val updated = old.copy(uri = file.uri, name = file.name, isInternalCopy = file.isInternalCopy, revision = old.revision + 1)
-        setTabs(old.groupId, groupTabs.map { if (it.id == id) updated else it })
-        app.enqueueWrite {
-            repository.replaceFile(updated)
-            releaseIfUnused(old)
-        }
-    }
-
-    /** New order of the active group's tabs, by id (탭 개요 drag). */
-    fun reorderTabs(ids: List<String>) {
-        val s = current()
-        val byId = s.activeTabs.associateBy { it.id }
-        setTabs(s.activeGroupId, ids.mapNotNull { byId[it] })
-        app.enqueueWrite { repository.reorderTabs(ids) }
-    }
-
-    fun moveTab(tabId: String, toGroupId: String) {
-        val s = current()
-        val tab = s.tabsByGroup.values.flatten().firstOrNull { it.id == tabId } ?: return
-        if (tab.groupId == toGroupId) return
-        val moved = tab.copy(groupId = toGroupId)
-        _state.update {
-            it!!.copy(
-                tabsByGroup = it.tabsByGroup +
-                    (tab.groupId to it.tabsOf(tab.groupId) - tab) +
-                    (toGroupId to it.tabsOf(toGroupId) + moved)
-            )
-        }
-        app.enqueueWrite { repository.moveTab(tabId, toGroupId) }
-    }
-
-    fun moveTabToNewGroup(tabId: String, groupName: String) {
-        val groupId = createGroup(groupName, switchTo = false)
-        moveTab(tabId, groupId)
-    }
-
-    fun select(id: String) {
-        _navigateTo.value = id
-    }
-
-    fun onNavigated() {
-        _navigateTo.value = null
-    }
-
-    /** The pager settled on [id]; remembered as the group's active tab. */
-    fun onTabShown(id: String) {
-        val s = _state.value ?: return
-        val group = s.activeGroup
-        if (group.activeTabId == id) return
-        _state.value = s.copy(groups = s.groups.map { if (it.id == group.id) it.copy(activeTabId = id) else it })
-        app.enqueueWrite { repository.setActiveTab(group.id, id) }
-    }
-
-    // ---- Groups ----
-
-    /** Shows group [id], at [showTabId] or else the tab last seen there. */
-    fun switchGroup(id: String, showTabId: String? = null) {
-        val s = current()
-        if (s.group(id) == null) return
-        if (s.activeGroupId != id) {
-            _state.value = s.copy(activeGroupId = id)
-            app.enqueueWrite { repository.setActiveGroup(id) }
-        }
-        if (showTabId != null) _navigateTo.value = showTabId
-    }
-
-    /** Adds a group at the end with the first palette colour not yet used; returns its id. */
-    fun createGroup(name: String, switchTo: Boolean = true): String {
-        val s = current()
-        val used = s.groups.map { it.color }.toSet()
-        val color = (0 until GROUP_COLOR_COUNT).firstOrNull { it !in used } ?: (s.groups.size % GROUP_COLOR_COUNT)
-        val group = TabGroup(UUID.randomUUID().toString(), name.trim(), color, activeTabId = null)
-        _state.value = s.copy(groups = s.groups + group)
-        app.enqueueWrite { repository.addGroup(group) }
-        if (switchTo) switchGroup(group.id)
-        return group.id
-    }
-
-    fun renameGroup(id: String, name: String) {
-        updateGroup(id) { it.copy(name = name.trim()) }
-        app.enqueueWrite { repository.renameGroup(id, name.trim()) }
-    }
-
-    fun setGroupColor(id: String, color: Int) {
-        updateGroup(id) { it.copy(color = color) }
-        app.enqueueWrite { repository.setGroupColor(id, color) }
-    }
-
-    fun reorderGroups(ids: List<String>) {
-        val s = current()
-        val byId = s.groups.associateBy { it.id }
-        _state.value = s.copy(groups = ids.mapNotNull { byId[it] })
-        app.enqueueWrite { repository.reorderGroups(ids) }
-    }
-
-    /** Closes a group and all its tabs. The last remaining group cannot be closed (기획서 4.3). */
-    fun closeGroup(id: String) {
-        val s = current()
-        if (s.groups.size <= 1) return
-        val group = s.group(id) ?: return
-        val index = s.groups.indexOf(group)
-        val tabs = s.tabsOf(id)
-        val remaining = s.groups - group
-        val nextActive = if (s.activeGroupId == id) remaining[(index - 1).coerceAtLeast(0)].id else s.activeGroupId
-        _state.value = s.copy(groups = remaining, tabsByGroup = s.tabsByGroup - id, activeGroupId = nextActive)
+        val group = s.group(groupId) ?: return
+        val topIndex = s.top.indexOf(group)
+        val tabs = s.tabsOf(groupId)
+        val next = s.copy(top = s.top - group, groupTabs = s.groupTabs - groupId)
+        commit(next.withValidCurrent(null, topIndex))
         tabs.forEach { unsavedStates -= it.id }
         offerUndo(
-            Closed.Group(group, index, tabs.map { it to viewerState(it.id) }, wasActive = s.activeGroupId == id),
-            "'${group.name}' 그룹을 닫았습니다",
+            Closed.Group(group, topIndex, tabs, tabs.associate { it.id to viewerState(it.id) }),
+            "'${group.displayName(tabs.size)}' 그룹을 닫았습니다",
         )
-        app.enqueueWrite {
-            repository.removeGroup(id)
-            if (nextActive != s.activeGroupId) repository.setActiveGroup(nextActive)
-        }
     }
-
-    private fun updateGroup(id: String, change: (TabGroup) -> TabGroup) = _state.update { s ->
-        s!!.copy(groups = s.groups.map { if (it.id == id) change(it) else it })
-    }
-
-    // ---- Undo ----
 
     private sealed interface Closed {
-        data class Tab(val tab: PdfTab, val index: Int, val state: ViewerState) : Closed
+        /** [emptiedGroup] is set when closing the tab removed its (now empty) group. */
+        data class Tab(
+            val tab: PdfTab,
+            val index: Int,
+            val topIndex: Int,
+            val emptiedGroup: TabGroup?,
+            val state: ViewerState,
+        ) : Closed
+
         data class Group(
             val group: TabGroup,
-            val index: Int,
-            val tabs: List<Pair<PdfTab, ViewerState>>,
-            val wasActive: Boolean,
+            val topIndex: Int,
+            val tabs: List<PdfTab>,
+            val states: Map<String, ViewerState>,
         ) : Closed
     }
 
@@ -333,32 +203,26 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
         val closed = undoable ?: return
         undoable = null
         _undoOffer.value = null
-        when (closed) {
+        val s = current()
+        val restored = when (closed) {
             is Closed.Tab -> {
-                val s = current()
-                val groupId = closed.tab.groupId
-                if (s.group(groupId) == null) return
-                val tabs = s.tabsOf(groupId).toMutableList().apply { add(closed.index.coerceAtMost(size), closed.tab) }
-                setTabs(groupId, tabs)
                 viewerStates[closed.tab.id] = closed.state
-                app.enqueueWrite { repository.restoreTabs(listOf(closed.tab to closed.state), tabs.map { it.id }) }
-                if (groupId == s.activeGroupId) _navigateTo.value = closed.tab.id
+                val groupId = closed.tab.groupId
+                when {
+                    groupId == null -> s.insertTop(closed.topIndex, closed.tab)
+                    s.group(groupId) != null -> s.insertInGroup(groupId, closed.index, closed.tab)
+                    closed.emptiedGroup != null -> s.insertTop(closed.topIndex, closed.emptiedGroup)
+                        .copy(groupTabs = s.groupTabs + (groupId to listOf(closed.tab)))
+                    else -> s.insertTop(closed.topIndex, closed.tab.copy(groupId = null))
+                }.copy(currentTabId = closed.tab.id)
             }
             is Closed.Group -> {
-                val s = current()
-                val groups = s.groups.toMutableList().apply { add(closed.index.coerceAtMost(size), closed.group) }
-                _state.value = s.copy(
-                    groups = groups,
-                    tabsByGroup = s.tabsByGroup + (closed.group.id to closed.tabs.map { it.first }),
-                    activeGroupId = if (closed.wasActive) closed.group.id else s.activeGroupId,
-                )
-                closed.tabs.forEach { (tab, state) -> viewerStates[tab.id] = state }
-                app.enqueueWrite {
-                    repository.restoreGroup(closed.group, closed.tabs, groups.map { it.id })
-                    if (closed.wasActive) repository.setActiveGroup(closed.group.id)
-                }
+                viewerStates += closed.states
+                s.insertTop(closed.topIndex, closed.group)
+                    .copy(groupTabs = s.groupTabs + (closed.group.id to closed.tabs))
             }
         }
+        commit(restored)
     }
 
     /** The undo offer is gone: free the closed tabs' files if no other tab uses them. */
@@ -368,14 +232,130 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
         _undoOffer.value = null
         val tabs = when (closed) {
             is Closed.Tab -> listOf(closed.tab)
-            is Closed.Group -> closed.tabs.map { it.first }
+            is Closed.Group -> closed.tabs
         }
         tabs.forEach { viewerStates -= it.id }
-        app.enqueueWrite { tabs.forEach { releaseIfUnused(it) } }
+        app.enqueueWrite {
+            for (tab in tabs) if (!repository.isUriInUse(tab.uri)) FileAccess.release(app, tab)
+        }
     }
 
-    private suspend fun releaseIfUnused(tab: PdfTab) {
-        if (!repository.isUriInUse(tab.uri)) FileAccess.release(app, tab)
+    // ---- Replacing a missing file ----
+
+    /**
+     * Points a tab whose file went missing at a newly chosen file, keeping its place. If that file
+     * is already open in another tab of the same place, the broken tab is closed and the other one
+     * shown instead, so a file is never open twice there (기획서 5.1).
+     */
+    fun replaceFile(id: String, file: OpenedFile) {
+        val s = current()
+        val old = s.tab(id) ?: return
+        val existing = s.context(old.groupId).firstOrNull { it.id != id && it.uri == file.uri }
+        if (existing != null) {
+            commit(s.removeTab(id).copy(currentTabId = existing.id))
+            app.enqueueWrite { if (!repository.isUriInUse(old.uri)) FileAccess.release(app, old) }
+            return
+        }
+        // Bumping the revision makes the viewer retry even when the same location was picked again.
+        val updated = old.copy(uri = file.uri, name = file.name, isInternalCopy = file.isInternalCopy, revision = old.revision + 1)
+        commit(s.replaceTab(updated))
+        app.enqueueWrite { if (!repository.isUriInUse(old.uri)) FileAccess.release(app, old) }
+    }
+
+    // ---- Arranging ----
+
+    /** New top-level order (ungrouped tabs and groups), by id. */
+    fun reorderTop(ids: List<String>) {
+        val s = current()
+        val byId = s.top.associateBy { it.id }
+        commit(s.copy(top = ids.mapNotNull { byId[it] }))
+    }
+
+    fun reorderGroup(groupId: String, ids: List<String>) {
+        val s = current()
+        val byId = s.tabsOf(groupId).associateBy { it.id }
+        commit(s.copy(groupTabs = s.groupTabs + (groupId to ids.mapNotNull { byId[it] })))
+    }
+
+    /** Dropping ungrouped tab [draggedId] onto ungrouped tab [targetId] makes a new group of the two. */
+    fun groupTogether(draggedId: String, targetId: String) {
+        val s = current()
+        val dragged = s.tab(draggedId)?.takeIf { it.groupId == null } ?: return
+        val target = s.tab(targetId)?.takeIf { it.groupId == null } ?: return
+        val group = newGroup(s, "")
+        val topIndex = s.top.indexOf(target)
+        val top = s.top.toMutableList().apply {
+            set(topIndex, group)
+            remove(dragged)
+        }
+        commit(
+            s.copy(
+                top = top,
+                groupTabs = s.groupTabs + (group.id to listOf(target.copy(groupId = group.id), dragged.copy(groupId = group.id))),
+            )
+        )
+    }
+
+    /** Moves tab [tabId] to the end of group [groupId]. */
+    fun addToGroup(tabId: String, groupId: String) {
+        val s = current()
+        val tab = s.tab(tabId) ?: return
+        if (tab.groupId == groupId || s.group(groupId) == null) return
+        commit(s.removeTab(tabId).appendTab(tab.copy(groupId = groupId)))
+    }
+
+    /** Puts tab [tabId] into a new group named [name], where the tab (or its old group) was. */
+    fun addToNewGroup(tabId: String, name: String) {
+        val s = current()
+        val tab = s.tab(tabId) ?: return
+        val group = newGroup(s, name.trim())
+        val anchor = s.top.indexOfFirst { it.id == (tab.groupId ?: tab.id) }
+        val removed = s.removeTab(tabId)
+        // An ungrouped tab is replaced by its new group; a tab from a group lands after that group.
+        val at = if (tab.groupId == null) anchor else anchor + if (removed.group(tab.groupId) != null) 1 else 0
+        commit(
+            removed.insertTop(at, group)
+                .copy(groupTabs = removed.groupTabs + (group.id to listOf(tab.copy(groupId = group.id))))
+        )
+    }
+
+    /** Takes tab [tabId] out of its group; it lands right after the group in the top-level list. */
+    fun removeFromGroup(tabId: String) {
+        val s = current()
+        val tab = s.tab(tabId) ?: return
+        val groupId = tab.groupId ?: return
+        val groupIndex = s.top.indexOfFirst { it.id == groupId }
+        val removed = s.removeTab(tabId)
+        val at = if (removed.group(groupId) != null) groupIndex + 1 else groupIndex
+        commit(removed.insertTop(at, tab.copy(groupId = null)))
+    }
+
+    /** Dissolves a group: its tabs take its place in the top-level list, in order. */
+    fun ungroup(groupId: String) {
+        val s = current()
+        val group = s.group(groupId) ?: return
+        val index = s.top.indexOf(group)
+        val top = s.top.toMutableList().apply {
+            removeAt(index)
+            addAll(index, s.tabsOf(groupId).map { it.copy(groupId = null) })
+        }
+        commit(s.copy(top = top, groupTabs = s.groupTabs - groupId))
+    }
+
+    fun renameGroup(groupId: String, name: String) = updateGroup(groupId) { it.copy(name = name.trim()) }
+
+    fun setGroupColor(groupId: String, color: Int) = updateGroup(groupId) { it.copy(color = color) }
+
+    private fun updateGroup(groupId: String, change: (TabGroup) -> TabGroup) {
+        val s = current()
+        commit(s.copy(top = s.top.map { if (it is TabGroup && it.id == groupId) change(it) else it }))
+    }
+
+    /** A group with the first palette colour not in use yet. */
+    private fun newGroup(s: SessionState, name: String): TabGroup {
+        val used = s.groups.map { it.color }.toSet()
+        val color = (0 until GROUP_COLOR_COUNT).firstOrNull { it !in used } ?: (s.groups.size % GROUP_COLOR_COUNT)
+        return TabGroup(UUID.randomUUID().toString(), name, color)
     }
 
     // ---- Reading positions ----
@@ -384,7 +364,7 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
 
     fun updateViewerState(id: String, state: ViewerState) {
         val s = _state.value ?: return
-        if (s.tabsByGroup.values.none { tabs -> tabs.any { it.id == id } } || viewerStates[id] == state) return
+        if (s.tab(id) == null || viewerStates[id] == state) return
         viewerStates[id] = state
         unsavedStates[id] = state
         saveJob?.cancel()
@@ -410,4 +390,44 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
         private const val SAVE_DEBOUNCE_MS = 500L
         const val GROUP_COLOR_COUNT = 8
     }
+}
+
+// ---- Pure structure edits ----
+
+/** Removes a tab; a group left empty is removed too. */
+private fun SessionState.removeTab(id: String): SessionState {
+    val tab = tab(id) ?: return this
+    val groupId = tab.groupId ?: return copy(top = top.filterNot { it.id == id })
+    val rest = tabsOf(groupId).filterNot { it.id == id }
+    return if (rest.isEmpty()) {
+        copy(top = top.filterNot { it.id == groupId }, groupTabs = groupTabs - groupId)
+    } else {
+        copy(groupTabs = groupTabs + (groupId to rest))
+    }
+}
+
+/** Adds [tab] at the end of its place: its group, or the top-level list. */
+private fun SessionState.appendTab(tab: PdfTab): SessionState =
+    if (tab.groupId == null) copy(top = top + tab)
+    else copy(groupTabs = groupTabs + (tab.groupId to tabsOf(tab.groupId) + tab))
+
+private fun SessionState.insertTop(index: Int, item: TopItem): SessionState =
+    copy(top = top.toMutableList().apply { add(index.coerceIn(0, size), item) })
+
+private fun SessionState.insertInGroup(groupId: String, index: Int, tab: PdfTab): SessionState =
+    copy(groupTabs = groupTabs + (groupId to tabsOf(groupId).toMutableList().apply { add(index.coerceIn(0, size), tab) }))
+
+private fun SessionState.replaceTab(tab: PdfTab): SessionState =
+    if (tab.groupId == null) copy(top = top.map { if (it.id == tab.id) tab else it })
+    else copy(groupTabs = groupTabs + (tab.groupId to tabsOf(tab.groupId).map { if (it.id == tab.id) tab else it }))
+
+/**
+ * Keeps the current tab if it still exists; otherwise picks the one now at [index] of the same
+ * place ([groupId] or ungrouped), or its previous neighbour, or else any tab.
+ */
+private fun SessionState.withValidCurrent(groupId: String?, index: Int): SessionState {
+    if (currentTab != null) return this
+    val context = context(groupId)
+    val next = context.getOrNull(index.coerceAtMost(context.size - 1)) ?: allTabs.firstOrNull()
+    return copy(currentTabId = next?.id)
 }

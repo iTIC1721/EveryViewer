@@ -5,16 +5,18 @@ import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
 
-/** 기획서 6장 TabGroup. */
+/**
+ * A tab group. Groups and ungrouped tabs share one top-level order (Chrome-style tab switcher),
+ * so [position] is in the same space as an ungrouped tab's [TabEntity.position].
+ */
 @Entity(tableName = "tab_groups")
 data class GroupEntity(
     @PrimaryKey val id: String,
+    /** May be blank: shown as "탭 n개" until named. */
     val name: String,
     /** Index into the fixed group colour palette. */
     val color: Int,
     val position: Int,
-    /** Tab to show when switching back to this group. */
-    val activeTabId: String?,
 )
 
 /** 기획서 6장 Tab, with the reading position flattened in. */
@@ -32,7 +34,9 @@ data class GroupEntity(
 )
 data class TabEntity(
     @PrimaryKey val id: String,
-    val groupId: String,
+    /** Null for a tab that is not in a group. */
+    val groupId: String?,
+    /** Order within the group, or in the top-level list for an ungrouped tab. */
     val position: Int,
     /** Persistable-permission content URI, or a file URI to our own copy. */
     val uri: String,
@@ -52,5 +56,6 @@ data class TabEntity(
 @Entity(tableName = "app_state")
 data class AppStateEntity(
     @PrimaryKey val id: Int = 0,
-    val activeGroupId: String,
+    /** Tab shown in the viewer. */
+    val currentTabId: String?,
 )

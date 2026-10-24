@@ -7,6 +7,16 @@ import androidx.room.Transaction
 import androidx.room.Upsert
 import com.tabpdf.tabs.ViewerState
 
+/** Where a tab sits in the structure, without touching its reading position. */
+data class TabPlacement(
+    val id: String,
+    val groupId: String?,
+    val position: Int,
+    val uri: String,
+    val isInternalCopy: Boolean,
+    val displayName: String,
+)
+
 @Dao
 abstract class SessionDao {
     @Query("SELECT * FROM tab_groups ORDER BY position")
@@ -18,8 +28,11 @@ abstract class SessionDao {
     @Query("SELECT * FROM app_state WHERE id = 0")
     abstract suspend fun appState(): AppStateEntity?
 
+    @Query("SELECT id FROM tabs")
+    abstract suspend fun tabIds(): List<String>
+
     @Upsert
-    abstract suspend fun upsertGroup(group: GroupEntity)
+    abstract suspend fun upsertGroups(groups: List<GroupEntity>)
 
     @Upsert
     abstract suspend fun upsertAppState(state: AppStateEntity)
@@ -27,39 +40,22 @@ abstract class SessionDao {
     @Insert
     abstract suspend fun insertTabs(tabs: List<TabEntity>)
 
-    @Query("DELETE FROM tabs WHERE id = :id")
-    abstract suspend fun deleteTab(id: String)
+    @Query("DELETE FROM tabs WHERE id IN (:ids)")
+    abstract suspend fun deleteTabs(ids: List<String>)
 
-    /** Deletes the group and, by cascade, its tabs. */
-    @Query("DELETE FROM tab_groups WHERE id = :id")
-    abstract suspend fun deleteGroup(id: String)
+    @Query("DELETE FROM tab_groups WHERE id NOT IN (:keep)")
+    abstract suspend fun deleteGroupsExcept(keep: List<String>)
 
-    @Query("UPDATE tab_groups SET name = :name WHERE id = :id")
-    abstract suspend fun renameGroup(id: String, name: String)
-
-    @Query("UPDATE tab_groups SET color = :color WHERE id = :id")
-    abstract suspend fun setGroupColor(id: String, color: Int)
-
-    @Query("UPDATE tab_groups SET position = :position WHERE id = :id")
-    abstract suspend fun setGroupPosition(id: String, position: Int)
-
-    @Query("UPDATE tabs SET position = :position WHERE id = :id")
-    abstract suspend fun setTabPosition(id: String, position: Int)
-
-    @Query("UPDATE tabs SET groupId = :groupId, position = :position WHERE id = :id")
-    abstract suspend fun moveTab(id: String, groupId: String, position: Int)
-
-    @Query("SELECT COALESCE(MAX(position), -1) FROM tabs WHERE groupId = :groupId")
-    abstract suspend fun lastPosition(groupId: String): Int
-
-    @Query("SELECT COALESCE(MAX(position), -1) FROM tab_groups")
-    abstract suspend fun lastGroupPosition(): Int
+    @Query(
+        "UPDATE tabs SET groupId = :groupId, position = :position, uri = :uri, " +
+            "isInternalCopy = :isInternalCopy, displayName = :displayName WHERE id = :id"
+    )
+    abstract suspend fun updatePlacement(
+        id: String, groupId: String?, position: Int, uri: String, isInternalCopy: Boolean, displayName: String,
+    )
 
     @Query("SELECT COUNT(*) FROM tabs WHERE uri = :uri")
     abstract suspend fun countTabsWithUri(uri: String): Int
-
-    @Query("UPDATE tab_groups SET activeTabId = :tabId WHERE id = :groupId")
-    abstract suspend fun setActiveTab(groupId: String, tabId: String?)
 
     @Query("UPDATE tabs SET lastOpenedAt = :time WHERE id = :id")
     abstract suspend fun touchTab(id: String, time: Long)
@@ -69,27 +65,44 @@ abstract class SessionDao {
     )
     abstract suspend fun updateViewerState(id: String, page: Int, pageOffset: Float, zoom: Float, panX: Float)
 
-    @Query("UPDATE tabs SET uri = :uri, displayName = :name, isInternalCopy = :isInternalCopy WHERE id = :id")
-    abstract suspend fun updateFile(id: String, uri: String, name: String, isInternalCopy: Boolean)
-
     @Transaction
     open suspend fun updateViewerStates(states: Map<String, ViewerState>) {
         for ((id, s) in states) updateViewerState(id, s.page, s.pageOffset, s.zoom, s.panX)
     }
 
-    /** Rewrites positions so [ids] are in that order. */
+    /**
+     * Makes the stored groups and tab placements exactly match the given structure: removes what
+     * is gone, inserts new tabs (with [newTabStates] or a fresh reading position), and re-places
+     * the rest. Reading positions of existing tabs are left alone.
+     */
     @Transaction
-    open suspend fun reorderTabs(ids: List<String>) {
-        ids.forEachIndexed { i, id -> setTabPosition(id, i) }
-    }
-
-    @Transaction
-    open suspend fun reorderGroups(ids: List<String>) {
-        ids.forEachIndexed { i, id -> setGroupPosition(id, i) }
-    }
-
-    @Transaction
-    open suspend fun moveTabToEnd(id: String, groupId: String) {
-        moveTab(id, groupId, lastPosition(groupId) + 1)
+    open suspend fun saveStructure(
+        groups: List<GroupEntity>,
+        tabs: List<TabPlacement>,
+        newTabStates: Map<String, ViewerState>,
+        currentTabId: String?,
+    ) {
+        // Order matters: new groups must exist before tabs point at them, and a removed group is
+        // deleted only after its tabs have been re-placed — the delete cascades to its tabs.
+        val existing = tabIds().toSet()
+        val keep = tabs.map { it.id }.toSet()
+        upsertGroups(groups)
+        val now = System.currentTimeMillis()
+        val inserts = mutableListOf<TabEntity>()
+        for (t in tabs) {
+            if (t.id in existing) {
+                updatePlacement(t.id, t.groupId, t.position, t.uri, t.isInternalCopy, t.displayName)
+            } else {
+                val s = newTabStates[t.id] ?: ViewerState()
+                inserts += TabEntity(
+                    t.id, t.groupId, t.position, t.uri, t.isInternalCopy, t.displayName,
+                    s.page, s.pageOffset, s.zoom, s.panX, now,
+                )
+            }
+        }
+        if (inserts.isNotEmpty()) insertTabs(inserts)
+        (existing - keep).chunked(500).forEach { deleteTabs(it) }
+        deleteGroupsExcept(groups.map { it.id })
+        upsertAppState(AppStateEntity(currentTabId = currentTabId))
     }
 }

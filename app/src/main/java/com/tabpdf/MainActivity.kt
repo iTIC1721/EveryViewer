@@ -35,9 +35,14 @@ class MainActivity : ComponentActivity() {
         if (savedInstanceState == null) openDebugTestFiles()
         setContent {
             MaterialTheme(colorScheme = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()) {
+                // Group the picked files go into (null: ungrouped); saved across the picker round trip.
+                var openingIntoGroup by rememberSaveable { mutableStateOf<String?>(null) }
                 val openFiles = rememberLauncherForActivityResult(
                     ActivityResultContracts.OpenMultipleDocuments()
-                ) { uris -> prepare(uris) { tabsViewModel.open(it) } }
+                ) { uris ->
+                    val groupId = openingIntoGroup
+                    prepare(uris) { tabsViewModel.open(it, groupId) }
+                }
 
                 // Tab waiting for a replacement file from "다시 찾기"; saved across the picker round trip.
                 var relocatingTabId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -51,7 +56,10 @@ class MainActivity : ComponentActivity() {
 
                 TabsScreen(
                     viewModel = tabsViewModel,
-                    onOpenFiles = { openFiles.launch(arrayOf(PDF_MIME)) },
+                    onOpenFiles = { groupId ->
+                        openingIntoGroup = groupId
+                        openFiles.launch(arrayOf(PDF_MIME))
+                    },
                     onRelocate = { tab ->
                         relocatingTabId = tab.id
                         relocate.launch(arrayOf(PDF_MIME))
@@ -92,6 +100,6 @@ class MainActivity : ComponentActivity() {
         val debuggable = applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
         if (!debuggable || !intent.getBooleanExtra("debug_open_test_files", false)) return
         val files = filesDir.listFiles { f -> f.extension.equals("pdf", true) }.orEmpty()
-        tabsViewModel.open(files.sortedBy { it.name }.map { OpenedFile(Uri.fromFile(it), it.name, isInternalCopy = false) })
+        tabsViewModel.open(files.sortedBy { it.name }.map { OpenedFile(Uri.fromFile(it), it.name, isInternalCopy = false) }, groupId = null)
     }
 }
