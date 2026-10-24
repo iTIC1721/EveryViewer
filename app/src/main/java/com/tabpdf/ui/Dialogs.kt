@@ -42,7 +42,6 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.tabpdf.tabs.DuplicatePrompt
 import com.tabpdf.tabs.DocTab
 import com.tabpdf.tabs.TabGroup
 import com.tabpdf.tabs.displayName
@@ -234,19 +233,6 @@ fun AddToGroupDialog(
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("취소") } },
-    )
-}
-
-/** 기획서 5.1: the file is already open somewhere else — go there, or open it here too. */
-@Composable
-fun DuplicateDialog(prompt: DuplicatePrompt, onGoThere: () -> Unit, onOpenHere: () -> Unit, onCancel: () -> Unit) {
-    val where = prompt.existingPlace?.let { "'$it' 그룹에" } ?: "그룹 밖 탭으로"
-    AlertDialog(
-        onDismissRequest = onCancel,
-        title = { Text("이미 열려 있는 파일") },
-        text = { Text("'${prompt.file.name}' 파일이 $where 이미 열려 있습니다.") },
-        confirmButton = { TextButton(onClick = onGoThere) { Text("그 탭으로 이동") } },
-        dismissButton = { TextButton(onClick = onOpenHere) { Text("여기에도 열기") } },
     )
 }
 
