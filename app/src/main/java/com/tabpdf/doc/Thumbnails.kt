@@ -1,9 +1,9 @@
-package com.tabpdf.pdf
+package com.tabpdf.doc
 
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.net.Uri
+import com.tabpdf.tabs.DocTab
 import android.util.LruCache
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -24,11 +24,13 @@ object Thumbnails {
         override fun sizeOf(key: String, value: Bitmap) = value.byteCount
     }
 
-    /** Opening a PDF is the expensive part; don't open many at once while the grid fills in. */
+    /** Opening a file is the expensive part; don't open many at once while the grid fills in. */
     private val renders = Semaphore(2)
 
     /** Thumbnail of [page] of the file at [uri], or null if the file can't be read. */
-    suspend fun load(context: Context, tabId: String, uri: Uri, page: Int): Bitmap? {
+    suspend fun load(context: Context, tab: DocTab, page: Int): Bitmap? {
+        val tabId = tab.id
+        val uri = tab.uri
         // The URI is part of the key so a tab pointed at another file ("다시 찾기") gets a new image.
         val key = "$tabId-${uri.toString().hashCode().toUInt()}-$page"
         memory.get(key)?.let { return it }
@@ -36,7 +38,7 @@ object Thumbnails {
             val dir = File(context.cacheDir, DIR).apply { mkdirs() }
             val file = File(dir, "$key.png")
             val bitmap = file.takeIf { it.exists() }?.let { BitmapFactory.decodeFile(it.path) }
-                ?: render(context, uri, page)?.also { rendered ->
+                ?: render(context, tab, page)?.also { rendered ->
                     // One file per tab: drop thumbnails of pages it no longer shows.
                     dir.listFiles { f -> f.name.startsWith("$tabId-") }?.forEach { it.delete() }
                     file.outputStream().use { rendered.compress(Bitmap.CompressFormat.PNG, 100, it) }
@@ -45,9 +47,9 @@ object Thumbnails {
         }
     }
 
-    private suspend fun render(context: Context, uri: Uri, page: Int): Bitmap? = renders.withPermit {
+    private suspend fun render(context: Context, tab: DocTab, page: Int): Bitmap? = renders.withPermit {
         try {
-            val document = PdfDocument.open(context, uri)
+            val document = Documents.open(context, tab.uri, tab.name, tab.format)
             try {
                 document.renderPage(page.coerceIn(0, document.pageCount - 1), WIDTH_PX)
             } finally {

@@ -1,5 +1,6 @@
 package com.tabpdf.data
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
@@ -43,6 +44,8 @@ data class TabEntity(
     /** True if [uri] points at a copy in app storage that is deleted with the tab. */
     val isInternalCopy: Boolean,
     val displayName: String,
+    /** FileFormat.key. Tabs from before v3 were all PDFs. */
+    @ColumnInfo(defaultValue = "pdf") val format: String,
     val page: Int,
     /** Scroll offset into [page], as a fraction of the page height. */
     val pageOffset: Float,

@@ -27,7 +27,8 @@ import com.tabpdf.tabs.TabsViewModel
 import com.tabpdf.ui.TabsScreen
 import kotlinx.coroutines.launch
 
-private const val PDF_MIME = "application/pdf"
+/** Any file: what can be shown is decided after it is picked (기획서 5.1, 5.7). */
+private const val ANY_MIME = "*/*"
 
 class MainActivity : ComponentActivity() {
     private val tabsViewModel: TabsViewModel by viewModels()
@@ -65,11 +66,11 @@ class MainActivity : ComponentActivity() {
                     viewModel = tabsViewModel,
                     onOpenFiles = { groupId ->
                         openingIntoGroup = groupId
-                        openFiles.launch(arrayOf(PDF_MIME))
+                        openFiles.launch(arrayOf(ANY_MIME))
                     },
                     onRelocate = { tab ->
                         relocatingTabId = tab.id
-                        relocate.launch(arrayOf(PDF_MIME))
+                        relocate.launch(arrayOf(ANY_MIME))
                     },
                 )
             }
@@ -83,7 +84,7 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * PDFs handed over by another app ("열기"/"공유") open as ungrouped tabs (기획서 5.1). Their
+     * Files handed over by another app ("열기"/"공유") open as ungrouped tabs (기획서 5.1). Their
      * read grants are temporary, so FileAccess usually copies them into app storage.
      */
     private fun openIncomingFiles(intent: Intent) {
@@ -93,6 +94,16 @@ class MainActivity : ComponentActivity() {
             Intent.ACTION_SEND_MULTIPLE ->
                 IntentCompat.getParcelableArrayListExtra(intent, Intent.EXTRA_STREAM, Uri::class.java).orEmpty()
             else -> emptyList()
+        }
+        if (uris.isEmpty() && intent.action == Intent.ACTION_SEND) {
+            // Shared text with no file behind it (a link, a selection): kept as a text file of its own.
+            val text = intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString() ?: return
+            val subject = intent.getStringExtra(Intent.EXTRA_SUBJECT)
+            lifecycleScope.launch {
+                val file = FileAccess.saveSharedText(applicationContext, text, subject)
+                tabsViewModel.open(listOf(file), groupId = null)
+            }
+            return
         }
         prepare(uris) { tabsViewModel.open(it, groupId = null) }
     }
@@ -111,7 +122,7 @@ class MainActivity : ComponentActivity() {
                 try {
                     FileAccess.prepare(applicationContext, uri)
                 } catch (e: Exception) {
-                    android.util.Log.w("TabPDF", "Could not open $uri", e)
+                    android.util.Log.w("EveryViewer", "Could not open $uri", e)
                     null
                 }
             }
@@ -129,13 +140,13 @@ class MainActivity : ComponentActivity() {
 
     /**
      * Debug builds only: `adb shell am start -n com.tabpdf/.MainActivity --ez debug_open_test_files true`
-     * opens every PDF in the app's internal files dir (copy them in with `adb shell run-as com.tabpdf`).
+     * opens every file in the app's internal files dir (copy them in with `adb shell run-as com.tabpdf`).
      * Lets gestures be tested on an emulator without driving the system file picker.
      */
     private fun openDebugTestFiles() {
         val debuggable = applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
         if (!debuggable || !intent.getBooleanExtra("debug_open_test_files", false)) return
-        val files = filesDir.listFiles { f -> f.extension.equals("pdf", true) }.orEmpty()
-        tabsViewModel.open(files.sortedBy { it.name }.map { OpenedFile(Uri.fromFile(it), it.name, isInternalCopy = false) }, groupId = null)
+        val files = filesDir.listFiles { f -> f.isFile }.orEmpty().sortedBy { it.name }
+        prepare(files.map { Uri.fromFile(it) }) { tabsViewModel.open(it, groupId = null) }
     }
 }

@@ -1,7 +1,8 @@
 package com.tabpdf.data
 
 import android.net.Uri
-import com.tabpdf.tabs.PdfTab
+import com.tabpdf.doc.FileFormat
+import com.tabpdf.tabs.DocTab
 import com.tabpdf.tabs.SessionState
 import com.tabpdf.tabs.TabGroup
 import com.tabpdf.tabs.TopItem
@@ -39,7 +40,7 @@ class SessionRepository(private val dao: SessionDao) {
                     groups += GroupEntity(item.id, item.name, item.color, i)
                     state.tabsOf(item.id).forEachIndexed { j, tab -> placements += tab.placement(j) }
                 }
-                is PdfTab -> placements += item.placement(i)
+                is DocTab -> placements += item.placement(i)
             }
         }
         dao.saveStructure(groups, placements, viewerStates, state.currentTabId)
@@ -54,8 +55,8 @@ class SessionRepository(private val dao: SessionDao) {
 
     suspend fun saveViewerStates(states: Map<String, ViewerState>) = dao.updateViewerStates(states)
 
-    private fun TabEntity.toTab() = PdfTab(id, groupId, Uri.parse(uri), displayName, isInternalCopy)
+    private fun TabEntity.toTab() = DocTab(id, groupId, Uri.parse(uri), displayName, isInternalCopy, FileFormat.fromKey(format))
 
-    private fun PdfTab.placement(position: Int) =
-        TabPlacement(id, groupId, position, uri.toString(), isInternalCopy, name)
+    private fun DocTab.placement(position: Int) =
+        TabPlacement(id, groupId, position, uri.toString(), isInternalCopy, name, format.key)
 }

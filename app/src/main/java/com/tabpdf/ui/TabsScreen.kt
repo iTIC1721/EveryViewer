@@ -71,7 +71,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
-import com.tabpdf.tabs.PdfTab
+import com.tabpdf.tabs.DocTab
 import com.tabpdf.tabs.SessionState
 import com.tabpdf.tabs.TabGroup
 import com.tabpdf.tabs.TabsViewModel
@@ -86,7 +86,7 @@ private val TOP_BAR_HEIGHT = 56.dp
  * [onOpenFiles] opens the file picker for a group, or for ungrouped tabs (null).
  */
 @Composable
-fun TabsScreen(viewModel: TabsViewModel, onOpenFiles: (groupId: String?) -> Unit, onRelocate: (PdfTab) -> Unit) {
+fun TabsScreen(viewModel: TabsViewModel, onOpenFiles: (groupId: String?) -> Unit, onRelocate: (DocTab) -> Unit) {
     // Loading the saved session takes a few ms; show just the background until then, so the pager
     // can start on the saved tab instead of jumping to it.
     val session = viewModel.state.collectAsState().value ?: run {
@@ -178,7 +178,7 @@ private fun ContextPager(
     barsVisible: Boolean,
     onToggleBars: () -> Unit,
     onOpenFiles: (groupId: String?) -> Unit,
-    onRelocate: (PdfTab) -> Unit,
+    onRelocate: (DocTab) -> Unit,
     onShowSwitcher: (openGroupId: String?) -> Unit,
 ) {
     val tabs = session.context(groupId)
@@ -206,7 +206,7 @@ private fun ContextPager(
         if (tabs.isEmpty()) {
             Button(onClick = { onOpenFiles(groupId) }, modifier = Modifier.align(Alignment.Center)) {
                 Icon(Icons.Default.Add, contentDescription = null)
-                Text("PDF 열기", Modifier.padding(start = 8.dp))
+                Text("파일 열기", Modifier.padding(start = 8.dp))
             }
         } else {
             // Pages sit under the bar, so the first page starts below it either way.
@@ -222,8 +222,10 @@ private fun ContextPager(
                 pageSpacing = 8.dp,
             ) { page ->
                 val tab = tabs[page]
-                PdfViewer(
+                DocumentViewer(
                     uri = tab.uri,
+                    name = tab.name,
+                    format = tab.format,
                     revision = tab.revision,
                     initialState = viewModel.viewerState(tab.id),
                     onStateChange = { viewModel.updateViewerState(tab.id, it) },
@@ -287,7 +289,7 @@ private fun TopBar(
     group: TabGroup?,
     groupTabCount: Int,
     totalTabCount: Int,
-    tabs: List<PdfTab>,
+    tabs: List<DocTab>,
     pagerState: PagerState,
     onGroupClick: () -> Unit,
     onOpenFiles: () -> Unit,
@@ -311,7 +313,7 @@ private fun TopBar(
             }
             TitleStrip(tabs, pagerState, Modifier.weight(1f))
             IconButton(onClick = onOpenFiles) {
-                Icon(Icons.Default.Add, contentDescription = "PDF 열기")
+                Icon(Icons.Default.Add, contentDescription = "파일 열기")
             }
             TabCountButton(totalTabCount, onTabCountClick)
             Box {
@@ -374,7 +376,7 @@ private fun GroupChip(group: TabGroup, tabCount: Int, onClick: () -> Unit) {
  * current name moves out with the finger and the next one comes in, fading by distance.
  */
 @Composable
-private fun TitleStrip(tabs: List<PdfTab>, pagerState: PagerState, modifier: Modifier) {
+private fun TitleStrip(tabs: List<DocTab>, pagerState: PagerState, modifier: Modifier) {
     BoxWithConstraints(modifier.fillMaxHeight().clipToBounds(), contentAlignment = Alignment.CenterStart) {
         val width = constraints.maxWidth.toFloat()
         val center = pagerState.currentPage

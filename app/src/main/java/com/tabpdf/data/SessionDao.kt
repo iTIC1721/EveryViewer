@@ -15,6 +15,7 @@ data class TabPlacement(
     val uri: String,
     val isInternalCopy: Boolean,
     val displayName: String,
+    val format: String,
 )
 
 @Dao
@@ -48,10 +49,11 @@ abstract class SessionDao {
 
     @Query(
         "UPDATE tabs SET groupId = :groupId, position = :position, uri = :uri, " +
-            "isInternalCopy = :isInternalCopy, displayName = :displayName WHERE id = :id"
+            "isInternalCopy = :isInternalCopy, displayName = :displayName, format = :format WHERE id = :id"
     )
     abstract suspend fun updatePlacement(
         id: String, groupId: String?, position: Int, uri: String, isInternalCopy: Boolean, displayName: String,
+        format: String,
     )
 
     @Query("SELECT COUNT(*) FROM tabs WHERE uri = :uri")
@@ -91,11 +93,11 @@ abstract class SessionDao {
         val inserts = mutableListOf<TabEntity>()
         for (t in tabs) {
             if (t.id in existing) {
-                updatePlacement(t.id, t.groupId, t.position, t.uri, t.isInternalCopy, t.displayName)
+                updatePlacement(t.id, t.groupId, t.position, t.uri, t.isInternalCopy, t.displayName, t.format)
             } else {
                 val s = newTabStates[t.id] ?: ViewerState()
                 inserts += TabEntity(
-                    t.id, t.groupId, t.position, t.uri, t.isInternalCopy, t.displayName,
+                    t.id, t.groupId, t.position, t.uri, t.isInternalCopy, t.displayName, t.format,
                     s.page, s.pageOffset, s.zoom, s.panX, now,
                 )
             }

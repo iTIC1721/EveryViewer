@@ -1,0 +1,96 @@
+package com.tabpdf.doc
+
+import android.content.Context
+import android.net.Uri
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+
+/** How a tab's file is read (기획서 5.7). [key] is what the database stores. */
+enum class FileFormat(val key: String) {
+    Pdf("pdf"),
+    Text("text"),
+    Markdown("markdown"),
+    Image("image"),
+    /** Nothing we can show. Detected again on every open, so a later version can take it over. */
+    Unsupported("unsupported");
+
+    companion object {
+        fun fromKey(key: String): FileFormat = entries.firstOrNull { it.key == key } ?: Unsupported
+    }
+}
+
+object FileFormats {
+    /** Bytes read from the start of a file to tell its format. */
+    const val HEAD_SIZE = 8 * 1024
+
+    private val markdownExtensions = setOf("md", "markdown", "mdown", "mkd", "mkdn")
+    private val imageExtensions = setOf("jpg", "jpeg", "png", "webp", "gif", "bmp", "heic", "heif")
+
+    /** Known to be something else than text, even if the bytes happen to look like it. */
+    private val binaryExtensions = setOf(
+        "docx", "pptx", "xlsx", "hwpx", "hwp", "doc", "ppt", "xls", "odt", "odp", "ods", "epub",
+        "zip", "apk", "rar", "7z", "gz", "mp3", "mp4", "m4a", "mov", "avi", "mkv",
+    )
+
+    suspend fun detect(context: Context, uri: Uri, name: String): FileFormat = withContext(Dispatchers.IO) {
+        val mime = context.contentResolver.getType(uri)
+        val head = context.contentResolver.openInputStream(uri)?.use { input ->
+            val buffer = ByteArray(HEAD_SIZE)
+            var read = 0
+            while (read < buffer.size) {
+                val n = input.read(buffer, read, buffer.size - read)
+                if (n < 0) break
+                read += n
+            }
+            buffer.copyOf(read)
+        } ?: ByteArray(0)
+        detect(name, mime, head)
+    }
+
+    /**
+     * Tells the format from the file's first bytes, its [name] and the [mime] type its provider
+     * reports, in that order of trust: signatures can't lie, while file managers and messengers
+     * often report "application/octet-stream" or a wrong type.
+     */
+    fun detect(name: String, mime: String?, head: ByteArray): FileFormat {
+        when {
+            head.startsWith("%PDF-") -> return FileFormat.Pdf
+            isImage(head) -> return FileFormat.Image
+        }
+        val extension = name.substringAfterLast('.', "").lowercase()
+        when (extension) {
+            "pdf" -> return FileFormat.Pdf
+            in markdownExtensions -> return FileFormat.Markdown
+            in imageExtensions -> return FileFormat.Image
+            in binaryExtensions -> return FileFormat.Unsupported
+        }
+        val type = mime?.lowercase()
+        when {
+            type == "application/pdf" -> return FileFormat.Pdf
+            type == "text/markdown" || type == "text/x-markdown" -> return FileFormat.Markdown
+            type != null && type.startsWith("image/") -> return FileFormat.Image
+        }
+        return if (TextDecoding.looksLikeText(head)) FileFormat.Text else FileFormat.Unsupported
+    }
+
+    private fun isImage(head: ByteArray): Boolean =
+        head.startsWith(0x89, 'P'.code, 'N'.code, 'G'.code) ||
+            head.startsWith(0xFF, 0xD8, 0xFF) ||
+            head.startsWith("GIF8") ||
+            // "BM" alone is too common a start for text; check the size of the header that follows.
+            head.startsWith("BM") && head.size >= 18 && head.int32At(14) in setOf(12, 40, 52, 56, 64, 108, 124) ||
+            head.startsWith("RIFF") && head.size >= 12 && String(head, 8, 4, Charsets.US_ASCII) == "WEBP" ||
+            // ISO media "ftyp" box with a HEIF brand.
+            head.size >= 12 && String(head, 4, 4, Charsets.US_ASCII) == "ftyp" &&
+            String(head, 8, 4, Charsets.US_ASCII) in setOf("heic", "heix", "mif1", "msf1", "hevc", "heim", "heis")
+
+    private fun ByteArray.int32At(i: Int): Int =
+        (this[i].toInt() and 0xFF) or ((this[i + 1].toInt() and 0xFF) shl 8) or
+            ((this[i + 2].toInt() and 0xFF) shl 16) or ((this[i + 3].toInt() and 0xFF) shl 24)
+
+    private fun ByteArray.startsWith(prefix: String): Boolean =
+        size >= prefix.length && prefix.indices.all { this[it] == prefix[it].code.toByte() }
+
+    private fun ByteArray.startsWith(vararg prefix: Int): Boolean =
+        size >= prefix.size && prefix.indices.all { this[it] == prefix[it].toByte() }
+}

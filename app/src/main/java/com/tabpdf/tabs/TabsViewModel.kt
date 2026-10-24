@@ -17,7 +17,7 @@ data class DuplicatePrompt(
     val file: OpenedFile,
     /** Where the file was to be opened: a group, or null for ungrouped. */
     val targetGroupId: String?,
-    val existing: PdfTab,
+    val existing: DocTab,
     /** Name of the group the existing tab is in, or null if it is ungrouped. */
     val existingPlace: String?,
 )
@@ -69,7 +69,7 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
             .withValidCurrent(null, 0)
         _state.value = cleaned
         if (cleaned != saved) commit(cleaned)
-        app.enqueueWrite { FileAccess.releaseUnused(app, cleaned.allTabs.map { it.uri }.toSet()) }
+        app.enqueueWrite { FileAccess.releaseUnused(app, cleaned.allTabs.map { it.uri }.toSet(), app.startedAt) }
     }
 
     private fun current(): SessionState = _state.value!!
@@ -93,7 +93,7 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
             loadJob.join()
             var s = current()
             val target = groupId?.takeIf { s.group(it) != null }
-            val added = mutableListOf<PdfTab>()
+            val added = mutableListOf<DocTab>()
             var show: String? = null
             for (file in files) {
                 val here = (s.context(target) + added).firstOrNull { it.uri == file.uri }
@@ -119,7 +119,7 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
         s.group(groupId)?.displayName(s.tabsOf(groupId).size).orEmpty()
 
     private fun newTab(file: OpenedFile, groupId: String?) =
-        PdfTab(UUID.randomUUID().toString(), groupId, file.uri, file.name, file.isInternalCopy)
+        DocTab(UUID.randomUUID().toString(), groupId, file.uri, file.name, file.isInternalCopy, file.format)
 
     private fun showNextDuplicate() {
         if (_duplicatePrompt.value == null) _duplicatePrompt.value = pendingDuplicates.removeFirstOrNull()
@@ -187,7 +187,7 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
     private sealed interface Closed {
         /** [emptiedGroup] is set when closing the tab removed its (now empty) group. */
         data class Tab(
-            val tab: PdfTab,
+            val tab: DocTab,
             val index: Int,
             val topIndex: Int,
             val emptiedGroup: TabGroup?,
@@ -197,7 +197,7 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
         data class Group(
             val group: TabGroup,
             val topIndex: Int,
-            val tabs: List<PdfTab>,
+            val tabs: List<DocTab>,
             val states: Map<String, ViewerState>,
         ) : Closed
     }
@@ -267,7 +267,10 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         // Bumping the revision makes the viewer retry even when the same location was picked again.
-        val updated = old.copy(uri = file.uri, name = file.name, isInternalCopy = file.isInternalCopy, revision = old.revision + 1)
+        val updated = old.copy(
+            uri = file.uri, name = file.name, isInternalCopy = file.isInternalCopy, format = file.format,
+            revision = old.revision + 1,
+        )
         commit(s.replaceTab(updated))
         app.enqueueWrite { if (!repository.isUriInUse(old.uri)) FileAccess.release(app, old) }
     }
