@@ -43,6 +43,23 @@ object FileAccess {
         }
     }
 
+    /**
+     * Frees grants and copies no tab uses any more. Closing a tab only frees its file once undo is no
+     * longer possible, so if the app died in between, this catches what was left behind.
+     */
+    suspend fun releaseUnused(context: Context, inUse: Set<Uri>) = withContext(Dispatchers.IO) {
+        for (permission in context.contentResolver.persistedUriPermissions) {
+            if (permission.uri !in inUse) {
+                context.contentResolver.releasePersistableUriPermission(
+                    permission.uri, Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            }
+        }
+        File(context.filesDir, COPY_DIR).listFiles()?.forEach { file ->
+            if (Uri.fromFile(file) !in inUse) file.delete()
+        }
+    }
+
     private fun copyToAppStorage(context: Context, uri: Uri): Uri {
         val dir = File(context.filesDir, COPY_DIR).apply { mkdirs() }
         val target = File(dir, "${UUID.randomUUID()}.pdf")

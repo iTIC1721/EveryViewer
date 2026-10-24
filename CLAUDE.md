@@ -37,6 +37,8 @@ adb shell am start -n com.tabpdf/.MainActivity --ez debug_open_test_files true
 - 제스처는 `adb shell input swipe/tap`으로 확인한다. 핀치는 adb로 재현할 수 없으므로 실기기에서 확인.
 - adb로 `/sdcard`에 push한 파일은 앱이 읽을 수 없다 (소유자가 shell).
 - 세션 복원 확인: `adb shell am force-stop com.tabpdf` 후 훅 없이 `am start`로 다시 실행한다. 이전 세션은 DB에 남으므로, 처음부터 확인하려면 앱을 삭제 후 재설치.
+- 버튼·메뉴는 좌표 대신 `uiautomator dump`로 텍스트의 bounds를 찾아 누른다 (화면 캡처는 축소본이라 좌표 환산이 틀리기 쉽다).
+- 닫기 후 실행 취소 스낵바는 약 10초. 스크립트로 확인할 때는 닫기와 실행 취소를 한 번에 보낸다.
 - Git Bash에서 adb 경로 인자(`/sdcard/...`)가 Windows 경로로 바뀌지 않게 `MSYS_NO_PATHCONV=1`을 설정한다.
 
 ## 코드 구조
@@ -46,13 +48,15 @@ app/src/main/java/com/tabpdf/
   TabPdfApp.kt           Application: DB 저장소, 순서 보장 DB 쓰기 큐
   MainActivity.kt        진입점, 파일 선택기, onStop 시 저장
   data/                  Room (그룹·탭·앱 상태), SessionRepository
-  pdf/                   PdfRenderer 래퍼 (렌더링 스레드 안전 처리)
-  tabs/                  탭 상태 ViewModel, 읽던 위치, 파일 접근 권한·복사본 관리
-  ui/                    화면 (뷰어, 탭 페이저, 상단 바)
+  pdf/                   PdfRenderer 래퍼 (렌더링 스레드 안전 처리), 탭 전환 화면 썸네일
+  tabs/                  탭·그룹 구조(Session.kt), ViewModel, 읽던 위치, 파일 접근 권한·복사본 관리
+  ui/                    화면: 뷰어·스와이프 범위별 페이저·상단 바(TabsScreen), 탭 전환 화면·그룹 패널(TabSwitcher),
+                         대화상자, 카드 목록 제스처(ItemGestures)
 app/schemas/             Room 스키마 (DB 버전마다 커밋)
 ```
 
 - DB 쓰기는 반드시 `TabPdfApp.enqueueWrite`로 한다 (순서 보장).
+- 탭·그룹 구조를 바꾸는 ViewModel 동작은 새 `SessionState`를 만들어 `commit()`에 넘긴다. 저장은 전체 구조를 한 트랜잭션으로 맞추는 `saveStructure` 하나뿐이다 (부분 갱신 쿼리를 따로 만들지 않는다).
 - DB 스키마를 바꾸면 `AppDatabase` 버전을 올리고 마이그레이션을 작성한다. 사용자 탭을 지우는 파괴적 마이그레이션은 쓰지 않는다.
 
 ## 구현 원칙

@@ -3,12 +3,16 @@ package com.tabpdf.ui
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -16,25 +20,28 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Button
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -50,51 +57,137 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.tabpdf.tabs.PdfTab
+import com.tabpdf.tabs.SessionState
+import com.tabpdf.tabs.TabGroup
 import com.tabpdf.tabs.TabsViewModel
+import com.tabpdf.tabs.displayName
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
 private val TOP_BAR_HEIGHT = 56.dp
 
+/**
+ * Main screen: the viewer pager with its top bar, and the tab switcher over it.
+ * [onOpenFiles] opens the file picker for a group, or for ungrouped tabs (null).
+ */
 @Composable
-fun TabsScreen(viewModel: TabsViewModel, onOpenFiles: () -> Unit, onRelocate: (PdfTab) -> Unit) {
-    val session by viewModel.session.collectAsState()
+fun TabsScreen(viewModel: TabsViewModel, onOpenFiles: (groupId: String?) -> Unit, onRelocate: (PdfTab) -> Unit) {
     // Loading the saved session takes a few ms; show just the background until then, so the pager
     // can start on the saved tab instead of jumping to it.
-    val loaded = session ?: run {
+    val session = viewModel.state.collectAsState().value ?: run {
         Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant))
         return
     }
-    val tabs by viewModel.tabs.collectAsState()
-    val navigateTo by viewModel.navigateTo.collectAsState()
+    val duplicatePrompt by viewModel.duplicatePrompt.collectAsState()
+    val undoOffer by viewModel.undoOffer.collectAsState()
     var barsVisible by rememberSaveable { mutableStateOf(true) }
+    var showSwitcher by rememberSaveable { mutableStateOf(false) }
+    var openGroupId by rememberSaveable { mutableStateOf<String?>(null) }
+    val snackbar = remember { SnackbarHostState() }
+
+    Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant)) {
+        // Swiping stays within the current tab's group, or among ungrouped tabs (기획서 5.2).
+        // A fresh pager per context, starting on the current tab.
+        val contextId = session.currentTab?.groupId
+        key(contextId) {
+            ContextPager(
+                session = session,
+                groupId = contextId,
+                viewModel = viewModel,
+                barsVisible = barsVisible,
+                onToggleBars = { barsVisible = !barsVisible },
+                onOpenFiles = onOpenFiles,
+                onRelocate = onRelocate,
+                onShowSwitcher = { groupId ->
+                    openGroupId = groupId
+                    showSwitcher = true
+                },
+            )
+        }
+
+        AnimatedVisibility(
+            visible = showSwitcher,
+            enter = fadeIn() + slideInVertically { it / 8 },
+            exit = fadeOut() + slideOutVertically { it / 8 },
+        ) {
+            TabSwitcher(
+                state = session,
+                viewModel = viewModel,
+                openGroupId = openGroupId,
+                onOpenGroup = { openGroupId = it },
+                onOpenFiles = { groupId ->
+                    openGroupId = null
+                    showSwitcher = false
+                    onOpenFiles(groupId)
+                },
+                onDismiss = {
+                    openGroupId = null
+                    showSwitcher = false
+                },
+            )
+        }
+
+        SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).navigationBarsPadding())
+    }
+
+    duplicatePrompt?.let { prompt ->
+        DuplicateDialog(
+            prompt,
+            onGoThere = { viewModel.resolveDuplicate(openHere = false) },
+            onOpenHere = { viewModel.resolveDuplicate(openHere = true) },
+            onCancel = { viewModel.resolveDuplicate(openHere = null) },
+        )
+    }
+
+    // Closing a tab or group offers undo; once the snackbar goes away, the close is final.
+    LaunchedEffect(undoOffer?.id) {
+        val offer = undoOffer ?: return@LaunchedEffect
+        val result = snackbar.showSnackbar(offer.message, actionLabel = "실행 취소", duration = SnackbarDuration.Long)
+        if (result == SnackbarResult.ActionPerformed) viewModel.undo() else viewModel.commitUndo()
+    }
+}
+
+/** The tabs of one swipe context — a group, or all ungrouped tabs — with the top bar over them. */
+@Composable
+private fun ContextPager(
+    session: SessionState,
+    groupId: String?,
+    viewModel: TabsViewModel,
+    barsVisible: Boolean,
+    onToggleBars: () -> Unit,
+    onOpenFiles: (groupId: String?) -> Unit,
+    onRelocate: (PdfTab) -> Unit,
+    onShowSwitcher: (openGroupId: String?) -> Unit,
+) {
+    val tabs = session.context(groupId)
+    val group = groupId?.let { session.group(it) }
     val pagerState = rememberPagerState(
-        initialPage = tabs.indexOfFirst { it.id == loaded.initialTabId }.coerceAtLeast(0)
+        initialPage = tabs.indexOfFirst { it.id == session.currentTabId }.coerceAtLeast(0)
     ) { tabs.size }
     val currentTabs by rememberUpdatedState(tabs)
 
+    // Swiping picks the current tab…
     LaunchedEffect(pagerState) {
         snapshotFlow { pagerState.settledPage }.collect { page ->
             currentTabs.getOrNull(page)?.let { viewModel.onTabShown(it.id) }
         }
     }
-
-    LaunchedEffect(navigateTo, tabs) {
-        val id = navigateTo ?: return@LaunchedEffect
-        val index = tabs.indexOfFirst { it.id == id }
-        if (index >= 0) pagerState.scrollToPage(index)
-        viewModel.onNavigated()
+    // …and a current tab chosen elsewhere (switcher, undo, a newly opened file) moves the pager.
+    LaunchedEffect(session.currentTabId, tabs) {
+        val index = tabs.indexOfFirst { it.id == session.currentTabId }
+        if (index >= 0 && index != pagerState.currentPage) pagerState.scrollToPage(index)
     }
 
-    Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant)) {
+    Box(Modifier.fillMaxSize()) {
         if (tabs.isEmpty()) {
-            Button(onClick = onOpenFiles, modifier = Modifier.align(Alignment.Center)) {
+            Button(onClick = { onOpenFiles(groupId) }, modifier = Modifier.align(Alignment.Center)) {
                 Icon(Icons.Default.Add, contentDescription = null)
                 Text("PDF 열기", Modifier.padding(start = 8.dp))
             }
@@ -117,7 +210,7 @@ fun TabsScreen(viewModel: TabsViewModel, onOpenFiles: () -> Unit, onRelocate: (P
                     revision = tab.revision,
                     initialState = viewModel.viewerState(tab.id),
                     onStateChange = { viewModel.updateViewerState(tab.id, it) },
-                    onTap = { barsVisible = !barsVisible },
+                    onTap = onToggleBars,
                     onRelocate = { onRelocate(tab) },
                     onClose = { viewModel.close(tab.id) },
                     contentPadding = contentPadding,
@@ -126,17 +219,20 @@ fun TabsScreen(viewModel: TabsViewModel, onOpenFiles: () -> Unit, onRelocate: (P
         }
 
         AnimatedVisibility(
-            visible = barsVisible && tabs.isNotEmpty(),
+            visible = barsVisible || tabs.isEmpty(),
             modifier = Modifier.align(Alignment.TopCenter),
             enter = fadeIn(),
             exit = fadeOut(),
         ) {
             TopBar(
+                group = group,
+                groupTabCount = tabs.size,
+                totalTabCount = session.allTabs.size,
                 tabs = tabs,
                 pagerState = pagerState,
-                onOpenFiles = onOpenFiles,
-                onSelectTab = { index -> viewModel.select(tabs[index].id) },
-                onCloseTab = { viewModel.close(it.id) },
+                onGroupClick = { onShowSwitcher(groupId) },
+                onOpenFiles = { onOpenFiles(groupId) },
+                onTabCountClick = { onShowSwitcher(null) },
             )
         }
     }
@@ -144,11 +240,14 @@ fun TabsScreen(viewModel: TabsViewModel, onOpenFiles: () -> Unit, onRelocate: (P
 
 @Composable
 private fun TopBar(
+    group: TabGroup?,
+    groupTabCount: Int,
+    totalTabCount: Int,
     tabs: List<PdfTab>,
     pagerState: PagerState,
+    onGroupClick: () -> Unit,
     onOpenFiles: () -> Unit,
-    onSelectTab: (Int) -> Unit,
-    onCloseTab: (PdfTab) -> Unit,
+    onTabCountClick: () -> Unit,
 ) {
     Surface(color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f), tonalElevation = 2.dp) {
         Row(
@@ -156,15 +255,43 @@ private fun TopBar(
                 .fillMaxWidth()
                 .statusBarsPadding()
                 .height(TOP_BAR_HEIGHT)
-                .padding(start = 16.dp, end = 4.dp),
+                .padding(start = if (group != null) 8.dp else 16.dp, end = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            if (group != null) {
+                GroupChip(group, groupTabCount, onGroupClick)
+                Spacer(Modifier.width(8.dp))
+            }
             TitleStrip(tabs, pagerState, Modifier.weight(1f))
             IconButton(onClick = onOpenFiles) {
                 Icon(Icons.Default.Add, contentDescription = "PDF 열기")
             }
-            TabCountButton(tabs, pagerState.currentPage, onSelectTab, onCloseTab)
+            TabCountButton(totalTabCount, onTabCountClick)
         }
+    }
+}
+
+/** Shown only while viewing a grouped tab: the group's colour and name; opens its panel. */
+@Composable
+private fun GroupChip(group: TabGroup, tabCount: Int, onClick: () -> Unit) {
+    val color = groupColor(group.color)
+    Row(
+        Modifier
+            .clip(RoundedCornerShape(16.dp))
+            .background(color.copy(alpha = 0.18f))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        GroupDot(group.color)
+        Spacer(Modifier.width(6.dp))
+        Text(
+            group.displayName(tabCount),
+            Modifier.widthIn(max = 96.dp),
+            style = MaterialTheme.typography.labelLarge,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 
@@ -197,47 +324,17 @@ private fun TitleStrip(tabs: List<PdfTab>, pagerState: PagerState, modifier: Mod
     }
 }
 
-/** Tab count like a mobile browser's tab button; opens a plain list until 탭 개요 lands (3단계). */
+/** Total tab count, like a mobile browser's tab button; opens the tab switcher. */
 @Composable
-private fun TabCountButton(
-    tabs: List<PdfTab>,
-    currentIndex: Int,
-    onSelectTab: (Int) -> Unit,
-    onCloseTab: (PdfTab) -> Unit,
-) {
-    var expanded by remember { mutableStateOf(false) }
-    Box {
-        IconButton(onClick = { expanded = true }) {
-            Box(
-                Modifier
-                    .size(24.dp)
-                    .border(2.dp, MaterialTheme.colorScheme.onSurface, RoundedCornerShape(5.dp)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    if (tabs.size > 99) "99+" else tabs.size.toString(),
-                    style = MaterialTheme.typography.labelMedium,
-                )
-            }
-        }
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            tabs.forEachIndexed { index, tab ->
-                DropdownMenuItem(
-                    text = { Text(tab.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                    onClick = {
-                        expanded = false
-                        onSelectTab(index)
-                    },
-                    leadingIcon = {
-                        if (index == currentIndex) Icon(Icons.Default.Check, contentDescription = "현재 탭")
-                    },
-                    trailingIcon = {
-                        IconButton(onClick = { onCloseTab(tab) }) {
-                            Icon(Icons.Default.Close, contentDescription = "탭 닫기")
-                        }
-                    },
-                )
-            }
+private fun TabCountButton(count: Int, onClick: () -> Unit) {
+    IconButton(onClick = onClick) {
+        Box(
+            Modifier
+                .size(24.dp)
+                .border(2.dp, MaterialTheme.colorScheme.onSurface, RoundedCornerShape(5.dp)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(if (count > 99) "99+" else count.toString(), style = MaterialTheme.typography.labelMedium)
         }
     }
 }
