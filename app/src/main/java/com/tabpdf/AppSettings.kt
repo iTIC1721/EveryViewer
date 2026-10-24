@@ -45,6 +45,15 @@ class AppSettings(context: Context) {
         prefs.edit().putString(THEME, mode.key).apply()
     }
 
+    /** Swiping past a group's last (or first) tab goes on to the next tab outside it (기획서 5.2). */
+    private val _crossGroupSwipe = MutableStateFlow(prefs.getBoolean(CROSS_GROUP_SWIPE, false))
+    val crossGroupSwipe: StateFlow<Boolean> = _crossGroupSwipe.asStateFlow()
+
+    fun setCrossGroupSwipe(on: Boolean) {
+        _crossGroupSwipe.value = on
+        prefs.edit().putBoolean(CROSS_GROUP_SWIPE, on).apply()
+    }
+
     // ---- Handwriting (기획서 5.8) ----
 
     private val _inkTool = MutableStateFlow(InkTool.fromKey(prefs.getString(INK_TOOL, null) ?: ""))
@@ -121,6 +130,7 @@ class AppSettings(context: Context) {
     private companion object {
         const val KEEP_SCREEN_ON = "keep_screen_on"
         const val THEME = "theme"
+        const val CROSS_GROUP_SWIPE = "cross_group_swipe"
         const val INK_TOOL = "ink_tool"
         const val FINGER_DRAWING = "ink_finger_drawing"
         const val STYLUS_SEEN = "ink_stylus_seen"
