@@ -10,6 +10,7 @@ import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Arrangement
@@ -40,6 +41,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.MoreVert
@@ -243,7 +245,8 @@ fun TabSwitcher(
 
 /**
  * A group's tabs over the switcher (Chrome's tab group dialog): rename and recolour from the
- * header, reorder by long press and drag, take tabs out of the group from their menu.
+ * header, reorder by long press and drag, take tabs out of the group by dragging them up past the
+ * tabs (the header turns into a drop zone) or from their menu.
  */
 @Composable
 private fun GroupPanel(
@@ -262,6 +265,8 @@ private fun GroupPanel(
     var menuFor by remember { mutableStateOf<String?>(null) }
     var headerMenu by remember { mutableStateOf(false) }
     var dialog by remember { mutableStateOf<SwitcherDialog?>(null) }
+    // The dragged tab is above the tabs: dropped now, it leaves the group.
+    var dragOut by remember { mutableStateOf(false) }
 
     Box(
         Modifier
@@ -281,7 +286,9 @@ private fun GroupPanel(
             tonalElevation = 3.dp,
         ) {
             Column {
-                Row(
+                if (gestures.draggingKey != null) {
+                    DragOutZone(active = dragOut, color = groupColor(group.color))
+                } else Row(
                     Modifier.fillMaxWidth().height(60.dp).padding(start = 8.dp, end = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -329,10 +336,21 @@ private fun GroupPanel(
                             itemRect = { gridState.rectOf(it) },
                             onTap = { onOpenTab(it as String) },
                             onLongPress = { menuFor = it as String },
-                            onDragMove = reorder::dragMove,
-                            onDrop = {
+                            onDragMove = { dragged, target, inTarget ->
+                                // The grid starts right under the header, so above its top is the header.
+                                dragOut = gestures.pointer.y < 0f
+                                if (dragOut) reorder.dragMove(dragged, null, inTarget) else reorder.dragMove(dragged, target, inTarget)
+                            },
+                            onDrop = { dragged ->
                                 reorder.drop()
-                                viewModel.reorderGroup(group.id, order.map { it.id })
+                                if (dragOut) {
+                                    dragOut = false
+                                    viewModel.removeFromGroup(dragged as String)
+                                    // Back to the switcher, where the tab now is.
+                                    onDismiss()
+                                } else {
+                                    viewModel.reorderGroup(group.id, order.map { it.id })
+                                }
                             },
                             onSwipeAway = { viewModel.close(it as String) },
                             scrollBy = { gridState.scrollBy(it) },
@@ -361,6 +379,29 @@ private fun GroupPanel(
         }
     }
     SwitcherDialogs(dialog, null, viewModel, onDone = { dialog = null })
+}
+
+/** Takes the header's place while a tab is dragged in a group: drop the tab here to take it out. */
+@Composable
+private fun DragOutZone(active: Boolean, color: Color) {
+    val colors = MaterialTheme.colorScheme
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .height(60.dp)
+            .padding(horizontal = 12.dp, vertical = 6.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(if (active) color.copy(alpha = 0.45f) else colors.surfaceVariant)
+            .border(2.dp, if (active) color else colors.outlineVariant, RoundedCornerShape(12.dp)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            Icons.AutoMirrored.Filled.ExitToApp,
+            contentDescription = "그룹에서 빼기",
+            tint = if (active) colors.onSurface else colors.onSurfaceVariant,
+            modifier = Modifier.size(if (active) 32.dp else 24.dp).graphicsLayer { rotationZ = -90f },
+        )
+    }
 }
 
 private sealed interface SwitcherDialog {
