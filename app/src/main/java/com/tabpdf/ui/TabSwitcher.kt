@@ -11,6 +11,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -161,6 +162,7 @@ fun TabSwitcher(
                                 }
                             },
                             onSwipeAway = { key -> closeItem(order.byKey(key), viewModel) },
+                            scrollBy = { gridState.scrollBy(it) },
                         ),
                     // Top padding would shift item offsets away from pointer coordinates; see itemGestures.
                     contentPadding = PaddingValues(
@@ -329,6 +331,7 @@ private fun GroupPanel(
                                 viewModel.reorderGroup(group.id, order.map { it.id })
                             },
                             onSwipeAway = { viewModel.close(it as String) },
+                            scrollBy = { gridState.scrollBy(it) },
                         ),
                     contentPadding = PaddingValues(bottom = 12.dp),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),

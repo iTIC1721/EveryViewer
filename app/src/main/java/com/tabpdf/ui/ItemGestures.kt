@@ -12,14 +12,17 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.AwaitPointerEventScope
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -74,6 +77,8 @@ fun Modifier.itemGestures(
     onDragMove: (dragged: Any, target: Any?, positionInTarget: Offset) -> Unit,
     onDrop: (dragged: Any) -> Unit,
     onSwipeAway: ((Any) -> Unit)? = null,
+    /** Scrolls the list by a pixel delta and returns how far it moved; enables edge auto-scroll. */
+    scrollBy: (suspend (Float) -> Float)? = null,
 ): Modifier {
     val haptics = LocalHapticFeedback.current
     val currentKeyAt by rememberUpdatedState(keyAt)
@@ -82,6 +87,7 @@ fun Modifier.itemGestures(
     val currentOnDragMove by rememberUpdatedState(onDragMove)
     val currentOnDrop by rememberUpdatedState(onDrop)
     val currentOnSwipeAway by rememberUpdatedState(onSwipeAway)
+    val currentScrollBy by rememberUpdatedState(scrollBy)
     state.itemRect = itemRect
 
     return pointerInput(state) {
@@ -121,22 +127,45 @@ fun Modifier.itemGestures(
                         state.pointer = down.position
                         state.draggingKey = key
                         var dragged = false
+                        fun reportMove() {
+                            val position = state.pointer
+                            val target = currentKeyAt(position)
+                            val rect = target?.let { state.itemRect(it) }
+                            val inTarget = if (rect == null) Offset.Zero else Offset(
+                                (position.x - rect.left) / rect.width,
+                                (position.y - rect.top) / rect.height,
+                            )
+                            currentOnDragMove(key, target, inTarget)
+                        }
+                        // Held near the top or bottom edge, the list scrolls so far-away slots can be reached.
+                        val edge = 64.dp.toPx()
+                        val autoScroll = currentScrollBy?.let { scrollBy ->
+                            scope.launch {
+                                while (true) {
+                                    withFrameNanos { }
+                                    val y = state.pointer.y
+                                    val speed = when {
+                                        !dragged -> 0f
+                                        y < edge -> -AUTO_SCROLL_PX * (1f - y / edge)
+                                        y > size.height - edge -> AUTO_SCROLL_PX * (1f - (size.height - y) / edge)
+                                        else -> 0f
+                                    }
+                                    if (speed != 0f && scrollBy(speed) != 0f) reportMove()
+                                }
+                            }
+                        }
                         while (true) {
-                            val change = awaitPointerEvent().changes.firstOrNull { it.id == down.id } ?: break
+                            // Initial pass: the list must not see these moves, or it scrolls along
+                            // with the drag and the card under the finger changes underneath it.
+                            val change = awaitPointerEvent(PointerEventPass.Initial).changes
+                                .firstOrNull { it.id == down.id } ?: break
                             if (!change.pressed) break
                             change.consume()
                             state.pointer = change.position
                             if ((change.position - down.position).getDistance() > slop) dragged = true
-                            if (dragged) {
-                                val target = currentKeyAt(change.position)
-                                val rect = target?.let { state.itemRect(it) }
-                                val inTarget = if (rect == null) Offset.Zero else Offset(
-                                    (change.position.x - rect.left) / rect.width,
-                                    (change.position.y - rect.top) / rect.height,
-                                )
-                                currentOnDragMove(key, target, inTarget)
-                            }
+                            if (dragged) reportMove()
                         }
+                        autoScroll?.cancel()
                         state.draggingKey = null
                         if (dragged) currentOnDrop(key) else currentOnLongPress(key)
                     }
@@ -227,3 +256,6 @@ fun rememberReorderController(
 }
 
 private const val REORDER_DELAY_MS = 300L
+
+/** Auto-scroll speed per frame at the very edge; slower further in. */
+private const val AUTO_SCROLL_PX = 24f
