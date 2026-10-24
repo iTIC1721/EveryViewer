@@ -16,6 +16,15 @@ data class PageSize(val width: Float, val height: Float) {
     val aspect: Float get() = height / width
 }
 
+/** Where a link in a document leads. */
+sealed interface Link {
+    /** A web page or mail address (see [isWebLink]). */
+    data class Web(val url: String) : Link
+
+    /** A place in the same document: [page], and [y] down it (a fraction of its height) if the link says. */
+    data class Page(val page: Int, val y: Float?) : Link
+}
+
 /** How far a document laid out while it is shown has got: [pages] so far, and whether that is all. */
 data class LayoutProgress(val pages: Int, val complete: Boolean)
 
@@ -56,6 +65,9 @@ interface Document {
      * or null if nothing there is a link.
      */
     fun linkAt(index: Int, x: Float, y: Float): String? = null
+
+    /** The link at ([x], [y]) on page [index] (as [linkAt]), web or within the document, for a tap. */
+    suspend fun link(index: Int, x: Float, y: Float): Link? = linkAt(index, x, y)?.let { Link.Web(it) }
 
     /**
      * Where [query] occurs, in page order (기획서 5.5), at most [TextSearch.MAX_MATCHES].
