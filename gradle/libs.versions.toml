@@ -6,6 +6,9 @@ lifecycle = "2.11.0"
 activityCompose = "1.8.0"
 composeBom = "2026.02.01"
 room = "2.8.4"
+junit = "4.13.2"
+androidxTestRunner = "1.5.2"
+androidxTestExtJunit = "1.1.5"
 ksp = "2.3.10"
 
 [libraries]
@@ -23,6 +26,9 @@ androidx-compose-material-icons-core = { group = "androidx.compose.material", na
 androidx-room-runtime = { group = "androidx.room", name = "room-runtime", version.ref = "room" }
 androidx-room-ktx = { group = "androidx.room", name = "room-ktx", version.ref = "room" }
 androidx-room-compiler = { group = "androidx.room", name = "room-compiler", version.ref = "room" }
+junit = { group = "junit", name = "junit", version.ref = "junit" }
+androidx-test-runner = { group = "androidx.test", name = "runner", version.ref = "androidxTestRunner" }
+androidx-test-ext-junit = { group = "androidx.test.ext", name = "junit", version.ref = "androidxTestExtJunit" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
