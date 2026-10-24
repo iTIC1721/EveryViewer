@@ -19,6 +19,8 @@ data class PdfTab(
     val uri: Uri,
     val name: String,
     val isInternalCopy: Boolean,
+    /** Bumped when the tab's file is replaced; not persisted. */
+    val revision: Int = 0,
 )
 
 /** What the screen needs once the saved session has loaded. */
@@ -92,10 +94,26 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** Points a tab whose file went missing at a newly chosen file, keeping its place in the list. */
+    /**
+     * Points a tab whose file went missing at a newly chosen file, keeping its place in the list.
+     * If that file is already open in another tab, the broken tab is closed and the other one shown
+     * instead, so a file is never open twice in a group (기획서 5.1).
+     */
     fun replaceFile(id: String, file: OpenedFile) {
         val old = _tabs.value.firstOrNull { it.id == id } ?: return
-        val updated = old.copy(uri = file.uri, name = file.name, isInternalCopy = file.isInternalCopy)
+        val existing = _tabs.value.firstOrNull { it.id != id && it.uri == file.uri }
+        if (existing != null) {
+            close(id)
+            select(existing.id)
+            return
+        }
+        // Bumping the revision makes the viewer retry even when the same location was picked again.
+        val updated = old.copy(
+            uri = file.uri,
+            name = file.name,
+            isInternalCopy = file.isInternalCopy,
+            revision = old.revision + 1,
+        )
         _tabs.value = _tabs.value.map { if (it.id == id) updated else it }
         app.enqueueWrite {
             repository.replaceFile(updated)

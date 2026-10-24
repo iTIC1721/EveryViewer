@@ -96,6 +96,8 @@ private const val MAX_RENDER_PIXELS = 8_000_000f
 @Composable
 fun PdfViewer(
     uri: Uri,
+    /** Changing this reopens the file even if [uri] is the same (after "다시 찾기"). */
+    revision: Int,
     initialState: ViewerState,
     onStateChange: (ViewerState) -> Unit,
     onTap: () -> Unit,
@@ -108,7 +110,7 @@ fun PdfViewer(
     var document by remember { mutableStateOf<PdfDocument?>(null) }
     var error by remember { mutableStateOf<Exception?>(null) }
 
-    LaunchedEffect(uri) {
+    LaunchedEffect(uri, revision) {
         error = null
         val doc = try {
             // Not cancellable, so a document opened just as the page leaves is still closed below.

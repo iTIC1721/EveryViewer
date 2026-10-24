@@ -114,6 +114,7 @@ fun TabsScreen(viewModel: TabsViewModel, onOpenFiles: () -> Unit, onRelocate: (P
                 val tab = tabs[page]
                 PdfViewer(
                     uri = tab.uri,
+                    revision = tab.revision,
                     initialState = viewModel.viewerState(tab.id),
                     onStateChange = { viewModel.updateViewerState(tab.id, it) },
                     onTap = { barsVisible = !barsVisible },
