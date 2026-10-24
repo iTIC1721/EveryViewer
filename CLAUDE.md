@@ -48,14 +48,15 @@ app/src/main/java/com/tabpdf/
   TabPdfApp.kt           Application: DB 저장소, 순서 보장 DB 쓰기 큐
   MainActivity.kt        진입점, 파일 선택기, onStop 시 저장
   data/                  Room (그룹·탭·앱 상태), SessionRepository
-  pdf/                   PdfRenderer 래퍼 (렌더링 스레드 안전 처리), 탭 개요 썸네일
-  tabs/                  그룹·탭 상태 ViewModel, 읽던 위치, 파일 접근 권한·복사본 관리
-  ui/                    화면: 뷰어·그룹별 페이저·상단 바(TabsScreen), 탭 개요, 그룹 시트,
+  pdf/                   PdfRenderer 래퍼 (렌더링 스레드 안전 처리), 탭 전환 화면 썸네일
+  tabs/                  탭·그룹 구조(Session.kt), ViewModel, 읽던 위치, 파일 접근 권한·복사본 관리
+  ui/                    화면: 뷰어·스와이프 범위별 페이저·상단 바(TabsScreen), 탭 전환 화면·그룹 패널(TabSwitcher),
                          대화상자, 카드 목록 제스처(ItemGestures)
 app/schemas/             Room 스키마 (DB 버전마다 커밋)
 ```
 
 - DB 쓰기는 반드시 `TabPdfApp.enqueueWrite`로 한다 (순서 보장).
+- 탭·그룹 구조를 바꾸는 ViewModel 동작은 새 `SessionState`를 만들어 `commit()`에 넘긴다. 저장은 전체 구조를 한 트랜잭션으로 맞추는 `saveStructure` 하나뿐이다 (부분 갱신 쿼리를 따로 만들지 않는다).
 - DB 스키마를 바꾸면 `AppDatabase` 버전을 올리고 마이그레이션을 작성한다. 사용자 탭을 지우는 파괴적 마이그레이션은 쓰지 않는다.
 
 ## 구현 원칙
