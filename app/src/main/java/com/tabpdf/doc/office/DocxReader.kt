@@ -1,5 +1,7 @@
 package com.tabpdf.doc.office
 
+import com.tabpdf.doc.isWebLink
+
 /**
  * Word documents (.docx, Office Open XML) into an [OfficeDocument] (기획서 5.7). Styles are
  * resolved the way Word does — document defaults, then the paragraph style chain, then the
@@ -267,7 +269,7 @@ private class Docx(private val parts: ZipParts) {
         for (c in e.children) when (c.name) {
             "w:r" -> run(c, paragraphR, link, add, pageBreak)
             "w:hyperlink" -> {
-                val target = c.attr("r:id")?.let { rels[it] }?.takeIf { it.second }?.first
+                val target = c.attr("r:id")?.let { rels[it] }?.takeIf { it.second }?.first?.takeIf { isWebLink(it) }
                 collectRuns(c, paragraphR, target ?: link, add, pageBreak)
             }
             "w:fldSimple", "w:smartTag", "w:ins", "w:moveTo", "w:customXml", "w:bdo", "w:dir" ->

@@ -77,8 +77,11 @@ object FileAccess {
 
     private fun copyToAppStorage(context: Context, uri: Uri, name: String): Uri {
         val dir = File(context.filesDir, COPY_DIR).apply { mkdirs() }
-        // Keep the extension: the format is told partly by it (FileFormats.detect).
-        val extension = name.substringAfterLast('.', "").takeIf { it.isNotEmpty() && it.length <= 10 }
+        // Keep the extension: the format is told partly by it (FileFormats.detect). The name comes
+        // from the other app, so only plain letters and digits go into the file name.
+        val extension = name.substringAfterLast('.', "").takeIf { e ->
+            e.isNotEmpty() && e.length <= 10 && e.all { it in 'a'..'z' || it in 'A'..'Z' || it in '0'..'9' }
+        }
         val target = File(dir, UUID.randomUUID().toString() + (extension?.let { ".$it" } ?: ""))
         context.contentResolver.openInputStream(uri)?.use { input ->
             target.outputStream().use { input.copyTo(it) }

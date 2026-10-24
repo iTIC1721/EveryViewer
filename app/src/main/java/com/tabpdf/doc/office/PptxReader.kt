@@ -1,6 +1,7 @@
 package com.tabpdf.doc.office
 
 import com.tabpdf.doc.DocumentOpenException
+import com.tabpdf.doc.isWebLink
 import java.io.IOException
 import kotlin.math.max
 import kotlin.math.min
@@ -458,7 +459,7 @@ private class Pptx(private val zip: ZipParts) {
                         if (Chain(listOfNotNull(rPr) + firstStyles + restStyles).attr("cap") == "all") text = text.uppercase()
                         if (text.isEmpty()) continue
                         val link = rPr?.child("a:hlinkClick")?.attr("r:id")?.let { part.rels[it] }
-                            ?.takeIf { it.external }?.target?.takeIf { it.startsWith("http://") || it.startsWith("https://") || it.startsWith("mailto:") }
+                            ?.takeIf { it.external }?.target?.takeIf { isWebLink(it) }
                         var s = style(rPr)
                         if (link != null) s = s.copy(color = scheme("hlink") ?: s.color, underline = true)
                         runs += Run.Text(text, s, link)

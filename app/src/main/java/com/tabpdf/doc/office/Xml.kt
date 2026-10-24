@@ -9,8 +9,9 @@ import java.io.InputStream
 import java.util.zip.ZipInputStream
 
 /**
- * The parts of a zip-based document (docx, hwpx), by path. Guarded against zip bombs (기획서
- * 5.7): limits on entry count, entry size and total size.
+ * The parts of a zip-based document (docx, hwpx, pptx), by path. Guarded against zip bombs (기획서
+ * 5.7): limits on entry count, entry size and total size. All parts are held in memory at once, so
+ * the sizes are kept well under what the app may use on this device.
  */
 class ZipParts private constructor(private val parts: Map<String, ByteArray>) {
     operator fun get(path: String): ByteArray? = parts[path] ?: parts.entries.firstOrNull { it.key.equals(path, true) }?.value
@@ -21,8 +22,8 @@ class ZipParts private constructor(private val parts: Map<String, ByteArray>) {
 
     companion object {
         private const val MAX_ENTRIES = 5_000
-        private const val MAX_ENTRY_BYTES = 64L * 1024 * 1024
-        private const val MAX_TOTAL_BYTES = 200L * 1024 * 1024
+        private val maxEntryBytes = minOf(64L * 1024 * 1024, Runtime.getRuntime().maxMemory() / 4)
+        private val maxTotalBytes = minOf(200L * 1024 * 1024, Runtime.getRuntime().maxMemory() / 2)
 
         fun read(input: InputStream): ZipParts {
             val parts = mutableMapOf<String, ByteArray>()
@@ -37,11 +38,12 @@ class ZipParts private constructor(private val parts: Map<String, ByteArray>) {
                     while (true) {
                         val n = zip.read(buffer)
                         if (n < 0) break
-                        out.write(buffer, 0, n)
-                        total += n
-                        if (out.size() > MAX_ENTRY_BYTES || total > MAX_TOTAL_BYTES) {
+                        // Checked before taking the bytes in, so memory never goes past the limits.
+                        if (out.size() + n > maxEntryBytes || total + n > maxTotalBytes) {
                             throw DocumentOpenException(DocumentOpenException.Reason.TooLarge)
                         }
+                        out.write(buffer, 0, n)
+                        total += n
                     }
                     parts[entry.name.removePrefix("/")] = out.toByteArray()
                 }
@@ -54,7 +56,8 @@ class ZipParts private constructor(private val parts: Map<String, ByteArray>) {
 
 /**
  * A parsed XML element. Names keep their prefixes as written ("w:p", "hp:run"): both formats use
- * fixed, conventional prefixes. No DTDs or external entities are processed.
+ * fixed, conventional prefixes. No DTDs or external entities are processed, and nesting is
+ * limited ([MAX_DEPTH]): elements are walked recursively.
  */
 class Element(
     val name: String,
@@ -95,6 +98,9 @@ class Element(
     val localName: String get() = name.substringAfter(':')
 
     companion object {
+        /** Real documents nest a few dozen levels (tables in tables); far deeper is an attack. */
+        const val MAX_DEPTH = 256
+
         fun parse(bytes: ByteArray): Element {
             val parser = Xml.newPullParser()
             parser.setFeature(XmlPullParser.FEATURE_PROCESS_NAMESPACES, false)
@@ -107,9 +113,12 @@ class Element(
             var root: Element? = null
             while (true) {
                 when (parser.next()) {
-                    XmlPullParser.START_TAG -> stack.addLast(
-                        Building(parser.name, (0 until parser.attributeCount).associate { parser.getAttributeName(it) to parser.getAttributeValue(it) })
-                    )
+                    XmlPullParser.START_TAG -> {
+                        if (stack.size >= MAX_DEPTH) throw IOException("XML nested too deeply")
+                        stack.addLast(
+                            Building(parser.name, (0 until parser.attributeCount).associate { parser.getAttributeName(it) to parser.getAttributeValue(it) })
+                        )
+                    }
                     XmlPullParser.TEXT -> stack.lastOrNull()?.nodes?.add(parser.text)
                     XmlPullParser.END_TAG -> {
                         val b = stack.removeLast()
