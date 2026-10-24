@@ -6,6 +6,8 @@ import android.graphics.Color
 import android.graphics.Point
 import android.graphics.PointF
 import android.graphics.RectF
+import android.graphics.pdf.content.PdfPageGotoLinkContent
+import android.graphics.pdf.content.PdfPageLinkContent
 import android.graphics.pdf.models.selection.SelectionBoundary
 import android.graphics.pdf.PdfRenderer
 import android.graphics.pdf.PdfRendererPreV
@@ -18,6 +20,8 @@ import android.net.Uri
 import android.os.ParcelFileDescriptor
 import com.tabpdf.doc.Document
 import com.tabpdf.doc.DocumentOpenException
+import com.tabpdf.doc.Link
+import com.tabpdf.doc.isWebLink
 import com.tabpdf.doc.PageSize
 import com.tabpdf.doc.SearchMatch
 import com.tabpdf.doc.TextSearch
@@ -47,6 +51,9 @@ class PdfDocument private constructor(
 
     /** Android 12–14's renderer that can search, opened on the first search. */
     private var searcher: AutoCloseable? = null
+
+    /** Each page's links once read (a page is read on its first tap), in page fractions. */
+    private val links = HashMap<Int, List<Pair<List<RectF>, Link>>>()
 
     override suspend fun renderPage(index: Int, widthPx: Int): Bitmap? = withContext(Dispatchers.IO) {
         mutex.withLock {
@@ -144,6 +151,50 @@ class PdfDocument private constructor(
         }
     }
 
+    /**
+     * Links with the platform's PDF support, where it has it (as [search]): web links, and links to
+     * other places in the document (a table of contents).
+     */
+    override suspend fun link(index: Int, x: Float, y: Float): Link? = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            if (closed) return@withLock null
+            val size = pageSizes[index]
+            // A finger is less precise than a cursor: a little around each link counts.
+            val dx = LINK_SLOP / size.width
+            val dy = LINK_SLOP / size.height
+            links.getOrPut(index) { readLinks(index) }.firstOrNull { (rects, _) ->
+                rects.any { x >= it.left - dx && x <= it.right + dx && y >= it.top - dy && y <= it.bottom + dy }
+            }?.second
+        }
+    }
+
+    private fun readLinks(index: Int): List<Pair<List<RectF>, Link>> = when {
+        Build.VERSION.SDK_INT >= 35 -> renderer.openPage(index).use { page -> linksOf(index, page.linkContents, page.gotoLinks) }
+        preVSearch -> preV()?.openPage(index)?.use { page -> linksOf(index, page.linkContents, page.gotoLinks) }.orEmpty()
+        else -> emptyList()
+    }
+
+    /** Links as page fractions; web links only to web pages and mail (see [isWebLink]). */
+    private fun linksOf(index: Int, web: List<PdfPageLinkContent>, goto: List<PdfPageGotoLinkContent>): List<Pair<List<RectF>, Link>> {
+        val size = pageSizes[index]
+        fun fractions(rects: List<RectF>) = rects.map { RectF(it.left / size.width, it.top / size.height, it.right / size.width, it.bottom / size.height) }
+        val result = mutableListOf<Pair<List<RectF>, Link>>()
+        for (link in web) {
+            val url = link.uri.toString()
+            if (isWebLink(url)) result += fractions(link.bounds) to Link.Web(url)
+        }
+        for (link in goto) {
+            val page = link.destination.pageNumber
+            if (page !in pageSizes.indices) continue
+            val y = link.destination.yCoordinate.takeIf { it > 0f }?.let { (it / pageSizes[page].height).coerceIn(0f, 1f) }
+            result += fractions(link.bounds) to Link.Page(page, y)
+        }
+        return result
+    }
+
+    @RequiresExtension(extension = Build.VERSION_CODES.S, version = 13)
+    private fun preV(): PdfRendererPreV? = (searcher as? PdfRendererPreV) ?: reopen()?.let { file -> PdfRendererPreV(file).also { searcher = it } }
+
     override suspend fun close() = withContext(NonCancellable + Dispatchers.IO) {
         mutex.withLock {
             if (closed) return@withLock
@@ -155,6 +206,9 @@ class PdfDocument private constructor(
     }
 
     companion object {
+        /** How far around a link a tap still hits it, in PDF points (1/72 inch). */
+        private const val LINK_SLOP = 4f
+
         /** Whether this Android 12–14 device has the system update that brings PDF text search. */
         @get:ChecksSdkIntAtLeast(api = 31)
         private val preVSearch: Boolean by lazy {

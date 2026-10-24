@@ -80,6 +80,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import com.tabpdf.doc.Document
+import com.tabpdf.doc.Link
 import com.tabpdf.doc.isWebLink
 import com.tabpdf.doc.LayoutProgress
 import com.tabpdf.doc.awaitPages
@@ -331,27 +332,39 @@ private fun DocumentPages(
         return Offset(x * viewportWidth * zoom - panX, top + y * pageHeight(page, zoom))
     }
 
-    /** The web link under [position] (viewer coordinates), if the document has one there. */
-    fun linkAt(position: Offset): String? {
+    /** The link under [position] (viewer coordinates), if the document has one there. */
+    suspend fun linkAt(position: Offset): Link? {
         val hit = pageAt(position) ?: return null
         val inPage = hit.toPage(position)
-        return document.linkAt(hit.index, inPage.x / INK_PAGE_WIDTH, inPage.y / (INK_PAGE_WIDTH * document.pageSizes[hit.index].aspect))
+        return document.link(hit.index, inPage.x / INK_PAGE_WIDTH, inPage.y / (INK_PAGE_WIDTH * document.pageSizes[hit.index].aspect))
     }
 
-    /** A tap on a link opens it in the browser (기획서 5.7); any other tap shows or hides the bars. */
-    fun tap(position: Offset) {
+    /**
+     * A tap on a link opens it in the browser (기획서 5.7), or goes to the place in the document it
+     * points to; any other tap shows or hides the bars.
+     */
+    suspend fun tap(position: Offset) {
         if (selectionAnchors.value != null) {
             selectionAnchors.value = null
             return
         }
-        // Checked again here: whatever a document's reader let through, only web and mail links open.
-        val url = linkAt(position)?.takeIf { isWebLink(it) } ?: return currentOnTap()
-        try {
-            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-        } catch (_: ActivityNotFoundException) {
-            Toast.makeText(context, "링크를 열 앱이 없습니다", Toast.LENGTH_SHORT).show()
-        } catch (_: RuntimeException) {
-            Toast.makeText(context, "링크를 열 수 없습니다", Toast.LENGTH_SHORT).show()
+        when (val link = linkAt(position)) {
+            is Link.Page -> {
+                // The place just below the top bar, as a reader would scroll to it.
+                val offset = ((link.y ?: 0f) * pageHeight(link.page, zoom) - with(density) { 16.dp.toPx() }).roundToInt()
+                listState.scrollToItem(link.page, offset.coerceAtLeast(0))
+            }
+            // Checked again here: whatever a document's reader let through, only web and mail links open.
+            is Link.Web -> if (isWebLink(link.url)) {
+                try {
+                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(link.url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                } catch (_: ActivityNotFoundException) {
+                    Toast.makeText(context, "링크를 열 앱이 없습니다", Toast.LENGTH_SHORT).show()
+                } catch (_: RuntimeException) {
+                    Toast.makeText(context, "링크를 열 수 없습니다", Toast.LENGTH_SHORT).show()
+                }
+            } else currentOnTap()
+            null -> currentOnTap()
         }
     }
 
