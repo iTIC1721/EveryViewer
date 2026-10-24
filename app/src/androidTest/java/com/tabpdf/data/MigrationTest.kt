@@ -82,7 +82,7 @@ class MigrationTest {
 
     private fun load() = runBlocking {
         val db = Room.databaseBuilder(context, AppDatabase::class.java, name)
-            .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
             .build()
         try {
             SessionRepository(db.sessionDao()).load()

@@ -73,6 +73,17 @@ import com.tabpdf.doc.Document
 import com.tabpdf.doc.DocumentOpenException
 import com.tabpdf.doc.Documents
 import com.tabpdf.doc.FileFormat
+import com.tabpdf.ink.INK_PAGE_WIDTH
+import com.tabpdf.ink.InkBinding
+import com.tabpdf.ink.InkPainter
+import com.tabpdf.ink.InkStroke
+import com.tabpdf.ink.InkTool
+import com.tabpdf.ink.LocalInkSurface
+import com.tabpdf.ink.PageHit
+import com.tabpdf.ink.inkInput
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.nativeCanvas
 import com.tabpdf.tabs.PageJump
 import com.tabpdf.tabs.ViewerState
 import kotlinx.coroutines.CancellationException
@@ -125,6 +136,10 @@ fun DocumentViewer(
     pageJump: PageJump?,
     onPageJumpHandled: (PageJump) -> Unit,
     onDocumentOpened: (pageCount: Int) -> Unit,
+    /** The tab's handwriting, all pages. */
+    strokes: List<InkStroke>,
+    /** Set while handwriting mode is on (기획서 5.8). */
+    ink: InkBinding?,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -174,6 +189,8 @@ fun DocumentViewer(
                 contentPadding = contentPadding,
                 pageJump = pageJump,
                 onPageJumpHandled = onPageJumpHandled,
+                strokes = strokes,
+                ink = ink,
             )
         }
     }
@@ -189,8 +206,16 @@ private fun DocumentPages(
     contentPadding: PaddingValues,
     pageJump: PageJump?,
     onPageJumpHandled: (PageJump) -> Unit,
+    strokes: List<InkStroke>,
+    ink: InkBinding?,
 ) {
     val density = LocalDensity.current
+    val strokesByPage = remember(strokes) { strokes.groupBy { it.page } }
+    val currentInk by rememberUpdatedState(ink)
+    var hover by remember { mutableStateOf<Offset?>(null) }
+    // Handwriting has the current gesture: no panning, zooming or tapping for it. Read by the
+    // gesture handlers below, so a plain holder rather than state.
+    val inkClaimed = remember { booleanArrayOf(false) }
     val scope = rememberCoroutineScope()
     var fastScrolling by remember { mutableStateOf(false) }
 
@@ -212,18 +237,24 @@ private fun DocumentPages(
     val currentOnStateChange by rememberUpdatedState(onStateChange)
     val context = LocalContext.current
 
-    /** The web link under [position] (viewer coordinates), if the document has one there. */
-    fun linkAt(position: Offset): String? {
+    /** The page under [position] (viewer coordinates), if any. */
+    fun pageAt(position: Offset): PageHit? {
         val info = listState.layoutInfo
         // Item offsets are measured from the end of the top content padding, where viewportStartOffset is negative.
         val item = info.visibleItemsInfo.firstOrNull {
             val top = it.offset - info.viewportStartOffset
             position.y >= top && position.y < top + it.size
         } ?: return null
-        val top = item.offset - info.viewportStartOffset
-        val x = (position.x + panX) / (viewportWidth * zoom)
-        val y = (position.y - top) / item.size
-        return if (x in 0f..1f) document.linkAt(item.index, x, y) else null
+        val pageWidth = viewportWidth * zoom
+        if (position.x + panX !in 0f..pageWidth) return null
+        return PageHit(item.index, left = -panX, top = (item.offset - info.viewportStartOffset).toFloat(), scale = INK_PAGE_WIDTH / pageWidth)
+    }
+
+    /** The web link under [position] (viewer coordinates), if the document has one there. */
+    fun linkAt(position: Offset): String? {
+        val hit = pageAt(position) ?: return null
+        val inPage = hit.toPage(position)
+        return document.linkAt(hit.index, inPage.x / INK_PAGE_WIDTH, inPage.y / (INK_PAGE_WIDTH * document.pageSizes[hit.index].aspect))
     }
 
     /** A tap on a link opens it in the browser (기획서 5.7); any other tap shows or hides the bars. */
@@ -291,13 +322,15 @@ private fun DocumentPages(
     Box(
         Modifier
             .fillMaxSize()
+            // Handwriting first: a pointer that draws is consumed before anything below sees it.
+            .inkInput(LocalInkSurface.current, { currentInk }, ::pageAt, onClaim = { inkClaimed[0] = it }) { hover = it }
             // Pinch: watched on the Initial pass so two-finger moves never reach the list or pager.
             .pointerInput(Unit) {
                 awaitEachGesture {
                     awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
                     do {
                         val event = awaitPointerEvent(PointerEventPass.Initial)
-                        if (event.changes.count { it.pressed } >= 2) {
+                        if (event.changes.count { it.pressed } >= 2 && !inkClaimed[0]) {
                             val pan = event.calculatePan()
                             zoomBy(event.calculateZoom(), event.calculateCentroid(useCurrent = true))
                             panBy(-pan.x)
@@ -324,10 +357,13 @@ private fun DocumentPages(
                         var panning = false
                         var multiTouch = false
                         var released = false
+                        // Drawn on: neither a pan nor a tap.
+                        var inked = inkClaimed[0]
                         while (true) {
                             val event = awaitPointerEvent()
                             if (event.changes.count { it.pressed } > 1) multiTouch = true
                             val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                            if (inkClaimed[0]) inked = true
                             if (!change.pressed) {
                                 released = true
                                 break
@@ -344,12 +380,12 @@ private fun DocumentPages(
                                     else -> panX > 0.5f
                                 }
                             }
-                            if (panning && !multiTouch) {
+                            if (panning && !multiTouch && !inked) {
                                 panBy(-delta.x)
                                 change.consume()
                             }
                         }
-                        if (released && !decided && !multiTouch) {
+                        if (released && !decided && !multiTouch && !inked) {
                             val now = down.uptimeMillis
                             val position = down.position
                             if (now - lastTapTime < doubleTapTimeout &&
@@ -387,6 +423,7 @@ private fun DocumentPages(
                     height = with(density) { (pageWidth * aspect).toDp() },
                     renderWidth = renderWidthFor(viewportWidth, zoom, aspect),
                     panX = { panX },
+                    strokes = strokesByPage[index].orEmpty(),
                 )
             }
         }
@@ -398,6 +435,17 @@ private fun DocumentPages(
             modifier = Modifier.align(Alignment.TopEnd),
         )
         PageIndicator(listState, document.pageCount, active = fastScrolling, Modifier.align(Alignment.BottomEnd))
+        // Where a hovering pen would draw or erase, and how wide (기획서 5.8.4).
+        val hoverAt = hover
+        val hoverInk = ink
+        if (hoverAt != null && hoverInk != null) {
+            val size = if (hoverInk.tool == InkTool.Eraser) hoverInk.eraserSize else hoverInk.style.size
+            val radius = (size / 2 * viewportWidth * zoom / INK_PAGE_WIDTH).coerceAtLeast(3f)
+            Canvas(Modifier.fillMaxSize()) {
+                drawCircle(Color.Black.copy(alpha = 0.5f), radius, hoverAt, style = Stroke(width = 2f))
+                drawCircle(Color.White.copy(alpha = 0.7f), radius + 2f, hoverAt, style = Stroke(width = 1.5f))
+            }
+        }
     }
 }
 
@@ -423,6 +471,7 @@ private fun PageImage(
     height: Dp,
     renderWidth: Int,
     panX: () -> Float,
+    strokes: List<InkStroke>,
 ) {
     var bitmap by remember { mutableStateOf<Bitmap?>(null) }
     LaunchedEffect(renderWidth) {
@@ -438,6 +487,15 @@ private fun PageImage(
             drawRect(Color.White, topLeft = Offset(left, 0f), size = dstSize.toSize())
         } else {
             drawImage(image, dstOffset = IntOffset(left.roundToInt(), 0), dstSize = dstSize)
+        }
+        if (strokes.isNotEmpty()) drawIntoCanvas { canvas ->
+            val native = canvas.nativeCanvas
+            native.save()
+            // A stroke that ran off the page is cut at its edge.
+            native.clipRect(left, 0f, left + pageWidth, size.height)
+            native.translate(left, 0f)
+            InkPainter.draw(native, strokes, pageWidth)
+            native.restore()
         }
     }
 }

@@ -14,8 +14,8 @@ android {
         applicationId = "com.tabpdf"
         minSdk = 26
         targetSdk = 37
-        versionCode = 5
-        versionName = "0.5.0"
+        versionCode = 6
+        versionName = "0.6.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -61,6 +61,12 @@ dependencies {
     implementation(libs.commonmark.ext.gfm.strikethrough)
     implementation(libs.commonmark.ext.task.list.items)
     implementation(libs.commonmark.ext.autolink)
+    implementation(libs.androidx.ink.authoring)
+    implementation(libs.androidx.ink.brush)
+    implementation(libs.androidx.ink.geometry)
+    implementation(libs.androidx.ink.rendering)
+    implementation(libs.androidx.ink.strokes)
+    implementation(libs.androidx.ink.storage)
     debugImplementation(libs.androidx.compose.ui.tooling)
     androidTestImplementation(libs.junit)
     androidTestImplementation(libs.androidx.test.runner)

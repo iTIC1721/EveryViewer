@@ -3,6 +3,9 @@ package com.tabpdf.doc
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import com.tabpdf.ink.InkPainter
+import com.tabpdf.ink.InkStroke
 import com.tabpdf.tabs.DocTab
 import android.util.LruCache
 import kotlinx.coroutines.CancellationException
@@ -27,8 +30,20 @@ object Thumbnails {
     /** Opening a file is the expensive part; don't open many at once while the grid fills in. */
     private val renders = Semaphore(2)
 
-    /** Thumbnail of [page] of the file at [uri], or null if the file can't be read. */
-    suspend fun load(context: Context, tab: DocTab, page: Int): Bitmap? {
+    /**
+     * Thumbnail of [page] of [tab]'s file with the tab's handwriting on it (기획서 5.8.5), or null if
+     * the file can't be read. Only the page itself is cached; the strokes are drawn over a copy.
+     */
+    suspend fun load(context: Context, tab: DocTab, page: Int, strokes: List<InkStroke>): Bitmap? {
+        val base = loadPage(context, tab, page) ?: return null
+        val onPage = strokes.filter { it.page == page }
+        if (onPage.isEmpty()) return base
+        return withContext(Dispatchers.Default) {
+            base.copy(Bitmap.Config.ARGB_8888, true)?.also { InkPainter.draw(Canvas(it), onPage, it.width.toFloat()) } ?: base
+        }
+    }
+
+    private suspend fun loadPage(context: Context, tab: DocTab, page: Int): Bitmap? {
         val tabId = tab.id
         val uri = tab.uri
         // The URI is part of the key so a tab pointed at another file ("다시 찾기") gets a new image.

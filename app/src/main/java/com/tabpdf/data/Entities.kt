@@ -62,3 +62,23 @@ data class AppStateEntity(
     /** Tab shown in the viewer. */
     val currentTabId: String?,
 )
+
+/**
+ * One handwriting stroke on a page of a tab (기획서 5.8, 6장). Not tied to the tab by a foreign key:
+ * a closed tab's strokes stay until undo is no longer possible, then are deleted explicitly.
+ */
+@Entity(tableName = "ink_strokes", indices = [Index("tabId")])
+data class InkStrokeEntity(
+    @PrimaryKey val id: String,
+    val tabId: String,
+    val page: Int,
+    /** Drawing order on the page. */
+    val seq: Long,
+    /** InkTool.key */
+    val tool: String,
+    val color: Int,
+    /** Brush size in page units (a page is 1000 wide). */
+    val size: Float,
+    /** Stroke inputs (positions, times, pressure, tilt) in androidx.ink's storage format. */
+    val inputs: ByteArray,
+)

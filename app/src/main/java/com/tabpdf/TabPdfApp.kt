@@ -10,7 +10,9 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 
 class TabPdfApp : Application() {
-    val repository by lazy { SessionRepository(AppDatabase.create(this).sessionDao()) }
+    private val database by lazy { AppDatabase.create(this) }
+    val repository by lazy { SessionRepository(database.sessionDao()) }
+    val inkDao by lazy { database.inkDao() }
     val settings by lazy { AppSettings(this) }
 
     /** When this process started. Files and grants from before it belong to earlier sessions. */

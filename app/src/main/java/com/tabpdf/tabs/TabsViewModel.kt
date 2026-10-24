@@ -3,7 +3,11 @@ package com.tabpdf.tabs
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.ink.strokes.Stroke
 import com.tabpdf.TabPdfApp
+import com.tabpdf.ink.InkStore
+import com.tabpdf.ink.InkStroke
+import com.tabpdf.ink.InkTool
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -56,6 +60,13 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
 
     val settings = app.settings
 
+    /** Handwriting of every tab (기획서 5.8). */
+    val ink = InkStore(app, viewModelScope)
+
+    /** Handwriting mode (기획서 5.8.3): off at every start, so the app opens as a plain viewer. */
+    private val _inkMode = MutableStateFlow(false)
+    val inkMode: StateFlow<Boolean> = _inkMode.asStateFlow()
+
     private val viewerStates = mutableMapOf<String, ViewerState>()
     private val unsavedStates = mutableMapOf<String, ViewerState>()
     private val pageCounts = mutableMapOf<String, Int>()
@@ -70,6 +81,7 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
         _state.value = cleaned
         if (cleaned != saved) commit(cleaned)
         app.enqueueWrite { FileAccess.releaseUnused(app, cleaned.allTabs.map { it.uri }.toSet(), app.startedAt) }
+        ink.deleteOrphans()
     }
 
     private fun current(): SessionState = _state.value!!
@@ -245,6 +257,7 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
             is Closed.Group -> closed.tabs
         }
         tabs.forEach { viewerStates -= it.id }
+        ink.forget(tabs.map { it.id })
         app.enqueueWrite {
             for (tab in tabs) if (!repository.isUriInUse(tab.uri)) FileAccess.release(app, tab)
         }
@@ -263,6 +276,7 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
         val existing = s.context(old.groupId).firstOrNull { it.id != id && it.uri == file.uri }
         if (existing != null) {
             commit(s.removeTab(id).copy(currentTabId = existing.id))
+            ink.forget(listOf(id))
             app.enqueueWrite { if (!repository.isUriInUse(old.uri)) FileAccess.release(app, old) }
             return
         }
@@ -304,6 +318,23 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun newGroup(s: SessionState, name: String) =
         TabGroup(UUID.randomUUID().toString(), name, s.nextGroupColor(GROUP_COLOR_COUNT))
+
+    // ---- Handwriting ----
+
+    fun setInkMode(on: Boolean) {
+        _inkMode.value = on
+    }
+
+    fun addStroke(tabId: String, page: Int, tool: InkTool, stroke: Stroke) {
+        if (current().tab(tabId) == null) return
+        ink.add(tabId, InkStroke(UUID.randomUUID().toString(), page, ink.nextSeq(), tool, stroke))
+    }
+
+    fun eraseStrokes(tabId: String, ids: Set<String>, gesture: Long) = ink.erase(tabId, ids, gesture)
+
+    fun undoInk() = current().currentTabId?.let(ink::undo)
+
+    fun redoInk() = current().currentTabId?.let(ink::redo)
 
     // ---- Reading positions ----
 
