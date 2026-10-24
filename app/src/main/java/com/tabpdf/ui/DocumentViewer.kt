@@ -80,6 +80,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import com.tabpdf.doc.Document
+import com.tabpdf.doc.isWebLink
 import com.tabpdf.doc.LayoutProgress
 import com.tabpdf.doc.awaitPages
 import com.tabpdf.doc.SearchMatch
@@ -343,11 +344,14 @@ private fun DocumentPages(
             selectionAnchors.value = null
             return
         }
-        val url = linkAt(position) ?: return currentOnTap()
+        // Checked again here: whatever a document's reader let through, only web and mail links open.
+        val url = linkAt(position)?.takeIf { isWebLink(it) } ?: return currentOnTap()
         try {
             context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         } catch (_: ActivityNotFoundException) {
             Toast.makeText(context, "링크를 열 앱이 없습니다", Toast.LENGTH_SHORT).show()
+        } catch (_: RuntimeException) {
+            Toast.makeText(context, "링크를 열 수 없습니다", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -746,7 +750,7 @@ private fun OpenFailure(error: Exception, onRelocate: () -> Unit, onClose: () ->
             "암호가 걸린 PDF입니다" to "암호 PDF는 아직 지원하지 않습니다."
         reason == DocumentOpenException.Reason.NoPages -> "빈 PDF입니다" to "페이지가 하나도 없습니다."
         reason == DocumentOpenException.Reason.Unsupported -> "이 형식은 열 수 없습니다" to "아직 지원하지 않는 파일 형식입니다."
-        reason == DocumentOpenException.Reason.TooLarge -> "파일이 너무 큽니다" to "텍스트 파일은 16MB까지 열 수 있습니다."
+        reason == DocumentOpenException.Reason.TooLarge -> "파일이 너무 큽니다" to "이 기기에서 열 수 있는 크기를 넘습니다."
         else -> "파일을 열 수 없습니다" to "손상되었거나 지원하지 않는 파일입니다."
     }
     Column(modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {

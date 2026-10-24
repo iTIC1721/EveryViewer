@@ -1,5 +1,6 @@
 package com.tabpdf
 
+import android.content.ContentResolver
 import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.net.Uri
@@ -117,7 +118,8 @@ class MainActivity : ComponentActivity() {
 
     /**
      * Files handed over by another app ("열기"/"공유") open as ungrouped tabs (기획서 5.1). Their
-     * read grants are temporary, so FileAccess usually copies them into app storage.
+     * read grants are temporary, so FileAccess usually copies them into app storage. Only content
+     * URIs are taken: a file: URI from another app could point into this app's own private files.
      */
     private fun openIncomingFiles(intent: Intent) {
         val uris = when (intent.action) {
@@ -126,7 +128,7 @@ class MainActivity : ComponentActivity() {
             Intent.ACTION_SEND_MULTIPLE ->
                 IntentCompat.getParcelableArrayListExtra(intent, Intent.EXTRA_STREAM, Uri::class.java).orEmpty()
             else -> emptyList()
-        }
+        }.filter { it.scheme == ContentResolver.SCHEME_CONTENT }
         if (uris.isEmpty() && intent.action == Intent.ACTION_SEND) {
             // Shared text with no file behind it (a link, a selection): kept as a text file of its own.
             val text = intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString() ?: return
@@ -154,7 +156,8 @@ class MainActivity : ComponentActivity() {
                 try {
                     FileAccess.prepare(applicationContext, uri)
                 } catch (e: Exception) {
-                    android.util.Log.w("EveryViewer", "Could not open $uri", e)
+                    // Not the URI: file names in the log would tell what the user reads.
+                    android.util.Log.w("EveryViewer", "Could not open a file", e)
                     null
                 }
             }

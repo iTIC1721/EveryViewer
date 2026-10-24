@@ -81,6 +81,13 @@ open class TextBlock(val layout: StaticLayout) : FlowBlock() {
 /** Marks a web link in laid-out text; drawn by whatever colour/underline spans go with it. */
 class LinkSpan(val url: String)
 
+/**
+ * Whether a document's link may be opened: web pages and mail only. Others (file:, content:,
+ * intent: …) could crash the app or hand a crafted address to another app.
+ */
+fun isWebLink(url: String) =
+    url.startsWith("http://", true) || url.startsWith("https://", true) || url.startsWith("mailto:", true)
+
 /** A block placed in the flow at ([x], [y]). */
 class Placed(val block: FlowBlock, val x: Float, val y: Float) {
     val bottom: Float get() = y + block.height

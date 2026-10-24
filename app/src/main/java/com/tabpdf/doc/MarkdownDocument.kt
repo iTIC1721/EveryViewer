@@ -58,6 +58,9 @@ import java.io.FileNotFoundException
 import java.io.InputStream
 import kotlin.math.max
 
+/** Embedded images are read at most this many pixels wide or high (pages are drawn about 1000 wide). */
+private const val MAX_IMAGE_PX = 2048
+
 /**
  * Markdown files, always shown rendered (기획서 5.7, 11장 8번): no raw view, so handwriting has one
  * layout to stay on. Images are drawn only when embedded in the file (data: URIs): files next to
@@ -306,7 +309,12 @@ private class MarkdownRenderer {
         if (!url.startsWith("data:image/") || !url.contains(";base64,")) return null
         return try {
             val bytes = Base64.decode(url.substringAfter(";base64,"), Base64.DEFAULT)
-            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+            // A small file can claim a huge picture: read it no larger than the page needs.
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+            var sample = 1
+            while (bounds.outWidth / sample > MAX_IMAGE_PX || bounds.outHeight / sample > MAX_IMAGE_PX) sample *= 2
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
         } catch (_: Exception) {
             null
         } catch (_: OutOfMemoryError) {
@@ -370,9 +378,6 @@ private class MarkdownRenderer {
     private fun SpannableStringBuilder.span(what: Any, start: Int) {
         if (length > start) setSpan(what, start, length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
     }
-
-    private fun isWebLink(url: String) =
-        url.startsWith("http://", true) || url.startsWith("https://", true) || url.startsWith("mailto:", true)
 
     private fun fromHtml(html: String): SpannableStringBuilder {
         val spanned = SpannableStringBuilder(Html.fromHtml(html, Html.FROM_HTML_MODE_COMPACT))

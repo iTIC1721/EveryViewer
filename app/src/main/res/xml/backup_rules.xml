@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 11 and older. Copies of the user's documents never leave the device (기획서 11장 21번);
+     tabs, groups, reading positions, handwriting and settings are backed up. -->
+<full-backup-content>
+    <exclude domain="file" path="tab-copies/" />
+</full-backup-content>
