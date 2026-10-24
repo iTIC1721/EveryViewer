@@ -33,23 +33,48 @@ class ZipParts private constructor(private val parts: Map<String, ByteArray>) {
                     val entry = zip.nextEntry ?: break
                     if (entry.isDirectory) continue
                     if (parts.size >= MAX_ENTRIES) throw DocumentOpenException(DocumentOpenException.Reason.TooLarge)
-                    val out = java.io.ByteArrayOutputStream()
-                    val buffer = ByteArray(64 * 1024)
-                    while (true) {
-                        val n = zip.read(buffer)
-                        if (n < 0) break
-                        // Checked before taking the bytes in, so memory never goes past the limits.
-                        if (out.size() + n > maxEntryBytes || total + n > maxTotalBytes) {
-                            throw DocumentOpenException(DocumentOpenException.Reason.TooLarge)
-                        }
-                        out.write(buffer, 0, n)
-                        total += n
-                    }
-                    parts[entry.name.removePrefix("/")] = out.toByteArray()
+                    val bytes = if (entry.size >= 0) readSized(zip, entry.size, total) else readGrowing(zip, total)
+                    total += bytes.size
+                    parts[entry.name.removePrefix("/")] = bytes
                 }
             }
             if (parts.isEmpty()) throw IOException("Not a zip document")
             return ZipParts(parts)
+        }
+
+        /**
+         * An entry whose size the zip states up front (as Office and Hangul write them): taken in
+         * at once, without copies, after checking the size against the limits — before any memory
+         * is spent on a bomb. A size that turns out wrong means a broken or crafted file.
+         */
+        private fun readSized(zip: ZipInputStream, size: Long, total: Long): ByteArray {
+            if (size > maxEntryBytes || total + size > maxTotalBytes) {
+                throw DocumentOpenException(DocumentOpenException.Reason.TooLarge)
+            }
+            val bytes = ByteArray(size.toInt())
+            var done = 0
+            while (done < bytes.size) {
+                val n = zip.read(bytes, done, bytes.size - done)
+                if (n < 0) throw IOException("Zip entry shorter than stated")
+                done += n
+            }
+            if (zip.read() >= 0) throw IOException("Zip entry longer than stated")
+            return bytes
+        }
+
+        /** An entry of unknown size (written with a data descriptor): read growing, checked as it grows. */
+        private fun readGrowing(zip: ZipInputStream, total: Long): ByteArray {
+            val out = java.io.ByteArrayOutputStream()
+            val buffer = ByteArray(64 * 1024)
+            while (true) {
+                val n = zip.read(buffer)
+                if (n < 0) return out.toByteArray()
+                // Checked before taking the bytes in, so memory never goes past the limits.
+                if (out.size() + n > maxEntryBytes || total + out.size() + n > maxTotalBytes) {
+                    throw DocumentOpenException(DocumentOpenException.Reason.TooLarge)
+                }
+                out.write(buffer, 0, n)
+            }
         }
     }
 }
