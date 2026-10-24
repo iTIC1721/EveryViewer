@@ -1,11 +1,8 @@
 package com.tabpdf
 
-import android.content.Context
-import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.net.Uri
 import android.os.Bundle
-import android.provider.OpenableColumns
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -16,8 +13,18 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.lifecycle.lifecycleScope
+import com.tabpdf.tabs.FileAccess
+import com.tabpdf.tabs.OpenedFile
 import com.tabpdf.tabs.TabsViewModel
 import com.tabpdf.ui.TabsScreen
+import kotlinx.coroutines.launch
+
+private const val PDF_MIME = "application/pdf"
 
 class MainActivity : ComponentActivity() {
     private val tabsViewModel: TabsViewModel by viewModels()
@@ -30,21 +37,49 @@ class MainActivity : ComponentActivity() {
             MaterialTheme(colorScheme = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()) {
                 val openFiles = rememberLauncherForActivityResult(
                     ActivityResultContracts.OpenMultipleDocuments()
-                ) { uris ->
-                    uris.forEach(::takeReadPermission)
-                    tabsViewModel.open(uris.map { it to displayName(it) })
+                ) { uris -> prepare(uris) { tabsViewModel.open(it) } }
+
+                // Tab waiting for a replacement file from "다시 찾기"; saved across the picker round trip.
+                var relocatingTabId by rememberSaveable { mutableStateOf<String?>(null) }
+                val relocate = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+                    val tabId = relocatingTabId
+                    relocatingTabId = null
+                    if (uri != null && tabId != null) {
+                        prepare(listOf(uri)) { files -> files.firstOrNull()?.let { tabsViewModel.replaceFile(tabId, it) } }
+                    }
                 }
-                TabsScreen(tabsViewModel, onOpenFiles = { openFiles.launch(arrayOf("application/pdf")) })
+
+                TabsScreen(
+                    viewModel = tabsViewModel,
+                    onOpenFiles = { openFiles.launch(arrayOf(PDF_MIME)) },
+                    onRelocate = { tab ->
+                        relocatingTabId = tab.id
+                        relocate.launch(arrayOf(PDF_MIME))
+                    },
+                )
             }
         }
     }
 
-    /** Persistable read access, so tabs can reopen the file after a restart (기획서 5.3). */
-    private fun takeReadPermission(uri: Uri) {
-        try {
-            contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        } catch (_: SecurityException) {
-            // Some providers don't offer persistable grants; the tab still works this session.
+    override fun onStop() {
+        super.onStop()
+        // Last chance to save reading positions before the process may be killed (기획서 5.3).
+        tabsViewModel.flush()
+    }
+
+    /** Makes picked files readable after a restart (may copy them), then hands them to [onReady]. */
+    private fun prepare(uris: List<Uri>, onReady: (List<OpenedFile>) -> Unit) {
+        if (uris.isEmpty()) return
+        lifecycleScope.launch {
+            val files = uris.mapNotNull { uri ->
+                try {
+                    FileAccess.prepare(applicationContext, uri)
+                } catch (e: Exception) {
+                    android.util.Log.w("TabPDF", "Could not open $uri", e)
+                    null
+                }
+            }
+            onReady(files)
         }
     }
 
@@ -57,14 +92,6 @@ class MainActivity : ComponentActivity() {
         val debuggable = applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
         if (!debuggable || !intent.getBooleanExtra("debug_open_test_files", false)) return
         val files = filesDir.listFiles { f -> f.extension.equals("pdf", true) }.orEmpty()
-        tabsViewModel.open(files.sortedBy { it.name }.map { Uri.fromFile(it) to it.name })
+        tabsViewModel.open(files.sortedBy { it.name }.map { OpenedFile(Uri.fromFile(it), it.name, isInternalCopy = false) })
     }
-
-    private fun displayName(uri: Uri): String =
-        queryDisplayName(this, uri) ?: uri.lastPathSegment ?: "PDF"
 }
-
-private fun queryDisplayName(context: Context, uri: Uri): String? =
-    context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
-        if (cursor.moveToFirst()) cursor.getString(0) else null
-    }
