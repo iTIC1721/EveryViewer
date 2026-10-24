@@ -28,7 +28,9 @@ class RenderDump {
         for (file in files) {
             val uri = Uri.fromFile(file)
             val format = FileFormats.detect(context, uri, file.name)
+            val started = System.nanoTime()
             val doc = Documents.open(context, uri, file.name, format)
+            android.util.Log.i("RenderDump", "${file.name}: opened in ${(System.nanoTime() - started) / 1_000_000} ms, ${doc.pageCount} pages")
             for (page in 0 until doc.pageCount) {
                 val bitmap = doc.renderPage(page, 1240) ?: continue
                 File(output, "${file.nameWithoutExtension}-$page.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
