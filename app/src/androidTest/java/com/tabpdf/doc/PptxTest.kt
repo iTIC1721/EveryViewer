@@ -91,7 +91,7 @@ class PptxTest {
         "<p:txBody><a:bodyPr/><a:lstStyle/>" + paragraphs.joinToString("") + "</p:txBody>"
 
     @Test
-    fun slidesInheritFromLayoutAndMaster() {
+    fun slidesInheritFromLayoutAndMaster() = runBlocking {
         val presentation = PptxReader.read(
             deck(
                 slide1 = sp("""<p:ph type="title"/>""", body = text("<a:p><a:r><a:t>Title</a:t></a:r></a:p>")) +
@@ -151,6 +151,14 @@ class PptxTest {
         val table = (shapes[5] as TableOnSlide).table
         assertEquals(listOf(100f, 100f), table.columns)
         assertEquals(2, table.cells.single().columnSpan)
+
+        // Search finds text in text boxes and tables, on the slide they are on (기획서 5.5).
+        val doc = SlideDocument.layOut(presentation)
+        val found = doc.search("DETAIL").single()
+        assertEquals(1, found.page)
+        assertTrue(found.rects.single().left > 100f / 720f)
+        assertEquals(1, doc.search("wide").single().page)
+        doc.close()
     }
 
     @Test

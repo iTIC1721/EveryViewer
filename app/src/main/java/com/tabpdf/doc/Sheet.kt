@@ -3,8 +3,10 @@ package com.tabpdf.doc
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.RectF
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -29,6 +31,8 @@ class StackBlock(private val placed: List<Placed>, override val height: Float) :
             canvas.restore()
         }
     }
+
+    override fun find(query: String): List<Found> = placed.flatMap { p -> p.block.find(query).map { it.offset(p.x, p.y) } }
 
     override fun linkAt(x: Float, y: Float): String? = placed
         .firstOrNull { y >= it.y && y < it.bottom && x >= it.x }
@@ -95,6 +99,28 @@ class SheetDocument(
             canvas.translate(p.x, p.y)
             p.block.draw(canvas)
             canvas.restore()
+        }
+    }
+
+    /** Searches the body; headers and footers repeat on every sheet and are left out. */
+    override suspend fun search(query: String): List<SearchMatch> = withContext(Dispatchers.Default) {
+        val q = TextSearch.normalize(query)
+        mutex.withLock {
+            val result = mutableListOf<SearchMatch>()
+            if (closed || q.isEmpty()) return@withLock result
+            for (p in placed) {
+                ensureActive()
+                for (found in p.block.find(q)) {
+                    val rects = found.offset(p.x, p.y)
+                    val page = pageOf(boundaries, rects.first().centerY())
+                    val shift = frame.bodyTop - boundaries[page]
+                    result += SearchMatch(page, rects.map {
+                        RectF(it.left / FLOW_WIDTH, (it.top + shift) / frame.height, it.right / FLOW_WIDTH, (it.bottom + shift) / frame.height)
+                    })
+                    if (result.size >= TextSearch.MAX_MATCHES) return@withLock result
+                }
+            }
+            result
         }
     }
 

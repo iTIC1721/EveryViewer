@@ -1,6 +1,6 @@
 # EveryViewer
 
-![version](https://img.shields.io/badge/version-0.8.0-blue)
+![version](https://img.shields.io/badge/version-0.9.0-blue)
 ![minSdk](https://img.shields.io/badge/Android-8.0%2B%20(API%2026)-3DDC84?logo=android&logoColor=white)
 ![Kotlin](https://img.shields.io/badge/Kotlin-Jetpack%20Compose-7F52FF?logo=kotlin&logoColor=white)
 
@@ -24,6 +24,7 @@
 - **필기** — 펜(필압), 형광펜, 획 지우개, 되돌리기. 필기는 탭마다 앱 안에 저장하고 원본 파일은 건드리지 않습니다.
   - `✎` 버튼을 눌러야 그려지므로, 평소에는 펜도 손가락처럼 스크롤만 합니다.
   - 펜이 있는 기기에서는 펜만 그리고 손가락은 스크롤합니다. 펜 측면 버튼을 누른 채 그리면 지우개가 됩니다.
+- **텍스트 검색** — 문서 안에서 단어를 찾아 칠하고 차례로 옮겨 다닙니다. PDF는 Android 12 이상(시스템 업데이트 필요)·15 이상에서 됩니다.
 - **형식과 상관없이 같은 화면** — 모든 파일을 세로로 이어지는 페이지로 보여 줍니다.
 - **오프라인 전용** — 인터넷 권한이 없고, 어떤 데이터도 밖으로 보내지 않습니다.
 

@@ -53,6 +53,9 @@ adb shell am start -n com.tabpdf/.MainActivity --ez debug_open_test_files true
 - 테스트 파일은 경로가 짧은 곳(예: `%TEMP%\evtest`)에서 만든다. 세션 임시 폴더는 경로가 길어 Windows 프로그램(python 등)이 실행되지 않는다.
 - 필기: `adb shell input stylus ...`는 펜(TOOL_TYPE_STYLUS)으로 인식되지 않는다. 펜·측면 버튼·여러 손가락 규칙은 계측 테스트 `InkInputTest`(UiAutomation으로 이벤트 주입)로 확인한다. 이 테스트는 에뮬레이터의 탭·필기·files/·설정을 지운다. 펜 지연·손바닥 무시·S펜 버튼은 실기기로 확인.
 - docx·hwpx 조판 비교: 원본을 Word·한글로 PDF로 만든 뒤(이 PC의 Office·한글 COM 자동화), 같은 파일을 `files/render-in/`에 복사하고 `adb shell am instrument -w -e class com.tabpdf.doc.RenderDump com.tabpdf.test/androidx.test.runner.AndroidJUnitRunner`(앱이 지워지지 않게 단독 실행)로 `files/render-out/`에 쪽 PNG를 뽑아 나란히 본다. 한글의 PDF 내보내기는 전체가 약 16pt 어긋나므로 위치는 hwpx 안의 `Preview/PrvImage.png`로 확인한다. pptx는 PowerPoint COM의 `Slide.Export(경로, "PNG", 폭, 높이)`로 슬라이드마다 그림을 뽑아 비교한다. 사용자 견본 파일은 저장소에 넣지 않는다.
+- 에뮬레이터는 두 개다: C 드라이브 SDK의 `Pixel_4_XL_API_30`(Android 11)과, C 드라이브 용량 때문에 D 드라이브에 둔 `Pixel_6_API_35`(Android 15; SDK `D:\Android\sdk`, AVD `D:\Androidvd`, `platform-tools`는 C SDK로 연결). Android 15 실행:
+  `$env:ANDROID_AVD_HOME='D:\Androidvd'; $env:ANDROID_SDK_ROOT='D:\Android\sdk'; & D:\Android\sdk\emulator\emulator.exe -avd Pixel_6_API_35`
+- 텍스트 검색: PDF 검색은 Android 12+(SDK 확장 13)·15+에서만 동작하므로 Android 11 에뮬레이터에서는 결과 0개다. PDF는 Android 15 에뮬레이터로, 다른 형식은 계측 테스트 `SearchTest`·`PptxTest`로 확인한다. adb `input text`로는 한글을 입력할 수 없다.
 - adb `input` 명령은 하나에 수백 ms가 걸려 실제 손가락보다 훨씬 느리다. 끌기처럼 시간에 민감한 제스처는 한 번의 `adb shell "..."` 안에 이어서 보낸다.
 - 닫기 후 실행 취소 스낵바는 약 10초. 스크립트로 확인할 때는 닫기와 실행 취소를 한 번에 보낸다.
 - Git Bash에서 adb 경로 인자(`/sdcard/...`)가 Windows 경로로 바뀌지 않게 `MSYS_NO_PATHCONV=1`을 설정한다.

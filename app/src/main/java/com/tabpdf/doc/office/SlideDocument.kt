@@ -19,9 +19,14 @@ import android.util.LruCache
 import com.tabpdf.doc.Document
 import com.tabpdf.doc.FLOW_WIDTH
 import com.tabpdf.doc.FlowBlock
+import com.tabpdf.doc.Found
 import com.tabpdf.doc.PageSize
+import com.tabpdf.doc.SearchMatch
+import com.tabpdf.doc.TextSearch
+import com.tabpdf.doc.offset
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -91,6 +96,22 @@ class SlideDocument private constructor(
         }
     }
 
+    override suspend fun search(query: String): List<SearchMatch> = withContext(Dispatchers.Default) {
+        val q = TextSearch.normalize(query)
+        mutex.withLock {
+            val result = mutableListOf<SearchMatch>()
+            if (closed || q.isEmpty()) return@withLock result
+            for ((index, page) in pages.withIndex()) {
+                ensureActive()
+                for (item in page.items) for (found in item.find(q)) {
+                    result += SearchMatch(index, found.map { RectF(it.left / FLOW_WIDTH, it.top / height, it.right / FLOW_WIDTH, it.bottom / height) })
+                    if (result.size >= TextSearch.MAX_MATCHES) return@withLock result
+                }
+            }
+            result
+        }
+    }
+
     override fun linkAt(index: Int, x: Float, y: Float): String? {
         val px = x * FLOW_WIDTH
         val py = y * height
@@ -141,6 +162,8 @@ private class DrawContext(
 private interface SlideItem {
     fun draw(canvas: Canvas, context: DrawContext)
     fun linkAt(x: Float, y: Float): String? = null
+    /** Where the item's text has [query], in slide coordinates. */
+    fun find(query: String): List<Found> = emptyList()
 }
 
 private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -312,6 +335,22 @@ private class ShapeItem(private val shape: ShapeOnSlide, private val f: RectF, p
         }
     }
 
+    override fun find(query: String): List<Found> {
+        val block = text ?: return emptyList()
+        // The same moves as drawing: into the text box, turned for vertical text, then the frame's rotation.
+        val m = Matrix().apply {
+            setTranslate(textX, textY)
+            when (shape.text?.direction) {
+                TextDirection.Down -> { postRotate(90f); postTranslate(f.width(), 0f) }
+                TextDirection.Up -> { postRotate(-90f); postTranslate(0f, f.height()) }
+                else -> Unit
+            }
+            postTranslate(f.left, f.top)
+            if (shape.frame.rotation != 0f) postRotate(shape.frame.rotation, f.centerX(), f.centerY())
+        }
+        return block.find(query).map { found -> found.map { RectF(it).also(m::mapRect) } }
+    }
+
     override fun linkAt(x: Float, y: Float): String? {
         val block = text ?: return null
         if (shape.frame.rotation != 0f || shape.text?.direction != TextDirection.Horizontal || !f.contains(x, y)) return null
@@ -366,6 +405,8 @@ private class BlockItem(private val block: FlowBlock, private val x: Float, priv
         block.draw(canvas)
         canvas.restore()
     }
+
+    override fun find(query: String): List<Found> = block.find(query).map { it.offset(x, y) }
 
     override fun linkAt(x: Float, y: Float): String? =
         if (x >= this.x && y >= this.y && y < this.y + block.height) block.linkAt(x - this.x, y - this.y) else null

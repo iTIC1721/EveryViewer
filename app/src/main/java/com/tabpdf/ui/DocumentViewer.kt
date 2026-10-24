@@ -34,6 +34,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -70,6 +71,8 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import com.tabpdf.doc.Document
+import com.tabpdf.doc.SearchMatch
+import androidx.compose.ui.graphics.BlendMode
 import com.tabpdf.doc.DocumentOpenException
 import com.tabpdf.doc.Documents
 import com.tabpdf.doc.FileFormat
@@ -102,6 +105,8 @@ import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
 private const val MAX_ZOOM = 5f
+private val OTHER_MATCH = Color(0xFFFFEB3B)
+private val CURRENT_MATCH = Color(0xFFFF9632)
 private const val DOUBLE_TAP_ZOOM = 2.5f
 private val PAGE_GAP = 8.dp
 
@@ -140,6 +145,12 @@ fun DocumentViewer(
     strokes: List<InkStroke>,
     /** Set while handwriting mode is on (기획서 5.8). */
     ink: InkBinding?,
+    /** Text to find and mark (기획서 5.5), or null when not searching this tab. */
+    searchQuery: String? = null,
+    /** Which match to show. */
+    searchIndex: Int = 0,
+    /** How many matches [searchQuery] has; null while searching. */
+    onSearchResults: (Int?) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -183,6 +194,7 @@ fun DocumentViewer(
             else -> DocumentPages(
                 document = doc,
                 viewportWidth = constraints.maxWidth.toFloat(),
+                viewportHeight = constraints.maxHeight.toFloat(),
                 initialState = initialState,
                 onStateChange = onStateChange,
                 onTap = onTap,
@@ -191,6 +203,9 @@ fun DocumentViewer(
                 onPageJumpHandled = onPageJumpHandled,
                 strokes = strokes,
                 ink = ink,
+                searchQuery = searchQuery,
+                searchIndex = searchIndex,
+                onSearchResults = onSearchResults,
             )
         }
     }
@@ -200,6 +215,7 @@ fun DocumentViewer(
 private fun DocumentPages(
     document: Document,
     viewportWidth: Float,
+    viewportHeight: Float,
     initialState: ViewerState,
     onStateChange: (ViewerState) -> Unit,
     onTap: () -> Unit,
@@ -208,6 +224,9 @@ private fun DocumentPages(
     onPageJumpHandled: (PageJump) -> Unit,
     strokes: List<InkStroke>,
     ink: InkBinding?,
+    searchQuery: String?,
+    searchIndex: Int,
+    onSearchResults: (Int?) -> Unit,
 ) {
     val density = LocalDensity.current
     val strokesByPage = remember(strokes) { strokes.groupBy { it.page } }
@@ -319,6 +338,47 @@ private fun DocumentPages(
 
     val gapPx = if (document.pageGaps) with(density) { PAGE_GAP.toPx() } else 0f
 
+    // Text search (기획서 5.5): find as the query changes, mark every match, bring the current one into view.
+    var matches by remember(document) { mutableStateOf<List<SearchMatch>>(emptyList()) }
+    val currentOnSearchResults by rememberUpdatedState(onSearchResults)
+    LaunchedEffect(document, searchQuery) {
+        if (searchQuery.isNullOrEmpty()) {
+            matches = emptyList()
+            if (searchQuery != null) currentOnSearchResults(0)
+            return@LaunchedEffect
+        }
+        currentOnSearchResults(null)
+        delay(250) // typing
+        val found = document.search(searchQuery)
+        matches = found
+        currentOnSearchResults(found.size)
+    }
+    val matchesByPage = remember(matches) { matches.withIndex().groupBy { it.value.page } }
+    val topPaddingPx = with(density) { contentPadding.calculateTopPadding().toPx() }
+    val bottomPaddingPx = with(density) { contentPadding.calculateBottomPadding().toPx() }
+    LaunchedEffect(matches, searchIndex) {
+        val match = matches.getOrNull(searchIndex) ?: return@LaunchedEffect
+        val rect = match.rects.first()
+        val height = pageHeight(match.page, zoom)
+        val info = listState.layoutInfo
+        val item = info.visibleItemsInfo.firstOrNull { it.index == match.page }
+        val shown = item != null && (item.offset - info.viewportStartOffset).let { top ->
+            top + rect.top * height >= topPaddingPx && top + rect.bottom * height <= viewportHeight - bottomPaddingPx
+        }
+        if (!shown) {
+            // A third of the way down the screen, as browsers put a found word.
+            val target = (rect.top * height - (viewportHeight - topPaddingPx) / 3).roundToInt()
+            listState.scrollToItem(match.page, target.coerceAtLeast(0))
+            if (target < 0) listState.scrollBy(target.toFloat())
+        }
+        if (zoom > 1.01f) {
+            val pageWidth = viewportWidth * zoom
+            val left = rect.left * pageWidth
+            val right = rect.right * pageWidth
+            if (left < panX || right > panX + viewportWidth) panX = ((left + right - viewportWidth) / 2).coerceIn(0f, maxPan())
+        }
+    }
+
     Box(
         Modifier
             .fillMaxSize()
@@ -424,6 +484,8 @@ private fun DocumentPages(
                     renderWidth = renderWidthFor(viewportWidth, zoom, aspect),
                     panX = { panX },
                     strokes = strokesByPage[index].orEmpty(),
+                    found = matchesByPage[index].orEmpty(),
+                    currentMatch = searchIndex,
                 )
             }
         }
@@ -472,6 +534,9 @@ private fun PageImage(
     renderWidth: Int,
     panX: () -> Float,
     strokes: List<InkStroke>,
+    /** Search matches on this page, with their number among all matches. */
+    found: List<IndexedValue<SearchMatch>>,
+    currentMatch: Int,
 ) {
     var bitmap by remember { mutableStateOf<Bitmap?>(null) }
     LaunchedEffect(renderWidth) {
@@ -487,6 +552,18 @@ private fun PageImage(
             drawRect(Color.White, topLeft = Offset(left, 0f), size = dstSize.toSize())
         } else {
             drawImage(image, dstOffset = IntOffset(left.roundToInt(), 0), dstSize = dstSize)
+        }
+        // Found text in yellow, the current match in orange, as browsers mark it; under the handwriting.
+        val pad = 1.dp.toPx()
+        for ((i, match) in found) {
+            val color = if (i == currentMatch) CURRENT_MATCH else OTHER_MATCH
+            for (r in match.rects) {
+                val topLeft = Offset(left + r.left * pageWidth - pad, r.top * size.height - pad)
+                val box = androidx.compose.ui.geometry.Size(r.width() * pageWidth + 2 * pad, r.height() * size.height + 2 * pad)
+                drawRect(color, topLeft, box, blendMode = BlendMode.Multiply)
+                // Multiplying vanishes on dark or coloured backgrounds; outline the current match too.
+                if (i == currentMatch) drawRect(CURRENT_MATCH, topLeft, box, style = Stroke(width = 2 * pad))
+            }
         }
         if (strokes.isNotEmpty()) drawIntoCanvas { canvas ->
             val native = canvas.nativeCanvas
