@@ -125,13 +125,16 @@ fun TabsScreen(viewModel: TabsViewModel, onOpenFiles: (groupId: String?) -> Unit
 
     CompositionLocalProvider(LocalInkStore provides viewModel.ink) {
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant)) {
-        // Swiping stays within the current tab's group, or among ungrouped tabs (기획서 5.2).
+        // Swiping stays within the current tab's group, or among ungrouped tabs (기획서 5.2) —
+        // unless set to go on across groups, through every tab in the switcher's order.
         // A fresh pager per context, starting on the current tab.
+        val crossGroups by viewModel.settings.crossGroupSwipe.collectAsState()
         val contextId = session.currentTab?.groupId
-        key(contextId) {
+        key(crossGroups, if (crossGroups) null else contextId) {
             ContextPager(
                 session = session,
                 groupId = contextId,
+                crossGroups = crossGroups,
                 viewModel = viewModel,
                 barsVisible = barsVisible,
                 onToggleBars = { barsVisible = !barsVisible },
@@ -187,11 +190,15 @@ fun TabsScreen(viewModel: TabsViewModel, onOpenFiles: (groupId: String?) -> Unit
     }
 }
 
-/** The tabs of one swipe context — a group, or all ungrouped tabs — with the top bar over them. */
+/**
+ * The tabs of one swipe context — a group, or all ungrouped tabs, or every tab if [crossGroups] —
+ * with the top bar over them. [groupId] is the current tab's group.
+ */
 @Composable
 private fun ContextPager(
     session: SessionState,
     groupId: String?,
+    crossGroups: Boolean,
     viewModel: TabsViewModel,
     barsVisible: Boolean,
     onToggleBars: () -> Unit,
@@ -200,7 +207,7 @@ private fun ContextPager(
     onShowSwitcher: (openGroupId: String?) -> Unit,
     onShowSettings: () -> Unit,
 ) {
-    val tabs = session.context(groupId)
+    val tabs = if (crossGroups) session.allTabs else session.context(groupId)
     val group = groupId?.let { session.group(it) }
     val pageJump by viewModel.pageJump.collectAsState()
     var dialog by remember { mutableStateOf<ViewerDialog?>(null) }

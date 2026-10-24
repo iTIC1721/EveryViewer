@@ -47,6 +47,7 @@ import com.tabpdf.ThemeMode
 fun SettingsScreen(settings: AppSettings, onDismiss: () -> Unit) {
     val theme by settings.theme.collectAsState()
     val keepScreenOn by settings.keepScreenOn.collectAsState()
+    val crossGroupSwipe by settings.crossGroupSwipe.collectAsState()
     val fingerDrawing by settings.fingerDrawing.collectAsState()
     val stylusSeen by settings.stylusSeen.collectAsState()
     val sideButtonErases by settings.sideButtonErases.collectAsState()
@@ -71,6 +72,15 @@ fun SettingsScreen(settings: AppSettings, onDismiss: () -> Unit) {
                 Choice(theme == ThemeMode.Light, "밝게") { settings.setTheme(ThemeMode.Light) }
                 Choice(theme == ThemeMode.Dark, "어둡게") { settings.setTheme(ThemeMode.Dark) }
                 Toggle("화면 켜짐 유지", "보는 동안 화면이 꺼지지 않음", keepScreenOn, settings::setKeepScreenOn)
+
+                Divider()
+                Section("탭")
+                Toggle(
+                    "그룹 끝에서 다음 그룹으로 넘어가기",
+                    "끄면 지금 그룹 안의 탭끼리만 넘어감",
+                    crossGroupSwipe,
+                    settings::setCrossGroupSwipe,
+                )
 
                 Divider()
                 Section("필기")
