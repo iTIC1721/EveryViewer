@@ -5,7 +5,13 @@ description: EveryViewer(옛 가칭 TabPDF) 저장소의 Git 관리 규약(브�
 
 # EveryViewer Git 관리 규약
 
-이 저장소는 **로컬 전용**이다. 원격 저장소가 없으므로 `git push`, `git pull`, `git fetch`, 원격 추가는 하지 않는다. 원격을 연결하게 되면 이 문서부터 갱신한다.
+원격 저장소: `origin` = https://github.com/iTIC1721/EveryViewer (비공개).
+
+- 올리는 것은 `main`과 버전 태그다. 머지 뒤 `git push origin main`, 태그를 붙이면 `git push origin <태그>`.
+- 작업 브랜치는 사용자가 원할 때만 올린다.
+- 강제 푸시(`--force`, `--force-with-lease`)와 원격 브랜치·태그 삭제는 하지 않는다.
+- 작업 시작 전 `git fetch`로 원격에 로컬에 없는 커밋이 있는지 본다. 있으면 사용자에게 알리고 `main`을 맞춘 뒤 브랜치를 만든다.
+- 사용자 견본 문서, 서명 파일 등 3장의 커밋 금지 파일은 원격에도 올라가므로 특히 주의한다.
 
 ## 1. 브랜치 전략
 
@@ -104,8 +110,8 @@ git commit -F <메시지파일 경로>
 ## 5. 작업 흐름 요약 (Claude용 체크리스트)
 
 ```
-작업 시작 → git status 깨끗한지 확인 → git switch -c <type>/<주제> main
+작업 시작 → git status 깨끗한지, git fetch로 원격과 같은지 확인 → git switch -c <type>/<주제> main
 작업 중   → 논리 단위마다 빌드 확인 후 규약대로 커밋
 작업 완료 → 결과 보고 + 머지 여부를 사용자에게 확인
-머지      → --no-ff 머지 → 브랜치 삭제 → (단계 완료 시) 태그 제안
+머지      → --no-ff 머지 → 브랜치 삭제 → git push origin main → (단계 완료 시) 태그 제안 → 태그 push
 ```

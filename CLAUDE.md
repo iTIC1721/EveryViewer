@@ -10,7 +10,7 @@ PDF·텍스트·마크다운·이미지·오피스 문서를 탭으로 열어두
 
 Git 작업(브랜치, 커밋, 머지, 태그) 전에는 반드시 `git-workflow` 스킬([.claude/skills/git-workflow/SKILL.md](.claude/skills/git-workflow/SKILL.md))을 읽고 따른다. 규약은 스킬에서만 관리하고 여기에 중복해서 적지 않는다.
 
-- 로컬 전용 저장소 (원격 없음, push 금지)
+- 원격 `origin` = GitHub 비공개 저장소 `iTIC1721/EveryViewer`. 올리는 것은 `main`과 태그, 강제 푸시 금지
 - `main`에 직접 커밋하지 않음, 머지는 사용자 확인 후
 
 ## 빌드
