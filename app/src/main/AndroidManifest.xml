@@ -19,12 +19,19 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-            <!-- "Open with" from file managers, downloads, messengers (기획서 5.1) -->
+            <!-- "Open with" from file managers, downloads, messengers (기획서 5.1). Types the app can
+                 show (기획서 5.7), plus octet-stream: many apps send md and other files as that, and
+                 the format is then told by name and content. -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:scheme="content" />
                 <data android:mimeType="application/pdf" />
+                <data android:mimeType="text/*" />
+                <data android:mimeType="image/*" />
+                <data android:mimeType="application/json" />
+                <data android:mimeType="application/xml" />
+                <data android:mimeType="application/octet-stream" />
             </intent-filter>
             <!-- "Share" -->
             <intent-filter>
@@ -32,6 +39,11 @@
                 <action android:name="android.intent.action.SEND_MULTIPLE" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="application/pdf" />
+                <data android:mimeType="text/*" />
+                <data android:mimeType="image/*" />
+                <data android:mimeType="application/json" />
+                <data android:mimeType="application/xml" />
+                <data android:mimeType="application/octet-stream" />
             </intent-filter>
         </activity>
     </application>

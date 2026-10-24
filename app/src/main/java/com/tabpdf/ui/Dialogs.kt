@@ -1,5 +1,6 @@
 package com.tabpdf.ui
 
+import com.tabpdf.doc.FileFormat
 import android.net.Uri
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -143,12 +144,13 @@ fun AboutDialog(onDismiss: () -> Unit) {
     }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("TabPDF $version") },
+        title = { Text("EveryViewer $version") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("여러 PDF를 탭으로 열어 두고 넘겨 보는 뷰어")
+                Text("어떤 파일이든 탭으로 열어 두고 넘겨 보는 뷰어")
                 Text(
-                    "오픈소스: Kotlin, AndroidX (Jetpack Compose, Room 등) — Apache License 2.0",
+                    "오픈소스: Kotlin, AndroidX (Jetpack Compose, Room 등) — Apache License 2.0 · " +
+                        "commonmark-java — BSD 2-Clause · juniversalchardet — MPL 1.1",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -176,6 +178,7 @@ fun FileInfoDialog(tab: DocTab, page: Int, onDismiss: () -> Unit) {
         title = { Text(tab.name, maxLines = 2, overflow = TextOverflow.Ellipsis) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                InfoRow("형식", tab.format.label)
                 InfoRow("읽던 위치", "${page + 1}페이지")
                 InfoRow(
                     "저장 방식",
@@ -246,3 +249,13 @@ fun DuplicateDialog(prompt: DuplicatePrompt, onGoThere: () -> Unit, onOpenHere: 
         dismissButton = { TextButton(onClick = onOpenHere) { Text("여기에도 열기") } },
     )
 }
+
+/** What a format is called on screen. */
+val FileFormat.label: String
+    get() = when (this) {
+        FileFormat.Pdf -> "PDF"
+        FileFormat.Text -> "텍스트"
+        FileFormat.Markdown -> "마크다운"
+        FileFormat.Image -> "이미지"
+        FileFormat.Unsupported -> "지원하지 않는 형식"
+    }

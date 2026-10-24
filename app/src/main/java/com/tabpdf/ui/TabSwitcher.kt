@@ -125,7 +125,7 @@ fun TabSwitcher(
                     style = MaterialTheme.typography.titleMedium,
                 )
                 IconButton(onClick = { onOpenFiles(null) }) {
-                    Icon(Icons.Default.Add, contentDescription = "PDF 열기")
+                    Icon(Icons.Default.Add, contentDescription = "파일 열기")
                 }
             }
 
@@ -296,7 +296,7 @@ private fun GroupPanel(
                         overflow = TextOverflow.Ellipsis,
                     )
                     IconButton(onClick = onOpenFiles) {
-                        Icon(Icons.Default.Add, contentDescription = "이 그룹에 PDF 열기")
+                        Icon(Icons.Default.Add, contentDescription = "이 그룹에 파일 열기")
                     }
                     Box {
                         IconButton(onClick = { headerMenu = true }) {
@@ -422,7 +422,7 @@ private fun EmptyTabs(onOpen: () -> Unit) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text("열린 탭이 없습니다", color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(16.dp))
-            Button(onClick = onOpen) { Text("PDF 열기") }
+            Button(onClick = onOpen) { Text("파일 열기") }
         }
     }
 }

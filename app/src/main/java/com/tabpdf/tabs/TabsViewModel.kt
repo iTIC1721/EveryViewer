@@ -69,7 +69,7 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
             .withValidCurrent(null, 0)
         _state.value = cleaned
         if (cleaned != saved) commit(cleaned)
-        app.enqueueWrite { FileAccess.releaseUnused(app, cleaned.allTabs.map { it.uri }.toSet()) }
+        app.enqueueWrite { FileAccess.releaseUnused(app, cleaned.allTabs.map { it.uri }.toSet(), app.startedAt) }
     }
 
     private fun current(): SessionState = _state.value!!

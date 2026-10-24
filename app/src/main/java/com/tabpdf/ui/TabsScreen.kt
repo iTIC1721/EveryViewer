@@ -206,7 +206,7 @@ private fun ContextPager(
         if (tabs.isEmpty()) {
             Button(onClick = { onOpenFiles(groupId) }, modifier = Modifier.align(Alignment.Center)) {
                 Icon(Icons.Default.Add, contentDescription = null)
-                Text("PDF 열기", Modifier.padding(start = 8.dp))
+                Text("파일 열기", Modifier.padding(start = 8.dp))
             }
         } else {
             // Pages sit under the bar, so the first page starts below it either way.
@@ -313,7 +313,7 @@ private fun TopBar(
             }
             TitleStrip(tabs, pagerState, Modifier.weight(1f))
             IconButton(onClick = onOpenFiles) {
-                Icon(Icons.Default.Add, contentDescription = "PDF 열기")
+                Icon(Icons.Default.Add, contentDescription = "파일 열기")
             }
             TabCountButton(totalTabCount, onTabCountClick)
             Box {
