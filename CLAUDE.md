@@ -27,6 +27,8 @@ Git 작업(브랜치, 커밋, 머지, 태그) 전에는 반드시 `git-workflow`
 
 ```bash
 # 1. 테스트 PDF를 앱 내부 저장소로 복사 (Git Bash; 파일마다)
+#    새로 설치한 직후에는 files/ 폴더가 없으므로 먼저 만든다
+adb shell run-as com.tabpdf mkdir -p files
 adb exec-in run-as com.tabpdf sh -c "cat > files/Sample.pdf" < Sample.pdf
 # 2. files/의 PDF를 모두 탭으로 열며 실행
 adb shell am start -n com.tabpdf/.MainActivity --ez debug_open_test_files true
@@ -34,16 +36,24 @@ adb shell am start -n com.tabpdf/.MainActivity --ez debug_open_test_files true
 
 - 제스처는 `adb shell input swipe/tap`으로 확인한다. 핀치는 adb로 재현할 수 없으므로 실기기에서 확인.
 - adb로 `/sdcard`에 push한 파일은 앱이 읽을 수 없다 (소유자가 shell).
+- 세션 복원 확인: `adb shell am force-stop com.tabpdf` 후 훅 없이 `am start`로 다시 실행한다. 이전 세션은 DB에 남으므로, 처음부터 확인하려면 앱을 삭제 후 재설치.
+- Git Bash에서 adb 경로 인자(`/sdcard/...`)가 Windows 경로로 바뀌지 않게 `MSYS_NO_PATHCONV=1`을 설정한다.
 
 ## 코드 구조
 
 ```
 app/src/main/java/com/tabpdf/
-  MainActivity.kt        진입점, 파일 열기
+  TabPdfApp.kt           Application: DB 저장소, 순서 보장 DB 쓰기 큐
+  MainActivity.kt        진입점, 파일 선택기, onStop 시 저장
+  data/                  Room (그룹·탭·앱 상태), SessionRepository
   pdf/                   PdfRenderer 래퍼 (렌더링 스레드 안전 처리)
-  tabs/                  탭 목록 상태 (ViewModel)
+  tabs/                  탭 상태 ViewModel, 읽던 위치, 파일 접근 권한·복사본 관리
   ui/                    화면 (뷰어, 탭 페이저, 상단 바)
+app/schemas/             Room 스키마 (DB 버전마다 커밋)
 ```
+
+- DB 쓰기는 반드시 `TabPdfApp.enqueueWrite`로 한다 (순서 보장).
+- DB 스키마를 바꾸면 `AppDatabase` 버전을 올리고 마이그레이션을 작성한다. 사용자 탭을 지우는 파괴적 마이그레이션은 쓰지 않는다.
 
 ## 구현 원칙
 

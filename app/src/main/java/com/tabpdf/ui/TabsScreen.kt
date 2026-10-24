@@ -44,8 +44,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
@@ -61,11 +63,27 @@ import kotlin.math.roundToInt
 private val TOP_BAR_HEIGHT = 56.dp
 
 @Composable
-fun TabsScreen(viewModel: TabsViewModel, onOpenFiles: () -> Unit) {
+fun TabsScreen(viewModel: TabsViewModel, onOpenFiles: () -> Unit, onRelocate: (PdfTab) -> Unit) {
+    val session by viewModel.session.collectAsState()
+    // Loading the saved session takes a few ms; show just the background until then, so the pager
+    // can start on the saved tab instead of jumping to it.
+    val loaded = session ?: run {
+        Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant))
+        return
+    }
     val tabs by viewModel.tabs.collectAsState()
     val navigateTo by viewModel.navigateTo.collectAsState()
     var barsVisible by rememberSaveable { mutableStateOf(true) }
-    val pagerState = rememberPagerState { tabs.size }
+    val pagerState = rememberPagerState(
+        initialPage = tabs.indexOfFirst { it.id == loaded.initialTabId }.coerceAtLeast(0)
+    ) { tabs.size }
+    val currentTabs by rememberUpdatedState(tabs)
+
+    LaunchedEffect(pagerState) {
+        snapshotFlow { pagerState.settledPage }.collect { page ->
+            currentTabs.getOrNull(page)?.let { viewModel.onTabShown(it.id) }
+        }
+    }
 
     LaunchedEffect(navigateTo, tabs) {
         val id = navigateTo ?: return@LaunchedEffect
@@ -96,9 +114,12 @@ fun TabsScreen(viewModel: TabsViewModel, onOpenFiles: () -> Unit) {
                 val tab = tabs[page]
                 PdfViewer(
                     uri = tab.uri,
+                    revision = tab.revision,
                     initialState = viewModel.viewerState(tab.id),
-                    onSaveState = { viewModel.saveViewerState(tab.id, it) },
+                    onStateChange = { viewModel.updateViewerState(tab.id, it) },
                     onTap = { barsVisible = !barsVisible },
+                    onRelocate = { onRelocate(tab) },
+                    onClose = { viewModel.close(tab.id) },
                     contentPadding = contentPadding,
                 )
             }
@@ -114,7 +135,7 @@ fun TabsScreen(viewModel: TabsViewModel, onOpenFiles: () -> Unit) {
                 tabs = tabs,
                 pagerState = pagerState,
                 onOpenFiles = onOpenFiles,
-                onSelectTab = { index -> viewModel.open(listOf(tabs[index].uri to tabs[index].name)) },
+                onSelectTab = { index -> viewModel.select(tabs[index].id) },
                 onCloseTab = { viewModel.close(it.id) },
             )
         }

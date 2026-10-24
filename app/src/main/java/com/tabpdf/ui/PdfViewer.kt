@@ -17,6 +17,9 @@ import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -27,11 +30,12 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -41,6 +45,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
@@ -57,6 +62,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import com.tabpdf.pdf.PdfDocument
+import com.tabpdf.tabs.ViewerState
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
@@ -64,19 +70,13 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.FileNotFoundException
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
-
-/** Where the reader was in a document, kept per tab so it survives the page leaving composition. */
-data class ViewerState(
-    val firstItem: Int = 0,
-    val firstItemOffset: Int = 0,
-    val zoom: Float = 1f,
-    val panX: Float = 0f,
-)
 
 private const val MAX_ZOOM = 5f
 private const val DOUBLE_TAP_ZOOM = 2.5f
@@ -96,24 +96,29 @@ private const val MAX_RENDER_PIXELS = 8_000_000f
 @Composable
 fun PdfViewer(
     uri: Uri,
+    /** Changing this reopens the file even if [uri] is the same (after "다시 찾기"). */
+    revision: Int,
     initialState: ViewerState,
-    onSaveState: (ViewerState) -> Unit,
+    onStateChange: (ViewerState) -> Unit,
     onTap: () -> Unit,
+    onRelocate: () -> Unit,
+    onClose: () -> Unit,
     contentPadding: PaddingValues,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
     var document by remember { mutableStateOf<PdfDocument?>(null) }
-    var error by remember { mutableStateOf<String?>(null) }
+    var error by remember { mutableStateOf<Exception?>(null) }
 
-    LaunchedEffect(uri) {
+    LaunchedEffect(uri, revision) {
+        error = null
         val doc = try {
             // Not cancellable, so a document opened just as the page leaves is still closed below.
             withContext(NonCancellable) { PdfDocument.open(context, uri) }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            error = e.message ?: e.javaClass.simpleName
+            error = e
             return@LaunchedEffect
         }
         document = doc
@@ -133,18 +138,15 @@ fun PdfViewer(
             .background(MaterialTheme.colorScheme.surfaceVariant)
     ) {
         val doc = document
+        val failure = error
         when {
-            error != null -> Text(
-                "PDF를 열 수 없습니다\n$error",
-                Modifier.align(Alignment.Center).padding(24.dp),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            failure != null -> OpenFailure(failure, onRelocate, onClose, Modifier.align(Alignment.Center))
             doc == null -> CircularProgressIndicator(Modifier.align(Alignment.Center))
             else -> PdfPages(
                 document = doc,
                 viewportWidth = constraints.maxWidth.toFloat(),
                 initialState = initialState,
-                onSaveState = onSaveState,
+                onStateChange = onStateChange,
                 onTap = onTap,
                 contentPadding = contentPadding,
             )
@@ -157,24 +159,42 @@ private fun PdfPages(
     document: PdfDocument,
     viewportWidth: Float,
     initialState: ViewerState,
-    onSaveState: (ViewerState) -> Unit,
+    onStateChange: (ViewerState) -> Unit,
     onTap: () -> Unit,
     contentPadding: PaddingValues,
 ) {
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
-    val listState = rememberLazyListState(initialState.firstItem, initialState.firstItemOffset)
-    var zoom by remember { mutableFloatStateOf(initialState.zoom) }
-    var panX by remember { mutableFloatStateOf(initialState.panX) }
-    val currentOnTap by rememberUpdatedState(onTap)
-    val currentOnSaveState by rememberUpdatedState(onSaveState)
 
-    DisposableEffect(Unit) {
-        onDispose {
-            currentOnSaveState(
-                ViewerState(listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset, zoom, panX)
-            )
-        }
+    /** Height of page [index] at [zoom], in px — the unit the saved fractional offset is relative to. */
+    fun pageHeight(index: Int, zoom: Float) = viewportWidth * zoom * document.pageSizes[index].aspect
+
+    // The file may have fewer pages than when the position was saved.
+    val initialPage = initialState.page.coerceIn(0, document.pageCount - 1)
+    val initialZoom = initialState.zoom.coerceIn(1f, MAX_ZOOM)
+    val listState = rememberLazyListState(
+        initialPage,
+        (initialState.pageOffset * pageHeight(initialPage, initialZoom)).roundToInt(),
+    )
+    var zoom by remember { mutableFloatStateOf(initialZoom) }
+    var panX by remember {
+        mutableFloatStateOf((initialState.panX * viewportWidth).coerceIn(0f, viewportWidth * (initialZoom - 1f)))
+    }
+    val currentOnTap by rememberUpdatedState(onTap)
+    val currentOnStateChange by rememberUpdatedState(onStateChange)
+
+    fun currentState(): ViewerState {
+        val page = listState.firstVisibleItemIndex
+        return ViewerState(
+            page = page,
+            pageOffset = listState.firstVisibleItemScrollOffset / pageHeight(page, zoom),
+            zoom = zoom,
+            panX = panX / viewportWidth,
+        )
+    }
+
+    LaunchedEffect(Unit) {
+        snapshotFlow { currentState() }.distinctUntilChanged().collect { currentOnStateChange(it) }
     }
 
     fun maxPan() = viewportWidth * (zoom - 1f)
@@ -357,6 +377,30 @@ private fun PdfPage(
 }
 
 private fun IntSize.toSize() = androidx.compose.ui.geometry.Size(width.toFloat(), height.toFloat())
+
+/** Missing or unreadable file: say so and offer to find it again or close the tab (기획서 5.3). */
+@Composable
+private fun OpenFailure(error: Exception, onRelocate: () -> Unit, onClose: () -> Unit, modifier: Modifier) {
+    val missing = error is FileNotFoundException || error is SecurityException
+    Column(modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(
+            if (missing) "파일을 찾을 수 없습니다" else "PDF를 열 수 없습니다",
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            if (missing) "이동되었거나 삭제되었을 수 있습니다." else "손상되었거나 지원하지 않는 파일입니다.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(16.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = onClose) { Text("탭 닫기") }
+            Button(onClick = onRelocate) { Text("다시 찾기") }
+        }
+    }
+}
 
 /** "12 / 240", shown while scrolling and briefly after. */
 @Composable
