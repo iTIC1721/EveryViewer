@@ -10,6 +10,7 @@ import com.tabpdf.doc.TocEntry
 object PdfOutline {
     private const val MAX_ITEMS = 20_000
     private const val MAX_DEPTH = 32
+    private const val MAX_TITLE = 500
 
     fun read(pdf: PdfFile, pages: List<PdfFile.Page>): List<TocEntry.Flat> {
         val catalog = pdf.resolve(pdf.trailer["Root"]) as? Map<*, *> ?: return emptyList()
@@ -80,7 +81,7 @@ object PdfOutline {
             else -> String(bytes, Charsets.ISO_8859_1)
         }
         // Language and other escape sequences in UTF-16 text (ESC … ESC), and control characters.
-        return s.replace(Regex("\u001B[^\u001B]*\u001B"), "").replace(Regex("[\\p{Cntrl}\\s]+"), " ").trim()
+        return s.replace(Regex("\u001B[^\u001B]*\u001B"), "").replace(Regex("[\\p{Cntrl}\\s]+"), " ").trim().take(MAX_TITLE)
     }
 
     /** Named destinations: the catalog's /Dests dictionary (PDF 1.1) and the /Names tree. */

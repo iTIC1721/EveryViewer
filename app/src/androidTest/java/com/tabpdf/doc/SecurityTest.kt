@@ -7,6 +7,9 @@ import androidx.test.platform.app.InstrumentationRegistry
 import com.tabpdf.doc.office.DocxReader
 import com.tabpdf.doc.office.OfficeLayout
 import com.tabpdf.doc.office.ZipParts
+import com.tabpdf.export.PdfFile
+import com.tabpdf.export.PdfSyntaxException
+import com.tabpdf.tabs.TabsViewModel
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -123,5 +126,70 @@ class SecurityTest {
         doc.close()
         assertTrue(isWebLink("HTTPS://a.b") && isWebLink("mailto:a@b"))
         assertFalse(isWebLink("file:///x") || isWebLink("content://x/y") || isWebLink("intent://x") || isWebLink("javascript:x"))
+    }
+
+    @Test
+    fun exportNamesStayInTheExportFolder() {
+        // The name comes from the app that gave the file.
+        val export = File(dir, "export")
+        for (name in listOf("../../files/tab-copies/x.pdf", "..", "", "a/b\\c.docx", ".hidden", "\u0000\n.pdf", "가".repeat(300) + ".txt")) {
+            val file = TabsViewModel.exportFileName(name)
+            assertTrue(file, file.endsWith(".pdf") && !file.contains('/') && !file.contains('\\') && !file.startsWith("."))
+            assertTrue(file, file.length <= 104)
+            assertEquals(file, export.canonicalPath, File(export, file).parentFile!!.canonicalPath)
+        }
+        assertEquals("보고서.pdf", TabsViewModel.exportFileName("보고서.docx"))
+    }
+
+    /**
+     * A PDF of [objects] (number to body) with a cross-reference stream listing the [inStream]
+     * objects (number to index) as inside object stream 4, the rest where they are written.
+     */
+    private fun pdfWithXrefStream(objects: Map<Int, String>, inStream: Map<Int, Int>): File {
+        val out = ByteArrayOutputStream()
+        fun write(s: String) = out.write(s.toByteArray(Charsets.ISO_8859_1))
+        write("%PDF-1.5\n")
+        val offsets = HashMap<Int, Int>()
+        for ((num, body) in objects) {
+            offsets[num] = out.size()
+            write("$num 0 obj\n$body\nendobj\n")
+        }
+        val size = (objects.keys + inStream.keys).max() + 2
+        val xref = size - 1
+        offsets[xref] = out.size()
+        val rows = ByteArrayOutputStream()
+        for (n in 0 until size) {
+            val inside = inStream[n]
+            val offset = offsets[n]
+            when {
+                inside != null -> { rows.write(2); rows.write(byteArrayOf(0, 0, 0, 4)); rows.write(byteArrayOf(0, inside.toByte())) }
+                offset != null -> { rows.write(1); for (sh in intArrayOf(24, 16, 8, 0)) rows.write(offset shr sh and 0xFF); rows.write(byteArrayOf(0, 0)) }
+                else -> { rows.write(0); rows.write(ByteArray(6)) }
+            }
+        }
+        val data = rows.toByteArray()
+        write("$xref 0 obj\n<</Type/XRef/Size $size/W[1 4 2]/Root 1 0 R/Length ${data.size}>>\nstream\n")
+        out.write(data)
+        write("\nendstream\nendobj\nstartxref\n${offsets[xref]}\n%%EOF\n")
+        return File(dir, "crafted.pdf").apply { writeBytes(out.toByteArray()) }
+    }
+
+    @Test
+    fun pdfStructuresThatPointAtThemselvesAreRefused() {
+        // The catalog in object stream 4, which itself claims to be in object stream 4.
+        val selfContained = pdfWithXrefStream(mapOf(2 to "<</Type/Pages/Kids[]/Count 0>>"), mapOf(1 to 0, 4 to 0))
+        // Object stream 4's length is an object inside object stream 4.
+        val stream = "<</Type/ObjStm/N 1/First 4/Length 5 0 R>>\nstream\n1 0 <</Type/Catalog>>\nendstream"
+        val ownLength = pdfWithXrefStream(mapOf(4 to stream), mapOf(1 to 0, 5 to 1))
+        for (file in listOf(selfContained, ownLength)) {
+            java.io.RandomAccessFile(file, "r").use { raf ->
+                try {
+                    PdfFile(raf).pages()
+                    fail("a crafted structure is refused")
+                } catch (_: PdfSyntaxException) {
+                    // Refused, not a crash (a StackOverflowError would end the test run).
+                }
+            }
+        }
     }
 }
