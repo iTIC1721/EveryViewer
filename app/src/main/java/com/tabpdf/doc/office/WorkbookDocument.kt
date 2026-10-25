@@ -138,11 +138,29 @@ class WorkbookDocument private constructor(private val book: Workbook) : Documen
             bitmap.eraseColor(Color.WHITE)
             val canvas = Canvas(bitmap)
             canvas.scale(scale, scale)
-            canvas.translate(0f, -page.top)
-            canvas.clipRect(0f, page.top, page.sheet.width, page.bottom)
-            draw(canvas, page, scale)
+            drawSlice(canvas, page, scale)
             bitmap
         }
+    }
+
+    override suspend fun drawPage(index: Int, canvas: Canvas): Boolean = withContext(Dispatchers.Default) {
+        mutex.withLock {
+            if (closed) return@withLock false
+            // Hairlines as thin as at 200 dpi.
+            drawSlice(canvas, pages[index], 200f / 72f)
+            true
+        }
+    }
+
+    /** Pages are in points already. */
+    override fun paperWidth(index: Int): Float = pageSizes[index].width
+
+    private fun drawSlice(canvas: Canvas, page: Page, scale: Float) {
+        canvas.save()
+        canvas.translate(0f, -page.top)
+        canvas.clipRect(0f, page.top, page.sheet.width, page.bottom)
+        draw(canvas, page, scale)
+        canvas.restore()
     }
 
     // ---- Drawing ----

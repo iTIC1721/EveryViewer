@@ -77,6 +77,12 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
+import android.content.Intent
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.FileProvider
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -231,6 +237,15 @@ private fun ContextPager(
     val group = groupId?.let { session.group(it) }
     val pageJump by viewModel.pageJump.collectAsState()
     var dialog by remember { mutableStateOf<ViewerDialog?>(null) }
+    val context = LocalContext.current
+    val exportState by viewModel.export.collectAsState()
+    // The tab being saved while the system's "save as" screen is up.
+    var exportTabId by rememberSaveable { mutableStateOf<String?>(null) }
+    val saveExport = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/pdf")) { uri ->
+        val tabId = exportTabId
+        exportTabId = null
+        if (uri != null && tabId != null) viewModel.startExport(tabId, uri)
+    }
     val pagerState = rememberPagerState(
         initialPage = tabs.indexOfFirst { it.id == session.currentTabId }.coerceAtLeast(0)
     ) { tabs.size }
@@ -362,7 +377,9 @@ private fun ContextPager(
                     val bundle = session.currentTab?.takeIf { it.format == FileFormat.Bundle }
                     ViewerMenu(
                         canJump, open = { dialog = it }, onSearch = { searchOpen = true }, onSettings = onShowSettings,
-                        onEditBundle = bundle?.let { { viewModel.startBundleEdit(it.id) } }, dismiss = dismiss,
+                        onEditBundle = bundle?.let { { viewModel.startBundleEdit(it.id) } },
+                        canExport = session.currentTabId?.let(viewModel::canExport) == true,
+                        dismiss = dismiss,
                     )
                 },
             )
@@ -404,6 +421,45 @@ private fun ContextPager(
                     onDismiss = { dialog = null },
                 )
             }
+        }
+        ViewerDialog.Export -> if (current != null) {
+            ExportDialog(
+                locked = viewModel.isLocked(current.id),
+                onShare = {
+                    dialog = null
+                    viewModel.startExport(current.id, null)
+                },
+                onSave = {
+                    dialog = null
+                    exportTabId = current.id
+                    saveExport.launch(viewModel.exportName(current))
+                },
+                onDismiss = { dialog = null },
+            )
+        }
+        null -> Unit
+    }
+
+    // PDF export (기획서 5.9): progress while it runs, then the share sheet or a note.
+    when (val state = exportState) {
+        is TabsViewModel.ExportState.Running -> ExportProgress(state.done, state.total, onCancel = viewModel::cancelExport)
+        is TabsViewModel.ExportState.Done -> LaunchedEffect(state) {
+            val file = state.file
+            if (state.saved || file == null) {
+                Toast.makeText(context, "PDF로 저장했습니다", Toast.LENGTH_SHORT).show()
+            } else {
+                val uri = FileProvider.getUriForFile(context, "${context.packageName}.export", file)
+                val send = Intent(Intent.ACTION_SEND)
+                    .setType("application/pdf")
+                    .putExtra(Intent.EXTRA_STREAM, uri)
+                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                context.startActivity(Intent.createChooser(send, null))
+            }
+            viewModel.exportHandled()
+        }
+        TabsViewModel.ExportState.Failed -> LaunchedEffect(state) {
+            Toast.makeText(context, "PDF로 내보내지 못했습니다", Toast.LENGTH_SHORT).show()
+            viewModel.exportHandled()
         }
         null -> Unit
     }
@@ -463,7 +519,7 @@ private fun TopBar(
     }
 }
 
-private enum class ViewerDialog { PageJump }
+private enum class ViewerDialog { PageJump, Export }
 
 /**
  * Find in the document, in place of the top bar (기획서 5.5), laid out like a browser's find bar:
@@ -542,6 +598,7 @@ private fun ViewerMenu(
     onSearch: () -> Unit,
     onSettings: () -> Unit,
     onEditBundle: (() -> Unit)?,
+    canExport: Boolean,
     dismiss: () -> Unit,
 ) {
     DropdownMenuItem(
@@ -555,6 +612,11 @@ private fun ViewerMenu(
         onClick = { dismiss(); open(ViewerDialog.PageJump) },
     )
     if (onEditBundle != null) DropdownMenuItem(text = { Text("묶음 편집") }, onClick = { dismiss(); onEditBundle() })
+    DropdownMenuItem(
+        text = { Text("PDF로 내보내기") },
+        enabled = canExport,
+        onClick = { dismiss(); open(ViewerDialog.Export) },
+    )
     DropdownMenuItem(text = { Text("설정") }, onClick = { dismiss(); onSettings() })
 }
 

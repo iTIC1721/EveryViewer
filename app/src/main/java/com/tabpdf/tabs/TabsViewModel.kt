@@ -25,6 +25,13 @@ import com.tabpdf.doc.FileFormat
 import com.tabpdf.doc.awaitComplete
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import android.net.Uri
+import android.provider.DocumentsContract
+import com.tabpdf.export.PdfExport
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import java.io.File
+import java.io.FileNotFoundException
 
 /** Several files picked at once, waiting for the choice: a tab each, or one bundle (기획서 5.1). */
 data class OpenChoice(val files: List<OpenedFile>, val groupId: String?)
@@ -514,6 +521,80 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
         app.enqueueWrite { repository.saveViewerStates(batch) }
     }
 
+    // ---- PDF export (기획서 5.9) ----
+
+    sealed interface ExportState {
+        data class Running(val done: Int, val total: Int) : ExportState
+        /** Made and, for [saved], written to the chosen place; else ready to share as [file]. */
+        data class Done(val file: File?, val saved: Boolean) : ExportState
+        data object Failed : ExportState
+    }
+
+    private val _export = MutableStateFlow<ExportState?>(null)
+    val export: StateFlow<ExportState?> = _export.asStateFlow()
+    private var exportJob: Job? = null
+
+    /** Whether tab [tabId]'s file is open, so it can be exported. */
+    fun canExport(tabId: String) = openDocuments.containsKey(tabId)
+
+    /** Whether tab [tabId] was opened with a password (its export won't have one). */
+    fun isLocked(tabId: String) = openDocuments[tabId]?.locked == true
+
+    /** The name an export of [tab] is offered under: the file's name as a PDF. */
+    fun exportName(tab: DocTab) = tab.name.substringBeforeLast('.', tab.name).ifBlank { "document" } + ".pdf"
+
+    /** Exports tab [tabId] to [destination] (a file the user picked), or for sharing if null. */
+    fun startExport(tabId: String, destination: Uri?) {
+        val tab = current().tab(tabId) ?: return
+        exportJob?.cancel()
+        _export.value = ExportState.Running(0, 0)
+        exportJob = viewModelScope.launch {
+            val dir = File(app.cacheDir, EXPORT_DIR)
+            val target = File(dir, exportName(tab))
+            var document: Document? = null
+            try {
+                withContext(Dispatchers.IO) {
+                    // Only the latest export is kept (for the app it is shared with to read).
+                    dir.deleteRecursively()
+                    dir.mkdirs()
+                }
+                // A copy of its own, so the viewer keeps drawing meanwhile.
+                document = Documents.open(app, tab.uri, tab.name, tab.format)
+                PdfExport.export(app, tab.uri, document, ink.strokes(tabId).value, target) { done, total ->
+                    _export.value = ExportState.Running(done, total)
+                }
+                if (destination != null) {
+                    withContext(Dispatchers.IO) {
+                        app.contentResolver.openOutputStream(destination, "wt")?.use { out -> target.inputStream().use { it.copyTo(out) } }
+                            ?: throw FileNotFoundException(destination.toString())
+                        target.delete()
+                    }
+                    _export.value = ExportState.Done(null, saved = true)
+                } else {
+                    _export.value = ExportState.Done(target, saved = false)
+                }
+            } catch (e: Exception) {
+                if (e !is CancellationException) android.util.Log.w("EveryViewer", "Export failed", e)
+                // The empty file made for it is no use.
+                destination?.let { uri -> withContext(NonCancellable + Dispatchers.IO) { runCatching { DocumentsContract.deleteDocument(app.contentResolver, uri) } } }
+                target.delete()
+                _export.value = if (e is CancellationException) null else ExportState.Failed
+                if (e is CancellationException) throw e
+            } finally {
+                document?.let { withContext(NonCancellable) { it.close() } }
+            }
+        }
+    }
+
+    fun cancelExport() {
+        exportJob?.cancel()
+        _export.value = null
+    }
+
+    fun exportHandled() {
+        if (_export.value !is ExportState.Running) _export.value = null
+    }
+
     override fun onCleared() {
         flush()
     }
@@ -521,6 +602,9 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
     companion object {
         private const val SAVE_DEBOUNCE_MS = 500L
         const val GROUP_COLOR_COUNT = 8
+
+        /** Under the cache folder; the FileProvider shares it (res/xml/export_paths.xml). */
+        const val EXPORT_DIR = "export"
     }
 }
 

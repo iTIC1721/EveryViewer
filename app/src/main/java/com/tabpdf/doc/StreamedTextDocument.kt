@@ -214,16 +214,34 @@ class StreamedTextDocument private constructor(
             bitmap.eraseColor(Color.WHITE)
             val canvas = Canvas(bitmap)
             canvas.scale(scale, scale)
-            canvas.clipRect(0f, 0f, FLOW_WIDTH, height.toFloat())
-            for ((i, c) in chunksBetween(top, top + height)) {
-                canvas.save()
-                // Relative to the page, so far down a long file nothing is lost to float precision.
-                canvas.translate(TextDocument.MARGIN, (c.top - top).toFloat())
-                layout(i).draw(canvas)
-                canvas.restore()
-            }
+            draw(index, canvas)
             bitmap
         }
+    }
+
+    override suspend fun drawPage(index: Int, canvas: Canvas): Boolean = withContext(Dispatchers.Default) {
+        mutex.withLock {
+            if (closed || index >= pageCount) return@withLock false
+            draw(index, canvas)
+            true
+        }
+    }
+
+    override fun paperWidth(index: Int): Float = PHONE_PAPER_WIDTH
+
+    private fun draw(index: Int, canvas: Canvas) {
+        val top = pages[index]
+        val height = pages[index + 1] - top
+        canvas.save()
+        canvas.clipRect(0f, 0f, FLOW_WIDTH, height.toFloat())
+        for ((i, c) in chunksBetween(top, top + height)) {
+            canvas.save()
+            // Relative to the page, so far down a long file nothing is lost to float precision.
+            canvas.translate(TextDocument.MARGIN, (c.top - top).toFloat())
+            layout(i).draw(canvas)
+            canvas.restore()
+        }
+        canvas.restore()
     }
 
     override suspend fun search(query: String): List<SearchMatch> = withContext(Dispatchers.Default) {

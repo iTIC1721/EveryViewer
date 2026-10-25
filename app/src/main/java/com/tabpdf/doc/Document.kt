@@ -1,6 +1,7 @@
 package com.tabpdf.doc
 
 import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.PointF
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
@@ -16,6 +17,12 @@ class DocumentOpenException(val reason: Reason) : IOException(reason.name) {
         Protected,
     }
 }
+
+/** A4's width in points: the paper width of pages that have none of their own. */
+const val A4_WIDTH = 595f
+
+/** Phone-wide pages (text, HTML, e-books) on paper: as wide as the 480 CSS pixels they are laid out at. */
+const val PHONE_PAPER_WIDTH = 360f
 
 /** Page size in the document's own units (PDF points for PDFs); the viewer only uses the ratio. */
 data class PageSize(val width: Float, val height: Float) {
@@ -68,6 +75,18 @@ interface Document {
      * if the document was closed meanwhile or there wasn't memory for the bitmap.
      */
     suspend fun renderPage(index: Int, widthPx: Int): Bitmap?
+
+    /**
+     * Draws page [index] onto [canvas] as text and shapes rather than a picture, in the page's own
+     * units ([pageSizes]), for PDF export (기획서 5.9). False for pages that only come as pictures.
+     */
+    suspend fun drawPage(index: Int, canvas: Canvas): Boolean = false
+
+    /**
+     * Page [index]'s width on paper, in points (1/72 inch), for PDF export: the page's own size
+     * where it has one (PDF, Word, slides), else A4's width.
+     */
+    fun paperWidth(index: Int): Float = A4_WIDTH
 
     /**
      * Web link at ([x], [y]) on page [index], both as fractions of the page's width and height,

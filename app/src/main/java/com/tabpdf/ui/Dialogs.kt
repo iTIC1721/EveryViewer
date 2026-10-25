@@ -21,6 +21,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -132,6 +134,53 @@ fun PageJumpDialog(current: Int, pageCount: Int, onJump: (page: Int) -> Unit, on
         },
         confirmButton = { TextButton(onClick = { onJump(number!! - 1) }, enabled = valid) { Text("이동") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } },
+    )
+}
+
+/** PDF export (기획서 5.9): save it somewhere, or share it with another app. */
+@Composable
+fun ExportDialog(locked: Boolean, onShare: () -> Unit, onSave: () -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("PDF로 내보내기") },
+        text = {
+            Column {
+                Text("이 탭의 문서를 필기와 함께 PDF 파일 하나로 만듭니다.")
+                if (locked) {
+                    Spacer(Modifier.height(8.dp))
+                    Text("내보낸 PDF에는 암호가 걸리지 않습니다.", color = MaterialTheme.colorScheme.error)
+                }
+            }
+        },
+        confirmButton = {
+            Row {
+                TextButton(onClick = onShare) { Text("공유") }
+                TextButton(onClick = onSave) { Text("저장") }
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } },
+    )
+}
+
+/** While an export runs: pages done of [total] (0 until it is known). */
+@Composable
+fun ExportProgress(done: Int, total: Int, onCancel: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = {},
+        title = { Text("PDF로 내보내는 중") },
+        text = {
+            Column {
+                if (total > 0) {
+                    LinearProgressIndicator(progress = { done.toFloat() / total }, modifier = Modifier.fillMaxWidth())
+                    Spacer(Modifier.height(8.dp))
+                    Text("$done / $total", style = MaterialTheme.typography.bodySmall)
+                } else {
+                    LinearProgressIndicator(Modifier.fillMaxWidth())
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onCancel) { Text("취소") } },
+        properties = DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false),
     )
 }
 

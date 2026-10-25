@@ -2,6 +2,7 @@ package com.tabpdf.doc.html
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.PointF
 import android.net.Uri
 import com.tabpdf.doc.Document
@@ -105,6 +106,13 @@ class EpubDocument private constructor(
         val (c, p) = locate(index)
         return c.renderPage(p, widthPx)
     }
+
+    override suspend fun drawPage(index: Int, canvas: Canvas): Boolean {
+        val (c, p) = locate(index)
+        return c.drawPage(p, canvas)
+    }
+
+    override fun paperWidth(index: Int): Float = locate(index).let { (c, p) -> c.paperWidth(p) }
 
     override fun linkAt(index: Int, x: Float, y: Float): String? {
         val (c, p) = locate(index)
