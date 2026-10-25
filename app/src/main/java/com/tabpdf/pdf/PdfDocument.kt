@@ -56,6 +56,9 @@ class PdfDocument private constructor(
 ) : Document {
     override val locked: Boolean get() = password != null
 
+    /** Pages are in points already. */
+    override fun paperWidth(index: Int): Float = pageSizes[index].width
+
     private val mutex = Mutex()
     private var closed = false
 
@@ -209,6 +212,32 @@ class PdfDocument private constructor(
             result += fractions(link.bounds) to Link.Page(page, y)
         }
         return result
+    }
+
+    /**
+     * Writes the file to [target] without its encryption, with Android's PDF support where it can
+     * (Android 15, and 12–14 with the system update), for export. False where it can't.
+     */
+    suspend fun writeUnlocked(target: ParcelFileDescriptor): Boolean = withContext(Dispatchers.IO) {
+        if (!preVSearch) return@withContext false
+        mutex.withLock {
+            if (closed) return@withLock false
+            writePreV(target)
+            true
+        }
+    }
+
+    @RequiresExtension(extension = Build.VERSION_CODES.S, version = 13)
+    private fun writePreV(target: ParcelFileDescriptor) {
+        val own = renderer as? PdfRendererPreV
+        if (own != null) {
+            own.write(target, true)
+            return
+        }
+        // Encryption is only taken off a file opened with a password; one locked only against
+        // printing or copying opens with the empty one.
+        val file = reopen() ?: throw FileNotFoundException()
+        PdfRendererPreV(file, loadParams(password ?: "")).use { it.write(target, true) }
     }
 
     /** Android 12–14's renderer that can search: the one in use if the file needed a password, else opened once. */

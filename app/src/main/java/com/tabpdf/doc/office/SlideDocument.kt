@@ -49,6 +49,8 @@ import kotlin.math.sin
 class SlideDocument private constructor(
     private val height: Float,
     private val pages: List<SlidePage>,
+    /** The slide's width on paper, in points. */
+    private val paperWidth: Float,
 ) : Document {
     private val mutex = Mutex()
     private var closed = false
@@ -74,12 +76,28 @@ class SlideDocument private constructor(
             bitmap.eraseColor(Color.WHITE)
             val canvas = Canvas(bitmap)
             canvas.scale(scale, scale)
-            val page = pages[index]
-            val context = DrawContext(scale, ::picture)
-            page.background?.let { drawFill(canvas, it, RectF(0f, 0f, FLOW_WIDTH, height), null, context) }
-            for (item in page.items) item.draw(canvas, context)
+            draw(index, canvas, scale)
             bitmap
         }
+    }
+
+    override suspend fun drawPage(index: Int, canvas: Canvas): Boolean = withContext(Dispatchers.Default) {
+        mutex.withLock {
+            if (closed) return@withLock false
+            // Pictures at print resolution (200 dpi).
+            draw(index, canvas, paperWidth / FLOW_WIDTH * 200f / 72f)
+            true
+        }
+    }
+
+    override fun paperWidth(index: Int): Float = paperWidth
+
+    /** [scale] is pixels per unit, for decoding pictures at the size they show. */
+    private fun draw(index: Int, canvas: Canvas, scale: Float) {
+        val page = pages[index]
+        val context = DrawContext(scale, ::picture)
+        page.background?.let { drawFill(canvas, it, RectF(0f, 0f, FLOW_WIDTH, height), null, context) }
+        for (item in page.items) item.draw(canvas, context)
     }
 
     /** [bytes] decoded at least [widthPx] wide (or as large as it is), or null if it can't be. */
@@ -153,7 +171,7 @@ class SlideDocument private constructor(
             val pages = presentation.slides.map { slide ->
                 SlidePage(slide.background, slide.shapes.mapNotNull { item(it, unit) })
             }
-            return SlideDocument(presentation.height * unit, pages)
+            return SlideDocument(presentation.height * unit, pages, presentation.width)
         }
 
         private fun item(shape: SlideShape, unit: Float): SlideItem? {

@@ -195,6 +195,12 @@ class BundleDocument private constructor(
         return part.document?.renderPage(page, widthPx) ?: missingPage(part.item, widthPx)
     }
 
+    // A bundle is exported as pictures (mostly photos of pages), so no drawPage; each page keeps its paper.
+    override fun paperWidth(index: Int): Float {
+        val (part, page) = locate(index)
+        return part.document?.paperWidth(page) ?: A4_WIDTH
+    }
+
     override fun linkAt(index: Int, x: Float, y: Float): String? {
         val (part, page) = locate(index)
         return part.document?.linkAt(page, x, y)

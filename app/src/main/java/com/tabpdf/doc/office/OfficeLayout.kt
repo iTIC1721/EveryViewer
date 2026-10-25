@@ -65,7 +65,7 @@ class OfficeLayout private constructor(private val unit: Float) {
                 footer = if (doc.footer.isEmpty()) emptyList() else listOf(Placed(footer, left, page.footerBottom * u - footer.height)),
             )
             val boundaries = paginate(body.y, body.breaks(), frame.bodyHeight, body.pageBreaks())
-            return SheetDocument(body.blocks.toList(), boundaries, frame)
+            return SheetDocument(body.blocks.toList(), boundaries, frame, page.width)
         }
 
         /**

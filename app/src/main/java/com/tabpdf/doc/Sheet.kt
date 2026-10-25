@@ -67,6 +67,8 @@ class SheetDocument(
     private val placed: List<Placed>,
     private val boundaries: FloatArray,
     private val frame: SheetFrame,
+    /** The sheet's width on paper, in points. */
+    private val paperWidth: Float,
 ) : Document {
     private val mutex = Mutex()
     private var closed = false
@@ -87,17 +89,31 @@ class SheetDocument(
             bitmap.eraseColor(Color.WHITE)
             val canvas = Canvas(bitmap)
             canvas.scale(scale, scale)
-            drawAll(canvas, frame.header)
-            drawAll(canvas, frame.footer)
-            val top = boundaries[index]
-            val bottom = boundaries[index + 1]
-            canvas.save()
-            canvas.clipRect(0f, frame.bodyTop, FLOW_WIDTH, frame.bodyTop + (bottom - top))
-            canvas.translate(0f, frame.bodyTop - top)
-            drawAll(canvas, placed.filter { it.bottom > top && it.y < bottom })
-            canvas.restore()
+            draw(index, canvas)
             bitmap
         }
+    }
+
+    override suspend fun drawPage(index: Int, canvas: Canvas): Boolean = withContext(Dispatchers.Default) {
+        mutex.withLock {
+            if (closed) return@withLock false
+            draw(index, canvas)
+            true
+        }
+    }
+
+    override fun paperWidth(index: Int): Float = paperWidth
+
+    private fun draw(index: Int, canvas: Canvas) {
+        drawAll(canvas, frame.header)
+        drawAll(canvas, frame.footer)
+        val top = boundaries[index]
+        val bottom = boundaries[index + 1]
+        canvas.save()
+        canvas.clipRect(0f, frame.bodyTop, FLOW_WIDTH, frame.bodyTop + (bottom - top))
+        canvas.translate(0f, frame.bodyTop - top)
+        drawAll(canvas, placed.filter { it.bottom > top && it.y < bottom })
+        canvas.restore()
     }
 
     private fun drawAll(canvas: Canvas, blocks: List<Placed>) {
