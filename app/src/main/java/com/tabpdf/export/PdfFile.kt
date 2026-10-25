@@ -29,11 +29,11 @@ class PdfFile(file: RandomAccessFile) {
     /** One more than the highest object number in use. */
     val size: Int
 
-    /** Set for an encrypted file, before reading anything but the trailer: object streams are encrypted. */
+    /**
+     * Set for an encrypted file, before reading anything but the trailer: objects' strings and
+     * streams are then decrypted as they are read.
+     */
     var crypt: PdfCrypt? = null
-
-    /** Whether object [num] sits in an object stream (its strings are then not encrypted on their own). */
-    fun inObjectStream(num: Int) = entries[num] is InStream
 
     private val cache = HashMap<Int, Any>()
     private val objectStreams = HashMap<Int, Pair<ByteArray, IntArray>>()
@@ -156,7 +156,8 @@ class PdfFile(file: RandomAccessFile) {
             is InFile -> {
                 val (found, value) = readIndirect(entry.offset)
                 if (found.num != ref.num) throw PdfSyntaxException("Object ${ref.num} is not where the table says")
-                value
+                // Strings in an object stream were decrypted with the stream.
+                crypt?.let { decryptStrings(value, it, found) } ?: value
             }
             is InStream -> fromObjectStream(entry.stream, entry.index)
             else -> PdfNull
@@ -164,6 +165,24 @@ class PdfFile(file: RandomAccessFile) {
         if (cache.size > MAX_CACHE) cache.clear()
         cache[ref.num] = value
         return value
+    }
+
+    private fun decryptStrings(value: Any, crypt: PdfCrypt, ref: PdfRef): Any = when (value) {
+        is PdfString -> PdfString(crypt.decryptString(ref.num, ref.gen, value.bytes))
+        is PdfStream -> value.also { s -> for ((k, v) in s.dict) s.dict[k] = decryptStrings(v, crypt, ref) }
+        is MutableMap<*, *> -> {
+            @Suppress("UNCHECKED_CAST")
+            val map = value as MutableMap<String, Any>
+            for ((k, v) in map) map[k] = decryptStrings(v, crypt, ref)
+            map
+        }
+        is MutableList<*> -> {
+            @Suppress("UNCHECKED_CAST")
+            val list = value as MutableList<Any>
+            for (i in list.indices) list[i] = decryptStrings(list[i], crypt, ref)
+            list
+        }
+        else -> value
     }
 
     /** [value], or what it points to. */

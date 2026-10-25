@@ -23,6 +23,8 @@ private class ParaShape(
     val lineSpacing: LineSpacing,
     val keepWords: Boolean,
     val pageBreakBefore: Boolean,
+    /** 개요 level (0 = 개요 1), for the table of contents. */
+    val outline: Int?,
 )
 
 private class Hwpx(private val parts: ZipParts) {
@@ -97,6 +99,7 @@ private class Hwpx(private val parts: ZipParts) {
                     pageBreakBefore = pageBreak,
                     keepWords = shape?.keepWords ?: true,
                     markStyle = markStyle,
+                    outlineLevel = shape?.outline?.takeIf { result.none { it is Paragraph } },
                 )
                 pageBreak = false
             }
@@ -381,6 +384,7 @@ private class Hwpx(private val parts: ZipParts) {
             lineSpacing = spacing,
             keepWords = breakSetting?.attr("breakNonLatinWord") != "BREAK_WORD",
             pageBreakBefore = breakSetting?.attr("pageBreakBefore") == "1",
+            outline = e.child("hh:heading")?.takeIf { it.attr("type") == "OUTLINE" }?.attr("level")?.toIntOrNull()?.takeIf { it in 0..9 },
         )
     }
 }

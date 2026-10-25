@@ -29,6 +29,36 @@ data class PageSize(val width: Float, val height: Float) {
     val aspect: Float get() = height / width
 }
 
+/**
+ * An entry of a document's table of contents (기획서 5.5 목차): [title] at [page], [y] down it (a
+ * fraction of its height) where known, with the entries under it.
+ */
+class TocEntry(val title: String, val page: Int, val y: Float?, val children: List<TocEntry> = emptyList()) {
+    /** An entry before nesting: [level] 0 is the top. */
+    class Flat(val level: Int, val title: String, val page: Int, val y: Float?)
+
+    companion object {
+        /** Nests [flat] entries by level: each goes under the last one above it with a lower level. */
+        fun tree(flat: List<Flat>): List<TocEntry> {
+            class Node(val flat: Flat, val children: MutableList<Node> = mutableListOf())
+            val roots = mutableListOf<Node>()
+            val stack = ArrayDeque<Node>()
+            for (f in flat) {
+                while (stack.isNotEmpty() && stack.last().flat.level >= f.level) stack.removeLast()
+                val node = Node(f)
+                (stack.lastOrNull()?.children ?: roots) += node
+                stack.addLast(node)
+            }
+            fun build(n: Node): TocEntry = TocEntry(n.flat.title, n.flat.page, n.flat.y, n.children.map(::build))
+            return roots.map(::build)
+        }
+
+        /** [entries] moved down by [pages] (a part of a bundle). */
+        fun shift(entries: List<TocEntry>, pages: Int): List<TocEntry> =
+            entries.map { TocEntry(it.title, it.page + pages, it.y, shift(it.children, pages)) }
+    }
+}
+
 /** Where a link in a document leads. */
 sealed interface Link {
     /** A web page or mail address (see [isWebLink]). */
@@ -87,6 +117,12 @@ interface Document {
      * where it has one (PDF, Word, slides), else A4's width.
      */
     fun paperWidth(index: Int): Float = A4_WIDTH
+
+    /**
+     * The table of contents (기획서 5.5): the file's own (PDF bookmarks, an e-book's), else its
+     * headings, slide titles or sheets. Empty where there is none. May take a while (reads the file).
+     */
+    suspend fun tableOfContents(): List<TocEntry> = emptyList()
 
     /**
      * Web link at ([x], [y]) on page [index], both as fractions of the page's width and height,

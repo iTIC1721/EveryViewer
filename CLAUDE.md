@@ -85,8 +85,9 @@ app/src/main/java/com/tabpdf/
                          epub: EpubDocument(spine 순서로 장마다 HtmlDocument.render, 첫 장 뒤는 백그라운드 조판 — progress)
   pdf/                   PdfRenderer 래퍼 (렌더링 스레드 안전 처리), 암호(PdfPasswords: 메모리에만)
   export/                PDF로 내보내기(PdfExport): PDF는 원본 뒤에 필기를 덧붙임(PdfFile: 구조 읽기, PdfAppend: 증분 업데이트,
-                         PdfCrypt: 열 때 암호 없는 암호화 파일), 흐르는 형식은 Document.drawPage로 글자 그대로, 이미지·묶음은 JpegPdfWriter.
-                         필기는 PdfInk(획 외곽선 → 경로)
+                         PdfCrypt: 표준 보안 처리기), 흐르는 형식은 Document.drawPage로 글자 그대로, 이미지·묶음은 JpegPdfWriter.
+                         필기는 PdfInk(획 외곽선 → 경로). PDF 북마크(PdfOutline)도 같은 구조 읽기로 읽는다.
+                         목차: Document.tableOfContents → TocEntry. 흐르는 형식은 FlowBuilder.heading/anchor로 조판 위치를 기록
   ink/                   필기: 도구·브러시·획 저장 형식(Ink), 탭별 필기와 되돌리기(InkStore),
                          입력 규칙과 그리는 중인 획 표시(InkInput: 창 위 InProgressStrokesView, 터치는 받지 않음)
   tabs/                  탭·그룹 구조(Session.kt), ViewModel, 읽던 위치, 파일 접근 권한·복사본 관리

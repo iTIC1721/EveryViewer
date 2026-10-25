@@ -89,11 +89,8 @@ object PdfAppend {
                 }
                 // Inherited boxes and rotation stay inherited: the page keeps its place in the tree.
                 begin(page.ref.num, page.ref.gen)
-                // Strings read from an object stream were decrypted with it; on their own now, they
-                // are encrypted as this object's. Others are written back as read (still encrypted).
-                val written = if (crypt != null && pdf.inObjectStream(page.ref.num)) {
-                    encryptStrings(dict, crypt, page.ref)
-                } else dict
+                // Strings were decrypted as they were read; written back encrypted as this object's.
+                val written = if (crypt != null) encryptStrings(dict, crypt, page.ref) else dict
                 counter.ascii(PdfWriter.toText(written))
                 counter.ascii("\nendobj\n")
             }

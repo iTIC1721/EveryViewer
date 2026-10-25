@@ -410,7 +410,10 @@ private fun DocumentPages(
 
     LaunchedEffect(pageJump) {
         val jump = pageJump ?: return@LaunchedEffect
-        listState.scrollToItem(jump.page.coerceIn(0, document.pageCount - 1))
+        val page = jump.page.coerceIn(0, document.pageCount - 1)
+        // Like a link: the place just below the top bar.
+        val offset = jump.y?.let { (it * pageHeight(page, zoom) - with(density) { 16.dp.toPx() }).roundToInt() } ?: 0
+        listState.scrollToItem(page, offset.coerceAtLeast(0))
         onPageJumpHandled(jump)
     }
 

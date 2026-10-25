@@ -21,7 +21,12 @@ import java.util.zip.ZipOutputStream
 class EpubTest {
     private val context = InstrumentationRegistry.getInstrumentation().targetContext
 
-    private fun epub(chapters: List<String>, extra: Map<String, ByteArray> = emptyMap()): ByteArray {
+    private fun epub(
+        chapters: List<String>,
+        extra: Map<String, ByteArray> = emptyMap(),
+        navHref: String? = null,
+        ncxHref: String? = null,
+    ): ByteArray {
         val out = ByteArrayOutputStream()
         ZipOutputStream(out).use { z ->
             // "mimetype" first and stored, as the format asks (format detection reads it).
@@ -37,10 +42,13 @@ class EpubTest {
                 z.write(bytes)
             }
             put("META-INF/container.xml", """<container><rootfiles><rootfile full-path="OPS/book.opf"/></rootfiles></container>""".toByteArray())
-            val items = chapters.indices.joinToString("") { """<item id="c$it" href="text/ch$it.xhtml" media-type="application/xhtml+xml"/>""" }
+            val items = chapters.indices.joinToString("") { """<item id="c$it" href="text/ch$it.xhtml" media-type="application/xhtml+xml"/>""" } +
+                (navHref?.let { """<item id="nav" href="$it" properties="nav" media-type="application/xhtml+xml"/>""" } ?: "") +
+                (ncxHref?.let { """<item id="ncx" href="$it" media-type="application/x-dtbncx+xml"/>""" } ?: "")
             // The spine lists chapters in reverse of the manifest: the spine is the reading order.
             val spine = chapters.indices.reversed().joinToString("") { """<itemref idref="c$it"/>""" }
-            put("OPS/book.opf", """<package xmlns="http://www.idpf.org/2007/opf"><manifest>$items</manifest><spine>$spine</spine></package>""".toByteArray())
+            val toc = if (ncxHref != null) """ toc="ncx"""" else ""
+            put("OPS/book.opf", """<package xmlns="http://www.idpf.org/2007/opf"><manifest>$items</manifest><spine$toc>$spine</spine></package>""".toByteArray())
             chapters.forEachIndexed { i, body ->
                 put("OPS/text/ch$i.xhtml", """<html><head><link rel="stylesheet" href="../style/s.css"/></head><body>$body</body></html>""".toByteArray())
             }
@@ -70,6 +78,41 @@ class EpubTest {
         assertTrue("the book's style sheet is used", doc.search("숨김").isEmpty())
         assertNotNull(doc.renderPage(doc.pageCount - 1, 300))
         doc.close()
+    }
+
+    @Test
+    fun theBooksTableOfContentsFromItsNavOrNcx() = runBlocking {
+        val long = (1..150).joinToString("") { "<p>문단 $it 입니다. 문장을 길게 써서 여러 줄을 만듭니다.</p>" }
+        // ch0 is the body, ch1 the preface; the spine reads ch1 first.
+        val chapters = listOf("<h1>본문</h1>$long<h2 id='late'>뒤쪽 절</h2><p>끝</p>", "<h1>머리말</h1><p>짧음</p>")
+        val nav = """<html xmlns:epub="http://www.idpf.org/2007/ops"><body><nav epub:type="landmarks"><ol><li><a href="ch1.xhtml">X</a></li></ol></nav>
+            <nav epub:type="toc"><ol><li><a href="ch1.xhtml">머리말</a></li>
+            <li><a href="ch0.xhtml">본문</a><ol><li><a href="ch0.xhtml#late">뒤쪽 절</a></li></ol></li></ol></nav></body></html>"""
+        // The nav sits next to the chapters.
+        val withNav = epub(chapters, mapOf("OPS/text/nav.xhtml" to nav.toByteArray()), navHref = "text/nav.xhtml")
+        val doc = open("nav.epub", withNav)
+        val toc = doc.tableOfContents()
+        assertEquals(listOf("머리말", "본문"), toc.map { it.title })
+        val late = toc[1].children.single()
+        assertEquals("뒤쪽 절", late.title)
+        assertEquals("the section is where its heading is", doc.search("뒤쪽 절").single().page, late.page)
+        assertTrue(late.page > toc[1].page)
+        doc.close()
+
+        val ncx = """<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/"><navMap>
+            <navPoint id="a"><navLabel><text>첫째</text></navLabel><content src="text/ch1.xhtml"/>
+              <navPoint id="b"><navLabel><text>둘째</text></navLabel><content src="text/ch0.xhtml#late"/></navPoint></navPoint>
+            </navMap></ncx>"""
+        val withNcx = open("ncx.epub", epub(chapters, mapOf("OPS/toc.ncx" to ncx.toByteArray()), ncxHref = "toc.ncx"))
+        val ncxToc = withNcx.tableOfContents()
+        assertEquals("첫째", ncxToc.single().title)
+        assertEquals("둘째", ncxToc.single().children.single().title)
+        withNcx.close()
+
+        // Without either: the chapters' headings.
+        val bare = open("bare.epub", epub(chapters))
+        assertEquals(listOf("머리말", "본문"), bare.tableOfContents().map { it.title })
+        bare.close()
     }
 
     @Test

@@ -124,7 +124,11 @@ private class Pptx(private val zip: ZipParts) {
             val scope = Scope(p, emptyList(), master, colorMap, number)
             bg.child("p:bgPr")?.let { scope.fill(it) } ?: bg.child("p:bgRef")?.let { ref -> scope.color(ref)?.let { Fill.Solid(it) } }
         }
-        return SlideContent(background, shapes)
+        val title = slide.root.findAll("p:sp").firstOrNull { sp ->
+            sp.child("p:nvSpPr")?.child("p:nvPr")?.child("p:ph")?.attr("type") in TITLES
+        }?.findAll("a:p")?.joinToString(" ") { p -> p.findAll("a:t").joinToString("") { it.text } }
+            ?.replace(Regex("\\s+"), " ")?.trim()?.takeIf { it.isNotEmpty() }
+        return SlideContent(background, shapes, title)
     }
 
     private fun attrs(e: Element): Map<String, String> =

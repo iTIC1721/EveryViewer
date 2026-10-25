@@ -23,6 +23,13 @@ class PdfCrypt private constructor(
     fun decryptStream(num: Int, gen: Int, data: ByteArray) = decrypt(streams, num, gen, data)
     fun encryptString(num: Int, gen: Int, data: ByteArray) = encrypt(strings, num, gen, data)
 
+    /** A string as written in the file, decrypted; one that doesn't decrypt is left as it is. */
+    fun decryptString(num: Int, gen: Int, data: ByteArray): ByteArray = try {
+        decrypt(strings, num, gen, data)
+    } catch (e: Exception) {
+        data
+    }
+
     private fun objectKey(method: Method, num: Int, gen: Int): ByteArray {
         if (method == Method.Aes256) return key
         // Algorithm 1: the file key with the object's number and generation.
@@ -61,8 +68,11 @@ class PdfCrypt private constructor(
             0x2E, 0x2E, 0x00, 0xB6.toByte(), 0xD0.toByte(), 0x68, 0x3E, 0x80.toByte(), 0x2F, 0x0C, 0xA9.toByte(), 0xFE.toByte(), 0x64, 0x53, 0x69, 0x7A,
         )
 
-        /** The handler for [pdf]'s /Encrypt, or null if it needs a password (or isn't the standard one). */
-        fun forFile(pdf: PdfFile): PdfCrypt? {
+        /**
+         * The handler for [pdf]'s /Encrypt opened with the user [password] (empty for files that
+         * open without one), or null if that isn't it (or the handler isn't the standard one).
+         */
+        fun forFile(pdf: PdfFile, password: String = ""): PdfCrypt? {
             val dict = pdf.resolve(pdf.trailer["Encrypt"]) as? Map<*, *> ?: return null
             if ((dict["Filter"] as? PdfName)?.text != "Standard") return null
             fun int(name: String) = (pdf.resolve(dict[name]) as? PdfNumber)?.value?.toInt()
@@ -94,17 +104,19 @@ class PdfCrypt private constructor(
             val key = if (r >= 5) {
                 val ue = bytes("UE") ?: return null
                 if (u.size < 48 || ue.size < 32) return null
-                // Empty user password: check it against U, then unwrap the key from UE.
-                if (!hash(r, ByteArray(0), u.copyOfRange(32, 40)).contentEquals(u.copyOfRange(0, 32))) return null
-                val intermediate = hash(r, ByteArray(0), u.copyOfRange(40, 48))
+                // Check the password against U, then unwrap the key from UE.
+                val pw = password.toByteArray(Charsets.UTF_8).let { if (it.size > 127) it.copyOf(127) else it }
+                if (!hash(r, pw, u.copyOfRange(32, 40)).contentEquals(u.copyOfRange(0, 32))) return null
+                val intermediate = hash(r, pw, u.copyOfRange(40, 48))
                 val cipher = Cipher.getInstance("AES/CBC/NoPadding")
                 cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(intermediate, "AES"), IvParameterSpec(ByteArray(16)))
                 cipher.doFinal(ue, 0, 32)
             } else {
-                // Algorithm 2 with the empty password.
+                // Algorithm 2: the password padded to 32 bytes.
                 val length = if (r == 2) 5 else ((int("Length") ?: 40) / 8).coerceIn(5, 16)
+                val pw = password.toByteArray(Charsets.ISO_8859_1)
                 val md5 = MessageDigest.getInstance("MD5")
-                md5.update(PAD)
+                md5.update((pw.copyOf(minOf(pw.size, 32)) + PAD).copyOf(32))
                 md5.update(o.copyOf(32))
                 md5.update(byteArrayOf(p.toByte(), (p shr 8).toByte(), (p shr 16).toByte(), (p shr 24).toByte()))
                 md5.update(id0)

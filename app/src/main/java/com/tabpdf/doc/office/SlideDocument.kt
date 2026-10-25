@@ -26,6 +26,7 @@ import com.tabpdf.doc.TextSink
 import com.tabpdf.doc.PageSize
 import com.tabpdf.doc.SearchMatch
 import com.tabpdf.doc.TextSearch
+import com.tabpdf.doc.TocEntry
 import com.tabpdf.doc.offset
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
@@ -91,6 +92,10 @@ class SlideDocument private constructor(
     }
 
     override fun paperWidth(index: Int): Float = paperWidth
+
+    /** Every slide, by its title where it has one. */
+    override suspend fun tableOfContents(): List<TocEntry> =
+        pages.mapIndexed { i, p -> TocEntry("${i + 1}. ${p.title ?: "슬라이드 ${i + 1}"}", i, null) }
 
     /** [scale] is pixels per unit, for decoding pictures at the size they show. */
     private fun draw(index: Int, canvas: Canvas, scale: Float) {
@@ -169,7 +174,7 @@ class SlideDocument private constructor(
         fun layOut(presentation: Presentation): SlideDocument {
             val unit = FLOW_WIDTH / presentation.width
             val pages = presentation.slides.map { slide ->
-                SlidePage(slide.background, slide.shapes.mapNotNull { item(it, unit) })
+                SlidePage(slide.background, slide.shapes.mapNotNull { item(it, unit) }, slide.title)
             }
             return SlideDocument(presentation.height * unit, pages, presentation.width)
         }
@@ -189,7 +194,7 @@ class SlideDocument private constructor(
     }
 }
 
-private class SlidePage(val background: Fill?, val items: List<SlideItem>)
+private class SlidePage(val background: Fill?, val items: List<SlideItem>, val title: String?)
 
 private class DrawContext(
     /** Pixels per flow unit. */

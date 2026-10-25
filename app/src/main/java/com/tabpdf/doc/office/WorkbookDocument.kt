@@ -21,6 +21,7 @@ import android.text.style.UnderlineSpan
 import android.util.LruCache
 import com.tabpdf.doc.Document
 import com.tabpdf.doc.PageSize
+import com.tabpdf.doc.TocEntry
 import com.tabpdf.doc.PageText
 import com.tabpdf.doc.SearchMatch
 import com.tabpdf.doc.TextSearch
@@ -154,6 +155,10 @@ class WorkbookDocument private constructor(private val book: Workbook) : Documen
 
     /** Pages are in points already. */
     override fun paperWidth(index: Int): Float = pageSizes[index].width
+
+    /** The sheets, each at its first page. */
+    override suspend fun tableOfContents(): List<TocEntry> =
+        pages.withIndex().distinctBy { it.value.sheet.index }.map { (page, p) -> TocEntry(p.sheet.sheet.name, page, null) }
 
     private fun drawSlice(canvas: Canvas, page: Page, scale: Float) {
         canvas.save()

@@ -22,6 +22,7 @@ import com.tabpdf.doc.Bundles
 import com.tabpdf.doc.Document
 import com.tabpdf.doc.Documents
 import com.tabpdf.doc.FileFormat
+import com.tabpdf.doc.TocEntry
 import com.tabpdf.doc.awaitComplete
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -52,7 +53,8 @@ data class BundleEdit(
 data class UndoOffer(val id: Long, val message: String)
 
 /** A request for tab [tabId]'s viewer to show [page]; [id] makes repeated jumps distinct. */
-data class PageJump(val id: Long, val tabId: String, val page: Int)
+/** A request to show [page] of a tab, from [y] down it (a fraction) if given. */
+data class PageJump(val id: Long, val tabId: String, val page: Int, val y: Float? = null)
 
 /**
  * Tabs and tab groups, Chrome-style (기획서 3장), persisted so they come back after the app is
@@ -493,9 +495,12 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /** Asks tab [tabId]'s viewer to go to [page] (0-based). */
-    fun jumpToPage(tabId: String, page: Int) {
-        _pageJump.value = PageJump(nextJumpId++, tabId, page)
+    fun jumpToPage(tabId: String, page: Int, y: Float? = null) {
+        _pageJump.value = PageJump(nextJumpId++, tabId, page, y)
     }
+
+    /** Tab [tabId]'s table of contents (기획서 5.5), or null if its file isn't open. */
+    suspend fun tableOfContents(tabId: String): List<TocEntry>? = openDocuments[tabId]?.tableOfContents()
 
     fun onPageJumpHandled(jump: PageJump) {
         if (_pageJump.value == jump) _pageJump.value = null

@@ -175,7 +175,9 @@ private class MarkdownRenderer {
     private fun heading(node: Heading, ctx: Ctx) {
         val level = node.level.coerceIn(1, 6)
         val paint = flowPaint(Md.BODY * Md.HEADING_SCALE[level - 1], Typeface.DEFAULT_BOLD, Md.TEXT)
-        val layout = staticLayout(inlines(node), paint, ctx.width, lineSpacing = 1.25f)
+        val text = inlines(node)
+        val layout = staticLayout(text, paint, ctx.width, lineSpacing = 1.25f)
+        out.heading(level - 1, text.toString())
         // Like GitHub: a line under the two top levels.
         emit(if (level <= 2) RuledTextBlock(layout, ctx.width) else TextBlock(layout), ctx)
     }

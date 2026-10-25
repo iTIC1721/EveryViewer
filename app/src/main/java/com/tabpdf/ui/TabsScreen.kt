@@ -96,6 +96,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.tabpdf.tabs.DocTab
+import com.tabpdf.doc.TocEntry
 import com.tabpdf.tabs.SessionState
 import com.tabpdf.tabs.TabGroup
 import com.tabpdf.tabs.TabsViewModel
@@ -279,6 +280,15 @@ private fun ContextPager(
     }
     BackHandler(enabled = searchOpen) { searchOpen = false }
 
+    // Table of contents (기획서 5.5): read when the panel opens, for the tab being looked at.
+    var tocOpen by rememberSaveable { mutableStateOf(false) }
+    var tocEntries by remember { mutableStateOf<List<TocEntry>?>(null) }
+    LaunchedEffect(tocOpen, session.currentTabId) {
+        tocEntries = null
+        val id = session.currentTabId
+        if (tocOpen && id != null) tocEntries = viewModel.tableOfContents(id).orEmpty()
+    }
+
     // Swiping picks the current tab…
     LaunchedEffect(pagerState) {
         snapshotFlow { pagerState.settledPage }.collect { page ->
@@ -379,6 +389,7 @@ private fun ContextPager(
                         canJump, open = { dialog = it }, onSearch = { searchOpen = true }, onSettings = onShowSettings,
                         onEditBundle = bundle?.let { { viewModel.startBundleEdit(it.id) } },
                         canExport = session.currentTabId?.let(viewModel::canExport) == true,
+                        onContents = { tocOpen = true },
                         dismiss = dismiss,
                     )
                 },
@@ -404,6 +415,19 @@ private fun ContextPager(
             }
             }
         }
+
+        val reading = session.currentTabId?.let { viewModel.viewerState(it) }
+        TocDrawer(
+            open = tocOpen,
+            entries = tocEntries,
+            page = reading?.page ?: 0,
+            pageOffset = reading?.pageOffset ?: 0f,
+            onJump = { entry ->
+                tocOpen = false
+                session.currentTabId?.let { viewModel.jumpToPage(it, entry.page, entry.y) }
+            },
+            onClose = { tocOpen = false },
+        )
     }
 
     val current = session.currentTab
@@ -599,12 +623,18 @@ private fun ViewerMenu(
     onSettings: () -> Unit,
     onEditBundle: (() -> Unit)?,
     canExport: Boolean,
+    onContents: () -> Unit,
     dismiss: () -> Unit,
 ) {
     DropdownMenuItem(
         text = { Text("찾기") },
         enabled = canJump,
         onClick = { dismiss(); onSearch() },
+    )
+    DropdownMenuItem(
+        text = { Text("목차") },
+        enabled = canExport,
+        onClick = { dismiss(); onContents() },
     )
     DropdownMenuItem(
         text = { Text("페이지 이동") },

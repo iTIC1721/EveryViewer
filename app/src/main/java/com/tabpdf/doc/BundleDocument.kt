@@ -195,6 +195,12 @@ class BundleDocument private constructor(
         return part.document?.renderPage(page, widthPx) ?: missingPage(part.item, widthPx)
     }
 
+    /** Each file by its name, with its own contents under it. */
+    override suspend fun tableOfContents(): List<TocEntry> = parts.map { part ->
+        val start = startOf(part)
+        TocEntry(part.item.name, start, null, TocEntry.shift(part.document?.tableOfContents().orEmpty(), start))
+    }
+
     // A bundle is exported as pictures (mostly photos of pages), so no drawPage; each page keeps its paper.
     override fun paperWidth(index: Int): Float {
         val (part, page) = locate(index)

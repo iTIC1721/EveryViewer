@@ -89,6 +89,20 @@ class InkInputTest {
     private val tabId get() = vm.state.value!!.currentTabId!!
     private fun strokeCount() = onMain { vm.ink.strokes(tabId).value.size }
 
+    /** Lets the viewer pick up a changed setting (it reaches the input handler on the next frame). */
+    private fun settle() {
+        instrumentation.waitForIdleSync()
+        Thread.sleep(200)
+        instrumentation.waitForIdleSync()
+    }
+
+    /** The tab has [expected] strokes, given a moment: a busy device may take longer than [drag] waits. */
+    private fun assertStrokes(message: String, expected: Int) {
+        val end = SystemClock.uptimeMillis() + 3_000
+        while (strokeCount() != expected && SystemClock.uptimeMillis() < end) Thread.sleep(50)
+        assertEquals(message, expected, strokeCount())
+    }
+
     /** Drags one pointer from ([x0], [y0]) to ([x1], [y1]) (fractions of the window). */
     private fun drag(x0: Float, y0: Float, x1: Float, y1: Float, toolType: Int, buttons: Int = 0) {
         val source = if (toolType == MotionEvent.TOOL_TYPE_FINGER) InputDevice.SOURCE_TOUCHSCREEN
@@ -123,17 +137,17 @@ class InkInputTest {
     @Test
     fun penDrawsSideButtonErasesFingerScrolls() {
         drag(0.2f, 0.5f, 0.8f, 0.5f, MotionEvent.TOOL_TYPE_STYLUS)
-        assertEquals("a pen stroke is kept", 1, strokeCount())
+        assertStrokes("a pen stroke is kept", 1)
         assertTrue("the pen was noticed", onMain { vm.settings.stylusSeen.value })
 
         drag(0.5f, 0.45f, 0.5f, 0.55f, MotionEvent.TOOL_TYPE_STYLUS, MotionEvent.BUTTON_STYLUS_PRIMARY)
-        assertEquals("the side button erased it", 0, strokeCount())
+        assertStrokes("the side button erased it", 0)
         onMain { vm.undoInk() }
-        assertEquals("undo brings it back", 1, strokeCount())
+        assertStrokes("undo brings it back", 1)
 
         val before = onMain { vm.viewerState(tabId) }
         drag(0.5f, 0.75f, 0.5f, 0.35f, MotionEvent.TOOL_TYPE_FINGER)
-        assertEquals("a finger doesn't draw once a pen is used", 1, strokeCount())
+        assertStrokes("a finger doesn't draw once a pen is used", 1)
         assertNotEquals("the finger scrolled instead", before, onMain { vm.viewerState(tabId) })
     }
 
@@ -174,7 +188,7 @@ class InkInputTest {
     fun secondFingerTurnsAStrokeIntoScrolling() {
         val before = onMain { vm.viewerState(tabId) }
         twoFingerScroll()
-        assertEquals("the started finger stroke was dropped", 0, strokeCount())
+        assertStrokes("the started finger stroke was dropped", 0)
         assertNotEquals("two fingers scrolled", before, onMain { vm.viewerState(tabId) })
     }
 
@@ -198,42 +212,46 @@ class InkInputTest {
     @Test
     fun fingerDrawsOnlyWhenItShould() {
         onMain { vm.settings.setFingerDrawing(FingerDrawing.Always) }
+        settle()
         drag(0.2f, 0.5f, 0.8f, 0.5f, MotionEvent.TOOL_TYPE_FINGER)
-        assertEquals("set to always: the finger draws", 1, strokeCount())
+        assertStrokes("set to always: the finger draws", 1)
 
         onMain {
             vm.settings.setFingerDrawing(FingerDrawing.Auto)
             vm.settings.markStylusSeen()
         }
+        settle()
         drag(0.2f, 0.6f, 0.8f, 0.6f, MotionEvent.TOOL_TYPE_FINGER)
-        assertEquals("automatic, pen in use: the finger swipe draws nothing", 1, strokeCount())
+        assertStrokes("automatic, pen in use: the finger swipe draws nothing", 1)
 
         onMain { vm.settings.setFingerDrawing(FingerDrawing.Never) }
+        settle()
         drag(0.2f, 0.4f, 0.8f, 0.4f, MotionEvent.TOOL_TYPE_FINGER)
-        assertEquals("set to never: the finger draws nothing", 1, strokeCount())
+        assertStrokes("set to never: the finger draws nothing", 1)
         drag(0.2f, 0.4f, 0.8f, 0.4f, MotionEvent.TOOL_TYPE_STYLUS)
-        assertEquals("…but the pen still does", 2, strokeCount())
+        assertStrokes("…but the pen still does", 2)
 
         onMain { vm.setInkMode(false) }
+        settle()
         drag(0.2f, 0.3f, 0.8f, 0.3f, MotionEvent.TOOL_TYPE_STYLUS)
-        assertEquals("handwriting off: even a pen doesn't draw", 2, strokeCount())
+        assertStrokes("handwriting off: even a pen doesn't draw", 2)
     }
 
     @Test
     fun fingerButtonLetsFingersDrawUntilThePenIsBack() {
         drag(0.2f, 0.5f, 0.8f, 0.5f, MotionEvent.TOOL_TYPE_STYLUS)
         drag(0.2f, 0.6f, 0.8f, 0.6f, MotionEvent.TOOL_TYPE_FINGER)
-        assertEquals("pen in use: the finger doesn't draw", 1, strokeCount())
+        assertStrokes("pen in use: the finger doesn't draw", 1)
 
         // The pen put away: the toolbar's finger button.
         pressFingerButton()
         drag(0.2f, 0.6f, 0.8f, 0.6f, MotionEvent.TOOL_TYPE_FINGER)
-        assertEquals("the finger draws again", 2, strokeCount())
+        assertStrokes("the finger draws again", 2)
 
         drag(0.2f, 0.4f, 0.8f, 0.4f, MotionEvent.TOOL_TYPE_STYLUS)
         assertTrue("the pen back ends it", !onMain { vm.settings.fingersToo.value })
         drag(0.2f, 0.3f, 0.8f, 0.3f, MotionEvent.TOOL_TYPE_FINGER)
-        assertEquals("…and the finger stops drawing", 3, strokeCount())
+        assertStrokes("…and the finger stops drawing", 3)
     }
 
     /** Finds the button as a screen reader would, by its description, and presses it. */
@@ -252,5 +270,6 @@ class InkInputTest {
         while (clickable != null && !clickable.isClickable) clickable = clickable.parent
         assertTrue(clickable!!.performAction(AccessibilityNodeInfo.ACTION_CLICK))
         waitUntil("fingers draw") { onMain { vm.settings.fingersToo.value } }
+        settle()
     }
 }
