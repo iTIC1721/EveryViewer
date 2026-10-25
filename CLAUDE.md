@@ -81,7 +81,8 @@ app/src/main/java/com/tabpdf/
                          xlsx: XlsxReader(시트는 XmlPullParser로 흘려 읽음, 스타일·테마 색) → Workbook → WorkbookDocument
                          (시트 폭 쪽, 셀 글 넘침, 테두리, 그림), 표시 형식은 NumberFormat
   doc/html/              HTML: jsoup으로 DOM → CSS 적용(Css: 선택자·@media, HtmlStyle: 계산된 스타일·기본 스타일 시트)
-                         → 오피스 공통 모델(HtmlReader: 문단·목록·표·상자 Box) → OfficeLayout.flow(고정 폭, 페이지 간격 없음)
+                         → 오피스 공통 모델(HtmlReader: 문단·목록·표·상자 Box) → OfficeLayout.flow(고정 폭, 페이지 간격 없음).
+                         epub: EpubDocument(spine 순서로 장마다 HtmlDocument.render, 첫 장 뒤는 백그라운드 조판 — progress)
   pdf/                   PdfRenderer 래퍼 (렌더링 스레드 안전 처리)
   ink/                   필기: 도구·브러시·획 저장 형식(Ink), 탭별 필기와 되돌리기(InkStore),
                          입력 규칙과 그리는 중인 획 표시(InkInput: 창 위 InProgressStrokesView, 터치는 받지 않음)
