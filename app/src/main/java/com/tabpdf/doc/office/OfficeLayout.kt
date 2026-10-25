@@ -23,6 +23,7 @@ import android.text.style.UnderlineSpan
 import com.tabpdf.doc.FLOW_WIDTH
 import com.tabpdf.doc.FlowBlock
 import com.tabpdf.doc.FlowBuilder
+import com.tabpdf.doc.FlowDocument
 import com.tabpdf.doc.Found
 import com.tabpdf.doc.TextSink
 import com.tabpdf.doc.LinkSpan
@@ -78,6 +79,18 @@ class OfficeLayout private constructor(private val unit: Float) {
             return layout.stack(blocks, w) to w
         }
 
+        /**
+         * [body] as one flowing sheet [pageWidth] points wide, cut into pages only for drawing
+         * (HTML: the page has no paper size), with [bottom] points of room after the last block.
+         */
+        fun flow(body: List<OfficeBlock>, pageWidth: Float, bottom: Float, maxPageHeight: Float): FlowDocument {
+            val layout = OfficeLayout(FLOW_WIDTH / pageWidth)
+            val out = FlowBuilder()
+            layout.blocks(body, FLOW_WIDTH, 0f, out)
+            out.space(bottom * layout.unit)
+            return out.build(maxPageHeight, pageGaps = false)
+        }
+
         /** No break is allowed between two of these (Korean words kept whole, like both editors). */
         private fun isCjk(c: Char): Boolean {
             val block = Character.UnicodeBlock.of(c)
@@ -97,13 +110,21 @@ class OfficeLayout private constructor(private val unit: Float) {
                 is Paragraph -> paragraph(block, width, x, out)
                 is Table -> {
                     if (block.pageBreakBefore) out.pageBreak()
-                    val table = TableBlock(block, width)
+                    out.space(block.spaceBefore * unit)
+                    // Content-sized (HTML) tables fit beside their indent; Word and Hangul tables keep their widths.
+                    val contentSized = block.columns.any { it <= 0f }
+                    val table = TableBlock(block, if (contentSized) width - (block.indent.coerceAtLeast(0f) + block.indentRight) * unit else width)
                     val offset = when (block.align) {
                         Align.Center -> (width - table.width) / 2
                         Align.Right -> width - table.width
                         else -> block.indent * unit
                     }
                     out.add(table, x + offset.coerceAtLeast(0f))
+                }
+                is Box -> {
+                    out.space(block.spaceBefore * unit)
+                    val left = block.indentLeft * unit
+                    out.add(BoxBlock(block, (width - left - block.indentRight * unit).coerceAtLeast(unit * 20)), x + left)
                 }
             }
         }
@@ -144,13 +165,72 @@ class OfficeLayout private constructor(private val unit: Float) {
         out.space(p.spaceAfter * unit)
     }
 
-    /** Width the paragraphs of [list] take when no line is broken. */
-    private fun naturalWidth(list: List<OfficeBlock>): Float = list.filterIsInstance<Paragraph>().maxOfOrNull { p ->
-        val hanging = (-p.firstLine).coerceAtLeast(0f) * unit
-        val layout = paragraphLayout(p, 1_000_000f, hanging, Align.Left)
-        val lines = (0 until layout.lineCount).maxOfOrNull { layout.getLineWidth(it) } ?: 0f
-        lines + (p.indentLeft + p.indentRight) * unit - hanging + 1f
+    /** Width the blocks of [list] take when no line is broken. */
+    private fun naturalWidth(list: List<OfficeBlock>): Float = list.maxOfOrNull { block ->
+        when (block) {
+            is Paragraph -> {
+                val hanging = (-block.firstLine).coerceAtLeast(0f) * unit
+                val layout = paragraphLayout(block, 1_000_000f, hanging, Align.Left)
+                val lines = (0 until layout.lineCount).maxOfOrNull { layout.getLineWidth(it) } ?: 0f
+                lines + (block.indentLeft + block.indentRight) * unit - hanging + 1f
+            }
+            is Table -> naturalColumns(block).sum() + block.indent * unit
+            is Box -> naturalWidth(block.blocks) + (block.indentLeft + block.indentRight + block.padding.left + block.padding.right) * unit
+        }
     } ?: 0f
+
+    /**
+     * Column widths of [table] with no line broken: as given, or for columns sized to their
+     * content (0), as wide as their widest cell. A cell spanning columns widens them evenly.
+     */
+    private fun naturalColumns(table: Table): FloatArray {
+        val widths = FloatArray(table.columns.size) { table.columns[it] * unit }
+        val auto = BooleanArray(widths.size) { table.columns[it] <= 0f }
+        if (auto.none { it }) return widths
+        fun need(c: TableCell) = naturalWidth(c.blocks) + (c.padding.left + c.padding.right) * unit
+        val inRange = table.cells.filter { it.column in widths.indices }
+        for (c in inRange.filter { it.columnSpan == 1 }) {
+            if (auto[c.column]) widths[c.column] = max(widths[c.column], need(c))
+        }
+        for (c in inRange.filter { it.columnSpan > 1 }) {
+            val span = c.column until (c.column + c.columnSpan).coerceAtMost(widths.size)
+            val autoInSpan = span.filter { auto[it] }
+            val lack = need(c) - span.sumOf { widths[it].toDouble() }.toFloat()
+            if (lack > 0f && autoInSpan.isNotEmpty()) autoInSpan.forEach { widths[it] += lack / autoInSpan.size }
+        }
+        return widths
+    }
+
+    /**
+     * Columns sized to content (HTML's automatic table layout, simplified): at their natural width
+     * if the table fits in [available], widened to the width the table asks for; otherwise every
+     * column first gets up to an equal share, and what is left goes to the wider ones in proportion.
+     */
+    private fun fittedColumns(table: Table, available: Float): FloatArray {
+        val natural = naturalColumns(table)
+        val total = natural.sum()
+        val wanted = table.width?.let { minOf(it * unit, available) }
+        if (total <= available) {
+            if (wanted == null || wanted <= total || total <= 0f) return natural
+            // The room left goes to the content-sized columns; columns with a given width keep it.
+            val auto = natural.indices.filter { table.columns[it] <= 0f }
+            val autoTotal = auto.sumOf { natural[it].toDouble() }.toFloat()
+            val extra = wanted - total
+            return FloatArray(natural.size) {
+                when {
+                    it !in auto -> natural[it]
+                    autoTotal > 0f -> natural[it] + extra * natural[it] / autoTotal
+                    else -> natural[it] + extra / auto.size
+                }
+            }
+        }
+        val share = available / natural.size
+        val widths = FloatArray(natural.size) { minOf(natural[it], share) }
+        val left = available - widths.sum()
+        val wanting = natural.indices.sumOf { (natural[it] - widths[it]).toDouble() }.toFloat()
+        if (wanting > 0f) for (i in widths.indices) widths[i] += left * (natural[i] - widths[i]) / wanting
+        return widths
+    }
 
     private fun paragraphLayout(p: Paragraph, width: Float, hanging: Float, align: Align = p.align): StaticLayout {
         val text = SpannableStringBuilder()
@@ -241,7 +321,7 @@ class OfficeLayout private constructor(private val unit: Float) {
         override val breaks: FloatArray
 
         init {
-            val natural = table.columns.map { it * unit }
+            val natural = if (table.columns.any { it <= 0f }) fittedColumns(table, available).toList() else table.columns.map { it * unit }
             val fit = if (natural.sum() > available) available / natural.sum() else 1f
             columnWidths = natural.map { it * fit }.toFloatArray()
             width = columnWidths.sum()
@@ -323,8 +403,11 @@ class OfficeLayout private constructor(private val unit: Float) {
 
         override fun draw(canvas: Canvas) {
             for ((c, _) in cells) if (c.fill != 0) canvas.drawRect(rect(c), fillPaint.apply { color = c.fill })
+            // Long tables span many pages; only the cells on this one are drawn.
+            val clip = canvas.clipBounds
             for ((c, content) in cells) {
                 val r = rect(c)
+                if (r.bottom < clip.top || r.top > clip.bottom) continue
                 val innerTop = r.top + c.padding.top * unit
                 val innerHeight = r.height() - (c.padding.top + c.padding.bottom) * unit
                 val offset = when (c.verticalAlign) {
@@ -347,13 +430,6 @@ class OfficeLayout private constructor(private val unit: Float) {
             }
         }
 
-        private fun line(canvas: Canvas, border: Border, x0: Float, y0: Float, x1: Float, y1: Float) {
-            linePaint.color = border.color
-            // Hairlines (0.1 mm) would vanish at normal zoom; keep every border visible.
-            linePaint.strokeWidth = max(border.width * unit, 0.9f)
-            canvas.drawLine(x0, y0, x1, y1, linePaint)
-        }
-
         override fun collectText(sink: TextSink) {
             for ((c, content) in cells) content.collectText(sink.offset(rect(c).left + c.padding.left * unit, contentTop(c, content)))
         }
@@ -369,6 +445,43 @@ class OfficeLayout private constructor(private val unit: Float) {
             }
             return null
         }
+    }
+
+    // ---- Boxes ----
+
+    /** A [Box] [width] wide: background, borders, and its blocks inside the padding. */
+    private inner class BoxBlock(private val box: Box, private val width: Float) : FlowBlock() {
+        private val left = (box.padding.left + (box.borders.left?.width ?: 0f)) * unit
+        private val top = (box.padding.top + (box.borders.top?.width ?: 0f)) * unit
+        private val content = stack(box.blocks, (width - left - (box.padding.right + (box.borders.right?.width ?: 0f)) * unit).coerceAtLeast(unit))
+        override val height = top + content.height + (box.padding.bottom + (box.borders.bottom?.width ?: 0f)) * unit
+        override val breaks: FloatArray = (listOf(top) + content.breaks.map { top + it } + listOf(top + content.height))
+            .filter { it > 0f && it < height }.distinct().toFloatArray()
+
+        override fun draw(canvas: Canvas) {
+            if (box.fill != 0) canvas.drawRect(0f, 0f, width, height, fillPaint.apply { color = box.fill })
+            canvas.save()
+            canvas.translate(left, top)
+            content.draw(canvas)
+            canvas.restore()
+            box.borders.left?.let { line(canvas, it, 0f, 0f, 0f, height) }
+            box.borders.right?.let { line(canvas, it, width, 0f, width, height) }
+            box.borders.top?.let { line(canvas, it, 0f, 0f, width, 0f) }
+            box.borders.bottom?.let { line(canvas, it, 0f, height, width, height) }
+        }
+
+        override fun collectText(sink: TextSink) = content.collectText(sink.offset(left, top))
+
+        override fun find(query: String): List<Found> = content.find(query).map { it.offset(left, top) }
+
+        override fun linkAt(x: Float, y: Float): String? = content.linkAt(x - left, y - top)
+    }
+
+    private fun line(canvas: Canvas, border: Border, x0: Float, y0: Float, x1: Float, y1: Float) {
+        linePaint.color = border.color
+        // Hairlines (0.1 mm) would vanish at normal zoom; keep every border visible.
+        linePaint.strokeWidth = max(border.width * unit, 0.9f)
+        canvas.drawLine(x0, y0, x1, y1, linePaint)
     }
 
     private val fillPaint = Paint()

@@ -260,6 +260,7 @@ val FileFormat.label: String
         FileFormat.Pdf -> "PDF"
         FileFormat.Text -> "텍스트"
         FileFormat.Markdown -> "마크다운"
+        FileFormat.Html -> "HTML 웹 페이지"
         FileFormat.Image -> "이미지"
         FileFormat.Docx -> "Word 문서"
         FileFormat.Hwpx -> "한글 문서"

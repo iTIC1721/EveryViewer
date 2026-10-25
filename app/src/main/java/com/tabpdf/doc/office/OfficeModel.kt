@@ -3,7 +3,8 @@ package com.tabpdf.doc.office
 /*
  * What docx and hwpx are read into (기획서 5.7): a word-processor document reduced to what this
  * viewer draws — paragraphs of styled text, tables, pictures — on sheets of a given size. Both
- * readers produce it and one layout (OfficeLayout) draws it. Lengths are in points.
+ * readers produce it and one layout (OfficeLayout) draws it. Lengths are in points. HTML is read
+ * into the same blocks and laid out as one flowing sheet (OfficeLayout.flow).
  */
 
 class OfficeDocument(
@@ -99,7 +100,7 @@ sealed interface Run {
 }
 
 class Table(
-    /** Width of each grid column. */
+    /** Width of each grid column; 0 for one sized to its content (HTML). */
     val columns: List<Float>,
     val rows: List<TableRow>,
     val cells: List<TableCell>,
@@ -107,6 +108,25 @@ class Table(
     val align: Align = Align.Left,
     /** Starts a new page. */
     val pageBreakBefore: Boolean = false,
+    val spaceBefore: Float = 0f,
+    /** Width wanted for the whole table, when columns are sized to their content. */
+    val width: Float? = null,
+    /** Room kept on the right of a content-sized table. */
+    val indentRight: Float = 0f,
+) : OfficeBlock
+
+/**
+ * Blocks drawn on a background or inside borders (an HTML element with them). The box spans the
+ * width left by [indentLeft] and [indentRight]; pages may end inside it, between its lines.
+ */
+class Box(
+    val blocks: List<OfficeBlock>,
+    val fill: Int = 0,
+    val borders: Borders = Borders.None,
+    val padding: Insets = Insets(0f, 0f, 0f, 0f),
+    val indentLeft: Float = 0f,
+    val indentRight: Float = 0f,
+    val spaceBefore: Float = 0f,
 ) : OfficeBlock
 
 class TableRow(val minHeight: Float = 0f, val exactHeight: Boolean = false)

@@ -77,6 +77,8 @@ app/src/main/java/com/tabpdf/
                          → 용지 단위 조판(OfficeLayout: 문단·줄 간격·표 병합·테두리·쪽 넘김) → SheetDocument.
                          pptx: PptxReader(레이아웃·마스터 상속, 테마 색) → 슬라이드 모델(SlideModel) → SlideDocument
                          (도형·연결선·그림을 슬라이드 위치에 그림, 글상자·표는 OfficeLayout.box로 조판, TableStyles: 기본 표 스타일)
+  doc/html/              HTML: jsoup으로 DOM → CSS 적용(Css: 선택자·@media, HtmlStyle: 계산된 스타일·기본 스타일 시트)
+                         → 오피스 공통 모델(HtmlReader: 문단·목록·표·상자 Box) → OfficeLayout.flow(고정 폭, 페이지 간격 없음)
   pdf/                   PdfRenderer 래퍼 (렌더링 스레드 안전 처리)
   ink/                   필기: 도구·브러시·획 저장 형식(Ink), 탭별 필기와 되돌리기(InkStore),
                          입력 규칙과 그리는 중인 획 표시(InkInput: 창 위 InProgressStrokesView, 터치는 받지 않음)

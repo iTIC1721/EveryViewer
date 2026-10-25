@@ -26,7 +26,10 @@ class StackBlock(private val placed: List<Placed>, override val height: Float) :
     }.filter { it > 0f && it < height }.distinct().sorted().toFloatArray()
 
     override fun draw(canvas: Canvas) {
+        // Only what shows: a stack can hold a whole document (an HTML page on a background).
+        val clip = canvas.clipBounds
         for (p in placed) {
+            if (p.bottom < clip.top || p.y > clip.bottom) continue
             canvas.save()
             canvas.translate(p.x, p.y)
             p.block.draw(canvas)
