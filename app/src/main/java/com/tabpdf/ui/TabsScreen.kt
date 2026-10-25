@@ -242,13 +242,14 @@ private fun ContextPager(
     val toolStyles by viewModel.settings.toolStyles.collectAsState()
     val fingerDrawing by viewModel.settings.fingerDrawing.collectAsState()
     val stylusSeen by viewModel.settings.stylusSeen.collectAsState()
+    val fingersToo by viewModel.settings.fingersToo.collectAsState()
     val sideButtonErases by viewModel.settings.sideButtonErases.collectAsState()
     val inkHistory by viewModel.ink.history.collectAsState()
     val recentColors by viewModel.settings.recentColors.collectAsState()
     val fingerDraws = when (fingerDrawing) {
         FingerDrawing.Always -> true
         FingerDrawing.Never -> false
-        FingerDrawing.Auto -> !stylusSeen
+        FingerDrawing.Auto -> !stylusSeen || fingersToo
     }
 
     // Text search (기획서 5.5): runs on the current tab; the query stays while swiping to another.
@@ -379,6 +380,9 @@ private fun ContextPager(
                     onCustomColor = viewModel.settings::addRecentColor,
                     onUndo = { viewModel.undoInk() },
                     onRedo = { viewModel.redoInk() },
+                    // Only where a pen decides: with the pen put away, fingers can draw again.
+                    fingerDraws = fingersToo.takeIf { fingerDrawing == FingerDrawing.Auto && stylusSeen },
+                    onFingerDraws = viewModel.settings::setFingersToo,
                 )
             }
             }
