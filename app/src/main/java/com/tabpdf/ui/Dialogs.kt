@@ -263,7 +263,7 @@ val FileFormat.label: String
         FileFormat.Html -> "HTML 웹 페이지"
         FileFormat.Image -> "이미지"
         FileFormat.Docx -> "Word 문서"
-        FileFormat.Hwpx -> "한글 문서"
+        FileFormat.Hwpx, FileFormat.Hwp -> "한글 문서"
         FileFormat.Pptx -> "PowerPoint 프레젠테이션"
         FileFormat.Xlsx -> "Excel 통합 문서"
         FileFormat.Bundle -> "파일 묶음"

@@ -39,6 +39,9 @@
                 <data android:mimeType="application/hwp+zip" />
                 <data android:mimeType="application/haansofthwpx" />
                 <data android:mimeType="application/vnd.hancom.hwpx" />
+                <data android:mimeType="application/x-hwp" />
+                <data android:mimeType="application/haansofthwp" />
+                <data android:mimeType="application/vnd.hancom.hwp" />
                 <data android:mimeType="application/octet-stream" />
             </intent-filter>
             <!-- "Share" -->
@@ -57,6 +60,9 @@
                 <data android:mimeType="application/hwp+zip" />
                 <data android:mimeType="application/haansofthwpx" />
                 <data android:mimeType="application/vnd.hancom.hwpx" />
+                <data android:mimeType="application/x-hwp" />
+                <data android:mimeType="application/haansofthwp" />
+                <data android:mimeType="application/vnd.hancom.hwp" />
                 <data android:mimeType="application/octet-stream" />
             </intent-filter>
         </activity>

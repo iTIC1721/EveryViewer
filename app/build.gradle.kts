@@ -62,6 +62,7 @@ dependencies {
     implementation(libs.commonmark.ext.task.list.items)
     implementation(libs.commonmark.ext.autolink)
     implementation(libs.jsoup)
+    implementation(libs.hwplib)
     implementation(libs.androidx.ink.authoring)
     implementation(libs.androidx.ink.brush)
     implementation(libs.androidx.ink.geometry)

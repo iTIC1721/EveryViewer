@@ -8,7 +8,11 @@ import java.io.IOException
 
 /** A file that was read fine but can't be shown. */
 class DocumentOpenException(val reason: Reason) : IOException(reason.name) {
-    enum class Reason { PasswordProtected, NoPages, Unsupported, TooLarge }
+    enum class Reason {
+        PasswordProtected, NoPages, Unsupported, TooLarge,
+        /** Locked by DRM or the like (Hangul's certificate encryption, protected e-books). */
+        Protected,
+    }
 }
 
 /** Page size in the document's own units (PDF points for PDFs); the viewer only uses the ratio. */

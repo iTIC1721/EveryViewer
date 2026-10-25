@@ -40,7 +40,7 @@
 | HTML | html, htm, xhtml | 앱이 직접 그림: 태그 모양과 간단한 CSS(색·글자·여백·테두리·표). 스크립트 실행 없음, 인터넷에서 아무것도 받지 않음 |
 | 이미지 | jpg, png, webp, gif, bmp, heic | 사진 회전 정보 반영 |
 | Word | docx | 문단·글자 모양, 표(병합·테두리·음영), 그림, 머리글/바닥글 |
-| 한글 | hwpx | docx와 같은 범위 + 장평·자간, 줄 간격 % |
+| 한글 | hwpx, hwp | docx와 같은 범위 + 장평·자간, 줄 간격 %. hwp는 hwplib로 읽어 hwpx와 똑같이 그림 |
 | Excel | xlsx, xlsm | 시트마다 사용한 범위를 원래 열 너비·행 높이로. 셀 서식(글꼴·채우기·테두리·맞춤·줄 바꿈), 숫자·날짜 표시 형식, 병합, 넘치는 글, 링크, 그림 |
 | PowerPoint | pptx | 슬라이드 한 장 = 한 페이지. 글상자, 도형, 연결선, 그림, 표, 레이아웃·마스터 |
 
@@ -75,6 +75,7 @@ Windows에서는 `gradlew.bat`을 씁니다.
 | 필기 | [Jetpack Ink](https://developer.android.com/jetpack/androidx/releases/ink) (저지연 획 그리기, 브러시, 직렬화) |
 | 마크다운 | [commonmark-java](https://github.com/commonmark/commonmark-java) + GFM 확장 |
 | HTML | [jsoup](https://jsoup.org/)으로 해석, CSS·조판은 직접 (docx와 같은 조판) |
+| hwp | [hwplib](https://github.com/neolord0/hwplib) (Apache-2.0)로 읽고 hwpx와 같은 모델·조판 |
 | 인코딩 판별 | [juniversalchardet](https://github.com/albfernandez/juniversalchardet) |
 | docx·hwpx·pptx·xlsx | 직접 해석 (zip + XmlPullParser) → 문서·슬라이드 모델 → 용지·슬라이드 단위 조판 |
 | 저장 | Room |

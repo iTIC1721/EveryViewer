@@ -765,7 +765,8 @@ private fun OpenFailure(error: Exception, onRelocate: () -> Unit, onClose: () ->
     val (title, detail) = when {
         missing -> "파일을 찾을 수 없습니다" to "이동되었거나 삭제되었을 수 있습니다."
         reason == DocumentOpenException.Reason.PasswordProtected ->
-            "암호가 걸린 PDF입니다" to "암호 PDF는 아직 지원하지 않습니다."
+            "암호가 걸린 문서입니다" to "암호 문서는 아직 지원하지 않습니다."
+        reason == DocumentOpenException.Reason.Protected -> "보호된 문서입니다" to "DRM 등으로 보호된 문서는 열 수 없습니다."
         reason == DocumentOpenException.Reason.NoPages -> "빈 PDF입니다" to "페이지가 하나도 없습니다."
         reason == DocumentOpenException.Reason.Unsupported -> "이 형식은 열 수 없습니다" to "아직 지원하지 않는 파일 형식입니다."
         reason == DocumentOpenException.Reason.TooLarge -> "파일이 너무 큽니다" to "이 기기에서 열 수 있는 크기를 넘습니다."
