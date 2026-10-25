@@ -88,6 +88,8 @@ class PdfDocument private constructor(
             emptyList()
         } catch (e: StackOverflowError) {
             emptyList()
+        } catch (e: OutOfMemoryError) {
+            emptyList()
         }
         contents = result
         result

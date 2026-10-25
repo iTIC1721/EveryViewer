@@ -78,7 +78,7 @@ object PdfExport {
         val work = File(target.parentFile, "source.tmp")
         try {
             context.contentResolver.openInputStream(uri)?.use { input -> work.outputStream().use { input.copyTo(it) } }
-                ?: throw FileNotFoundException(uri.toString())
+                ?: throw FileNotFoundException()
             coroutineContext.ensureActive()
             val targets = strokes.mapNotNull { (page, list) ->
                 if (page !in 0 until document.pageCount) null
@@ -105,6 +105,13 @@ object PdfExport {
             throw e
         } catch (e: Exception) {
             android.util.Log.w("EveryViewer", "PDF not appended to; exporting pictures", e)
+            target.delete()
+            return null
+        } catch (e: OutOfMemoryError) {
+            // A crafted structure (huge or endlessly nested): the pages as pictures still work.
+            target.delete()
+            return null
+        } catch (e: StackOverflowError) {
             target.delete()
             return null
         } finally {

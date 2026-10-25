@@ -546,7 +546,7 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
     fun isLocked(tabId: String) = openDocuments[tabId]?.locked == true
 
     /** The name an export of [tab] is offered under: the file's name as a PDF. */
-    fun exportName(tab: DocTab) = tab.name.substringBeforeLast('.', tab.name).ifBlank { "document" } + ".pdf"
+    fun exportName(tab: DocTab) = exportFileName(tab.name)
 
     /** Exports tab [tabId] to [destination] (a file the user picked), or for sharing if null. */
     fun startExport(tabId: String, destination: Uri?) {
@@ -556,6 +556,11 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
         exportJob = viewModelScope.launch {
             val dir = File(app.cacheDir, EXPORT_DIR)
             val target = File(dir, exportName(tab))
+            // The name is checked to be plain, but the file must be in the shared folder whatever it is.
+            if (target.parentFile?.canonicalPath != dir.canonicalPath) {
+                _export.value = ExportState.Failed
+                return@launch
+            }
             var document: Document? = null
             try {
                 withContext(Dispatchers.IO) {
@@ -571,15 +576,18 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
                 if (destination != null) {
                     withContext(Dispatchers.IO) {
                         app.contentResolver.openOutputStream(destination, "wt")?.use { out -> target.inputStream().use { it.copyTo(out) } }
-                            ?: throw FileNotFoundException(destination.toString())
+                            ?: throw FileNotFoundException()
                         target.delete()
                     }
                     _export.value = ExportState.Done(null, saved = true)
                 } else {
                     _export.value = ExportState.Done(target, saved = false)
                 }
-            } catch (e: Exception) {
-                if (e !is CancellationException) android.util.Log.w("EveryViewer", "Export failed", e)
+            } catch (e: Throwable) {
+                // Out of memory or stack on a crafted file is a failed export, not a crash.
+                if (e !is Exception && e !is OutOfMemoryError && e !is StackOverflowError) throw e
+                // Only the kind: messages may hold the file's address (and so its name).
+                if (e !is CancellationException) android.util.Log.w("EveryViewer", "Export failed: ${e.javaClass.simpleName}")
                 // The empty file made for it is no use.
                 destination?.let { uri -> withContext(NonCancellable + Dispatchers.IO) { runCatching { DocumentsContract.deleteDocument(app.contentResolver, uri) } } }
                 target.delete()
@@ -610,6 +618,18 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
 
         /** Under the cache folder; the FileProvider shares it (res/xml/export_paths.xml). */
         const val EXPORT_DIR = "export"
+
+        /**
+         * The file name an export of a file named [name] gets: that name as a PDF. The name comes from
+         * the app that gave the file, so it is cut to a plain name: no folders ("../"), no characters
+         * file systems refuse, not hidden, not too long.
+         */
+        fun exportFileName(name: String): String {
+            val base = name.substringBeforeLast('.', name)
+                .map { c -> if (c.code < 32 || c in "/\\:*?\"<>|") '_' else c }.joinToString("")
+                .trim().trimStart('.').trim().take(100)
+            return base.ifBlank { "document" } + ".pdf"
+        }
     }
 }
 

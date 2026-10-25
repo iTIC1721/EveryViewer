@@ -112,6 +112,8 @@ class SlideDocument private constructor(
         if (bounds.outWidth <= 0) return null
         var sample = 1
         while (bounds.outWidth / (sample * 2) >= widthPx && sample < 64) sample *= 2
+        // A small file can claim a huge (or very tall) picture: never more than 16 million pixels.
+        while (bounds.outWidth.toLong() * bounds.outHeight / (sample.toLong() * sample) > MAX_PICTURE_PIXELS) sample *= 2
         pictures[bytes to sample]?.let { return it }
         return try {
             BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
@@ -170,6 +172,7 @@ class SlideDocument private constructor(
 
     companion object {
         private const val PICTURE_CACHE_BYTES = 32 * 1024 * 1024
+        private const val MAX_PICTURE_PIXELS = 16_000_000L
 
         fun layOut(presentation: Presentation): SlideDocument {
             val unit = FLOW_WIDTH / presentation.width

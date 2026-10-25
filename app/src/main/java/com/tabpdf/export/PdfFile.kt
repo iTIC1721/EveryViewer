@@ -37,6 +37,7 @@ class PdfFile(file: RandomAccessFile) {
 
     private val cache = HashMap<Int, Any>()
     private val objectStreams = HashMap<Int, Pair<ByteArray, IntArray>>()
+    private val opening = HashSet<Int>()
 
     init {
         lastXref = findStartXref()
@@ -198,6 +199,10 @@ class PdfFile(file: RandomAccessFile) {
 
     private fun fromObjectStream(streamNum: Int, index: Int): Any {
         val (data, offsets) = objectStreams.getOrPut(streamNum) {
+            // An object stream is never inside another (7.5.7): a crafted file could make it its own.
+            if (entries[streamNum] !is InFile) throw PdfSyntaxException("Object stream not in the file")
+            // Its /Length may not be one of its own objects.
+            if (!opening.add(streamNum)) throw PdfSyntaxException("Object stream needs itself")
             val stream = get(PdfRef(streamNum, 0)) as? PdfStream ?: throw PdfSyntaxException("Object stream expected")
             val n = (stream.dict["N"] as? PdfNumber)?.value?.toInt() ?: throw PdfSyntaxException("No /N")
             val first = (stream.dict["First"] as? PdfNumber)?.value?.toInt() ?: throw PdfSyntaxException("No /First")
@@ -208,7 +213,8 @@ class PdfFile(file: RandomAccessFile) {
                 header.nextWord()
                 first + (header.nextWord().toIntOrNull() ?: throw PdfSyntaxException("Bad object stream"))
             }
-            if (objectStreams.size > 16) objectStreams.clear()
+            opening -= streamNum
+            if (objectStreams.size > 4) objectStreams.clear()
             data to offsets
         }
         if (index !in offsets.indices) throw PdfSyntaxException("Object not in its stream")
@@ -287,6 +293,7 @@ class PdfFile(file: RandomAccessFile) {
         const val MAX_SECTIONS = 1000
         const val MAX_OBJECTS = 10_000_000
         const val MAX_CACHE = 10_000
-        const val MAX_STREAM = 256L * 1024 * 1024
+        /** Structure streams (cross-reference, object streams) are small; a larger one is a crafted file. */
+        const val MAX_STREAM = 32L * 1024 * 1024
     }
 }
