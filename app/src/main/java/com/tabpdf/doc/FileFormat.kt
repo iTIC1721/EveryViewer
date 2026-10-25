@@ -14,6 +14,7 @@ enum class FileFormat(val key: String) {
     Image("image"),
     Docx("docx"),
     Hwpx("hwpx"),
+    Hwp("hwp"),
     Pptx("pptx"),
     Xlsx("xlsx"),
     /** Several files shown as one ([BundleDocument]); never detected, only made in the app. */
@@ -35,7 +36,7 @@ object FileFormats {
 
     /** Known to be something else than text, even if the bytes happen to look like it. */
     private val binaryExtensions = setOf(
-        "hwp", "doc", "ppt", "xls", "odt", "odp", "ods", "epub",
+        "doc", "ppt", "xls", "odt", "odp", "ods", "epub",
         "zip", "apk", "rar", "7z", "gz", "mp3", "mp4", "m4a", "mov", "avi", "mkv",
     )
 
@@ -72,6 +73,7 @@ object FileFormats {
             in imageExtensions -> return FileFormat.Image
             "docx", "docm", "dotx" -> return FileFormat.Docx
             "hwpx" -> return FileFormat.Hwpx
+            "hwp" -> return FileFormat.Hwp
             "pptx", "pptm", "ppsx", "potx" -> return FileFormat.Pptx
             "xlsx", "xlsm", "xltx", "xltm" -> return FileFormat.Xlsx
             in binaryExtensions -> return FileFormat.Unsupported
@@ -86,6 +88,7 @@ object FileFormats {
             type == "application/vnd.openxmlformats-officedocument.presentationml.presentation" -> return FileFormat.Pptx
             type == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" -> return FileFormat.Xlsx
             type in setOf("application/hwp+zip", "application/haansofthwpx", "application/vnd.hancom.hwpx") -> return FileFormat.Hwpx
+            type in setOf("application/x-hwp", "application/haansofthwp", "application/vnd.hancom.hwp") -> return FileFormat.Hwp
         }
         if (!TextDecoding.looksLikeText(head)) return FileFormat.Unsupported
         // Only a file without an extension is taken for a page by its content: notes.txt stays text.
