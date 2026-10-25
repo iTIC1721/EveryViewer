@@ -37,6 +37,7 @@
 | PDF | pdf | Android 기본 렌더러 |
 | 텍스트 | txt, log, csv, json, xml, 소스 코드 등 | 인코딩 자동 판별 (UTF-8, EUC-KR/CP949 등). 크기 제한 없이 앞부분부터 바로 표시 |
 | 마크다운 | md, markdown | 항상 렌더링된 모습으로 표시 (표, 체크박스, 코드 블록, 링크) |
+| HTML | html, htm, xhtml | 앱이 직접 그림: 태그 모양과 간단한 CSS(색·글자·여백·테두리·표). 스크립트 실행 없음, 인터넷에서 아무것도 받지 않음 |
 | 이미지 | jpg, png, webp, gif, bmp, heic | 사진 회전 정보 반영 |
 | Word | docx | 문단·글자 모양, 표(병합·테두리·음영), 그림, 머리글/바닥글 |
 | 한글 | hwpx | docx와 같은 범위 + 장평·자간, 줄 간격 % |
@@ -72,6 +73,7 @@ Windows에서는 `gradlew.bat`을 씁니다.
 | PDF | Android `PdfRenderer` |
 | 필기 | [Jetpack Ink](https://developer.android.com/jetpack/androidx/releases/ink) (저지연 획 그리기, 브러시, 직렬화) |
 | 마크다운 | [commonmark-java](https://github.com/commonmark/commonmark-java) + GFM 확장 |
+| HTML | [jsoup](https://jsoup.org/)으로 해석, CSS·조판은 직접 (docx와 같은 조판) |
 | 인코딩 판별 | [juniversalchardet](https://github.com/albfernandez/juniversalchardet) |
 | docx·hwpx·pptx | 직접 해석 (zip + XmlPullParser) → 문서·슬라이드 모델 → 용지·슬라이드 단위 조판 |
 | 저장 | Room |
@@ -83,6 +85,7 @@ Windows에서는 `gradlew.bat`을 씁니다.
 app/src/main/java/com/tabpdf/
   doc/          형식 판별, 형식별 문서(텍스트·마크다운·이미지), 조판·페이지 나누기, 썸네일
   doc/office/   docx·hwpx·pptx 해석과 조판
+  doc/html/     HTML 해석, CSS 적용
   pdf/          PdfRenderer 래퍼
   ink/          필기 도구·저장·입력 규칙
   tabs/         탭·그룹 구조, ViewModel, 파일 접근
