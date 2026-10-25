@@ -4,6 +4,7 @@ import android.content.Intent
 import android.os.SystemClock
 import android.view.InputDevice
 import android.view.MotionEvent
+import android.view.accessibility.AccessibilityNodeInfo
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -216,5 +217,40 @@ class InkInputTest {
         onMain { vm.setInkMode(false) }
         drag(0.2f, 0.3f, 0.8f, 0.3f, MotionEvent.TOOL_TYPE_STYLUS)
         assertEquals("handwriting off: even a pen doesn't draw", 2, strokeCount())
+    }
+
+    @Test
+    fun fingerButtonLetsFingersDrawUntilThePenIsBack() {
+        drag(0.2f, 0.5f, 0.8f, 0.5f, MotionEvent.TOOL_TYPE_STYLUS)
+        drag(0.2f, 0.6f, 0.8f, 0.6f, MotionEvent.TOOL_TYPE_FINGER)
+        assertEquals("pen in use: the finger doesn't draw", 1, strokeCount())
+
+        // The pen put away: the toolbar's finger button.
+        pressFingerButton()
+        drag(0.2f, 0.6f, 0.8f, 0.6f, MotionEvent.TOOL_TYPE_FINGER)
+        assertEquals("the finger draws again", 2, strokeCount())
+
+        drag(0.2f, 0.4f, 0.8f, 0.4f, MotionEvent.TOOL_TYPE_STYLUS)
+        assertTrue("the pen back ends it", !onMain { vm.settings.fingersToo.value })
+        drag(0.2f, 0.3f, 0.8f, 0.3f, MotionEvent.TOOL_TYPE_FINGER)
+        assertEquals("…and the finger stops drawing", 3, strokeCount())
+    }
+
+    /** Finds the button as a screen reader would, by its description, and presses it. */
+    private fun pressFingerButton() {
+        fun find(n: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
+            if (n == null) return null
+            if (n.contentDescription == "손가락으로 그리기") return n
+            return (0 until n.childCount).firstNotNullOfOrNull { find(n.getChild(it)) }
+        }
+        var button: AccessibilityNodeInfo? = null
+        waitUntil("the finger button shows once a pen is used") {
+            button = find(instrumentation.uiAutomation.rootInActiveWindow)
+            button != null
+        }
+        var clickable = button
+        while (clickable != null && !clickable.isClickable) clickable = clickable.parent
+        assertTrue(clickable!!.performAction(AccessibilityNodeInfo.ACTION_CLICK))
+        waitUntil("fingers draw") { onMain { vm.settings.fingersToo.value } }
     }
 }

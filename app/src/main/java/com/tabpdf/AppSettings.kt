@@ -10,7 +10,7 @@ import kotlinx.coroutines.flow.asStateFlow
 
 /** When a finger draws in handwriting mode (기획서 5.8.3). */
 enum class FingerDrawing(val key: String) {
-    /** Until a pen has been used on this device. */
+    /** Until a pen has been used on this device; then by the toolbar's finger button. */
     Auto("auto"),
     Always("always"),
     Never("never"),
@@ -113,9 +113,22 @@ class AppSettings(context: Context) {
     val stylusSeen: StateFlow<Boolean> = _stylusSeen.asStateFlow()
 
     fun markStylusSeen() {
+        if (_fingersToo.value) setFingersToo(false)
         if (_stylusSeen.value) return
         _stylusSeen.value = true
         prefs.edit().putBoolean(STYLUS_SEEN, true).apply()
+    }
+
+    /**
+     * Fingers draw for now although a pen has been seen (the toolbar's finger button, with the pen
+     * put away); the pen touching or hovering again ends it.
+     */
+    private val _fingersToo = MutableStateFlow(prefs.getBoolean(FINGERS_TOO, false))
+    val fingersToo: StateFlow<Boolean> = _fingersToo.asStateFlow()
+
+    fun setFingersToo(on: Boolean) {
+        _fingersToo.value = on
+        prefs.edit().putBoolean(FINGERS_TOO, on).apply()
     }
 
     /** Holding the pen's side button erases (기획서 5.8.4). */
@@ -134,6 +147,7 @@ class AppSettings(context: Context) {
         const val INK_TOOL = "ink_tool"
         const val FINGER_DRAWING = "ink_finger_drawing"
         const val STYLUS_SEEN = "ink_stylus_seen"
+        const val FINGERS_TOO = "ink_fingers_too"
         const val SIDE_BUTTON_ERASES = "ink_side_button_erases"
         const val MAX_RECENT_COLORS = 4
     }
