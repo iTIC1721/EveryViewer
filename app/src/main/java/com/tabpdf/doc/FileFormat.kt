@@ -15,6 +15,7 @@ enum class FileFormat(val key: String) {
     Docx("docx"),
     Hwpx("hwpx"),
     Pptx("pptx"),
+    Xlsx("xlsx"),
     /** Several files shown as one ([BundleDocument]); never detected, only made in the app. */
     Bundle("bundle"),
     /** Nothing we can show. Detected again on every open, so a later version can take it over. */
@@ -34,7 +35,7 @@ object FileFormats {
 
     /** Known to be something else than text, even if the bytes happen to look like it. */
     private val binaryExtensions = setOf(
-        "xlsx", "hwp", "doc", "ppt", "xls", "odt", "odp", "ods", "epub",
+        "hwp", "doc", "ppt", "xls", "odt", "odp", "ods", "epub",
         "zip", "apk", "rar", "7z", "gz", "mp3", "mp4", "m4a", "mov", "avi", "mkv",
     )
 
@@ -72,6 +73,7 @@ object FileFormats {
             "docx", "docm", "dotx" -> return FileFormat.Docx
             "hwpx" -> return FileFormat.Hwpx
             "pptx", "pptm", "ppsx", "potx" -> return FileFormat.Pptx
+            "xlsx", "xlsm", "xltx", "xltm" -> return FileFormat.Xlsx
             in binaryExtensions -> return FileFormat.Unsupported
         }
         val type = mime?.lowercase()
@@ -82,6 +84,7 @@ object FileFormats {
             type != null && type.startsWith("image/") -> return FileFormat.Image
             type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document" -> return FileFormat.Docx
             type == "application/vnd.openxmlformats-officedocument.presentationml.presentation" -> return FileFormat.Pptx
+            type == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" -> return FileFormat.Xlsx
             type in setOf("application/hwp+zip", "application/haansofthwpx", "application/vnd.hancom.hwpx") -> return FileFormat.Hwpx
         }
         if (!TextDecoding.looksLikeText(head)) return FileFormat.Unsupported
