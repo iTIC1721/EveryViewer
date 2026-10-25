@@ -141,6 +141,8 @@ class BundleDocument private constructor(
     /** A file of the bundle, or null where it couldn't be opened. */
     private class Part(val item: BundleItem, val document: Document?)
 
+    override val locked: Boolean get() = parts.any { it.document?.locked == true }
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val _progress = MutableStateFlow(snapshot())
     override val progress: StateFlow<LayoutProgress> = _progress.asStateFlow()

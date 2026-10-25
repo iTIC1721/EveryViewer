@@ -10,6 +10,8 @@ import java.io.IOException
 class DocumentOpenException(val reason: Reason) : IOException(reason.name) {
     enum class Reason {
         PasswordProtected, NoPages, Unsupported, TooLarge,
+        /** The password typed for it doesn't open it. */
+        WrongPassword,
         /** Locked by DRM or the like (Hangul's certificate encryption, protected e-books). */
         Protected,
     }
@@ -48,6 +50,9 @@ interface Document {
      * for documents laid out in full when opened.
      */
     val progress: StateFlow<LayoutProgress>? get() = null
+
+    /** Opened with a password: nothing of it is kept on disk (thumbnails stay in memory). */
+    val locked: Boolean get() = false
 
     /** Something the reader should be told when the document is shown (it is shown other than usual). */
     val notice: String? get() = null

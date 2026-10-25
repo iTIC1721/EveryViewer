@@ -53,21 +53,24 @@ object Thumbnails {
             val dir = File(context.cacheDir, DIR).apply { mkdirs() }
             val file = File(dir, "$key.png")
             val bitmap = file.takeIf { it.exists() }?.let { BitmapFactory.decodeFile(it.path) }
-                ?: render(context, tab, page)?.also { rendered ->
+                ?: render(context, tab, page)?.let { (rendered, locked) ->
                     // One file per tab: drop thumbnails of pages it no longer shows.
                     dir.listFiles { f -> f.name.startsWith("$tabId-") }?.forEach { it.delete() }
-                    file.outputStream().use { rendered.compress(Bitmap.CompressFormat.PNG, 100, it) }
+                    // A file opened with a password stays off the disk, its pictures too.
+                    if (!locked) file.outputStream().use { rendered.compress(Bitmap.CompressFormat.PNG, 100, it) }
+                    rendered
                 }
             bitmap?.also { memory.put(key, it) }
         }
     }
 
-    private suspend fun render(context: Context, tab: DocTab, page: Int): Bitmap? = renders.withPermit {
+    /** The page, and whether its file was opened with a password. */
+    private suspend fun render(context: Context, tab: DocTab, page: Int): Pair<Bitmap, Boolean>? = renders.withPermit {
         try {
             val document = Documents.open(context, tab.uri, tab.name, tab.format)
             try {
                 document.awaitPages(page + 1)
-                document.renderPage(page.coerceIn(0, document.pageCount - 1), WIDTH_PX)
+                document.renderPage(page.coerceIn(0, document.pageCount - 1), WIDTH_PX)?.let { it to document.locked }
             } finally {
                 document.close()
             }

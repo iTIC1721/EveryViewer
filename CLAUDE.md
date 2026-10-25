@@ -57,7 +57,7 @@ adb shell am start -n com.tabpdf/.MainActivity --ez debug_open_test_files true
 - 에뮬레이터는 두 개다: C 드라이브 SDK의 `Pixel_4_XL_API_30`(Android 11)과, C 드라이브 용량 때문에 D 드라이브에 둔 `Pixel_6_API_35`(Android 15; SDK `D:\Android\sdk`, AVD `D:\Android\avd`, `platform-tools`는 C SDK로 연결). Android 15 실행:
   `$env:ANDROID_AVD_HOME='D:\Android\avd'; $env:ANDROID_SDK_ROOT='D:\Android\sdk'; $env:ANDROID_HOME='D:\Android\sdk'; & D:\Android\sdk\emulator\emulator.exe -avd Pixel_6_API_35`
   (`ANDROID_HOME`도 지정해야 한다: 시스템에 C 드라이브 SDK로 잡혀 있으면 그쪽에서 시스템 이미지를 찾다 실패한다)
-- 텍스트 검색·선택·PDF 링크: PDF에서는 Android 12+(SDK 확장 13)·15+에서만 동작하므로 Android 11 에뮬레이터에서는 결과가 없다. PDF는 Android 15 에뮬레이터로, 다른 형식은 계측 테스트 `SearchTest`·`PptxTest`로 확인한다. PDF 링크는 `PdfLinkTest`(테스트 assets의 `links.pdf`). adb `input text`로는 한글을 입력할 수 없다.
+- 텍스트 검색·선택·PDF 링크: PDF에서는 Android 12+(SDK 확장 13)·15+에서만 동작하므로 Android 11 에뮬레이터에서는 결과가 없다. PDF는 Android 15 에뮬레이터로, 다른 형식은 계측 테스트 `SearchTest`·`PptxTest`로 확인한다. PDF 링크는 `PdfLinkTest`(테스트 assets의 `links.pdf`), 암호 PDF는 `PdfPasswordTest`(`locked.pdf`, 암호 1234; Android 11에서는 열 수 없음을 확인). adb `input text`로는 한글을 입력할 수 없다.
 - adb `input` 명령은 하나에 수백 ms가 걸려 실제 손가락보다 훨씬 느리다. 끌기처럼 시간에 민감한 제스처는 한 번의 `adb shell "..."` 안에 이어서 보낸다.
 - 닫기 후 실행 취소 스낵바는 약 10초. 스크립트로 확인할 때는 닫기와 실행 취소를 한 번에 보낸다.
 - Git Bash에서 adb 경로 인자(`/sdcard/...`)가 Windows 경로로 바뀌지 않게 `MSYS_NO_PATHCONV=1`을 설정한다.
