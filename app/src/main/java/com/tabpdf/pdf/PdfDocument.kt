@@ -9,8 +9,10 @@ import android.graphics.RectF
 import android.graphics.pdf.content.PdfPageGotoLinkContent
 import android.graphics.pdf.content.PdfPageLinkContent
 import android.graphics.pdf.models.selection.SelectionBoundary
+import android.graphics.pdf.LoadParams
 import android.graphics.pdf.PdfRenderer
 import android.graphics.pdf.PdfRendererPreV
+import android.graphics.pdf.RenderParams
 import android.os.Build
 import android.os.ext.SdkExtensions
 import androidx.annotation.ChecksSdkIntAtLeast
@@ -41,11 +43,19 @@ import kotlin.math.roundToInt
  */
 class PdfDocument private constructor(
     private val fd: ParcelFileDescriptor,
-    private val renderer: PdfRenderer,
+    /**
+     * Android's [PdfRenderer]; or, for a file opened with a password on Android 12–14, the newer
+     * [PdfRendererPreV] a system update brings there (the older one can't take passwords).
+     */
+    private val renderer: AutoCloseable,
     override val pageSizes: List<PageSize>,
     /** Opens the file again (for the search-capable renderer of Android 12–14). */
     private val reopen: () -> ParcelFileDescriptor?,
+    /** The password it was opened with, if it needed one (기획서 5.5 암호 PDF). */
+    private val password: String?,
 ) : Document {
+    override val locked: Boolean get() = password != null
+
     private val mutex = Mutex()
     private var closed = false
 
@@ -67,8 +77,12 @@ class PdfDocument private constructor(
             }
             // PDF pages are transparent by default; paper should be white.
             bitmap.eraseColor(Color.WHITE)
-            renderer.openPage(index).use { page ->
-                page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+            if (renderer is PdfRenderer) {
+                renderer.openPage(index).use { page ->
+                    page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                }
+            } else if (preVSearch) {
+                renderPreV(index, bitmap)
             }
             bitmap
         }
@@ -100,16 +114,24 @@ class PdfDocument private constructor(
         result
     }
 
+    @RequiresExtension(extension = Build.VERSION_CODES.S, version = 13)
+    private fun renderPreV(index: Int, bitmap: Bitmap) {
+        (renderer as PdfRendererPreV).openPage(index).use { page ->
+            page.render(bitmap, null, null, RenderParams.Builder(RenderParams.RENDER_MODE_FOR_DISPLAY).build())
+        }
+    }
+
+    /** On Android 15 the renderer is always [PdfRenderer] (it takes passwords there). */
+    @get:RequiresApi(35)
+    private val platform: PdfRenderer get() = renderer as PdfRenderer
+
     @RequiresApi(35)
     private fun searchPage(index: Int, query: String): List<List<RectF>> =
-        renderer.openPage(index).use { page -> page.searchText(query).map { it.bounds } }
+        platform.openPage(index).use { page -> page.searchText(query).map { it.bounds } }
 
     @RequiresExtension(extension = Build.VERSION_CODES.S, version = 13)
     private fun searchPagePreV(index: Int, query: String): List<List<RectF>> {
-        val r = (searcher as? PdfRendererPreV) ?: run {
-            val file = reopen() ?: return emptyList()
-            PdfRendererPreV(file).also { searcher = it }
-        }
+        val r = preV() ?: return emptyList()
         return r.openPage(index).use { page -> page.searchText(query).map { it.bounds } }
     }
 
@@ -136,16 +158,13 @@ class PdfDocument private constructor(
 
     @RequiresApi(35)
     private fun selectOnPage(index: Int, start: Point, stop: Point): List<Pair<String, List<RectF>>>? =
-        renderer.openPage(index).use { page ->
+        platform.openPage(index).use { page ->
             page.selectContent(SelectionBoundary(start), SelectionBoundary(stop))?.selectedTextContents?.map { it.text to it.bounds }
         }
 
     @RequiresExtension(extension = Build.VERSION_CODES.S, version = 13)
     private fun selectOnPagePreV(index: Int, start: Point, stop: Point): List<Pair<String, List<RectF>>>? {
-        val r = (searcher as? PdfRendererPreV) ?: run {
-            val file = reopen() ?: return null
-            PdfRendererPreV(file).also { searcher = it }
-        }
+        val r = preV() ?: return null
         return r.openPage(index).use { page ->
             page.selectContent(SelectionBoundary(start), SelectionBoundary(stop))?.selectedTextContents?.map { it.text to it.bounds }
         }
@@ -169,7 +188,7 @@ class PdfDocument private constructor(
     }
 
     private fun readLinks(index: Int): List<Pair<List<RectF>, Link>> = when {
-        Build.VERSION.SDK_INT >= 35 -> renderer.openPage(index).use { page -> linksOf(index, page.linkContents, page.gotoLinks) }
+        Build.VERSION.SDK_INT >= 35 -> platform.openPage(index).use { page -> linksOf(index, page.linkContents, page.gotoLinks) }
         preVSearch -> preV()?.openPage(index)?.use { page -> linksOf(index, page.linkContents, page.gotoLinks) }.orEmpty()
         else -> emptyList()
     }
@@ -192,8 +211,10 @@ class PdfDocument private constructor(
         return result
     }
 
+    /** Android 12–14's renderer that can search: the one in use if the file needed a password, else opened once. */
     @RequiresExtension(extension = Build.VERSION_CODES.S, version = 13)
-    private fun preV(): PdfRendererPreV? = (searcher as? PdfRendererPreV) ?: reopen()?.let { file -> PdfRendererPreV(file).also { searcher = it } }
+    private fun preV(): PdfRendererPreV? = renderer as? PdfRendererPreV ?: searcher as? PdfRendererPreV
+        ?: reopen()?.let { file -> PdfRendererPreV(file).also { searcher = it } }
 
     override suspend fun close() = withContext(NonCancellable + Dispatchers.IO) {
         mutex.withLock {
@@ -215,31 +236,70 @@ class PdfDocument private constructor(
             Build.VERSION.SDK_INT >= 31 && SdkExtensions.getExtensionVersion(Build.VERSION_CODES.S) >= 13
         }
 
-        /** Opens [uri] for reading. Throws if the file is missing, unreadable or not a valid PDF. */
+        /**
+         * Whether this device opens PDFs that need a password: Android's PDF support takes one on
+         * Android 15, and on 12–14 with the system update that brings it (as for text search).
+         */
+        val takesPasswords: Boolean get() = Build.VERSION.SDK_INT >= 35 || preVSearch
+
+        /**
+         * Opens [uri] for reading, with the password typed for it in this run if any ([PdfPasswords]).
+         * Throws if the file is missing, unreadable or not a valid PDF; [DocumentOpenException.Reason.PasswordProtected]
+         * if it needs a password, [DocumentOpenException.Reason.WrongPassword] if the one typed doesn't open it.
+         */
         suspend fun open(context: Context, uri: Uri): PdfDocument = withContext(Dispatchers.IO) {
+            val password = PdfPasswords[uri]?.takeIf { takesPasswords }
             val fd = context.contentResolver.openFileDescriptor(uri, "r")
                 ?: throw FileNotFoundException(uri.toString())
             try {
                 val renderer = try {
-                    PdfRenderer(fd)
+                    when {
+                        password == null -> PdfRenderer(fd)
+                        Build.VERSION.SDK_INT >= 35 -> PdfRenderer(fd, loadParams(password))
+                        else -> openPreV(fd, password)
+                    }
                 } catch (e: SecurityException) {
-                    // PdfRenderer's way of saying the file is encrypted.
-                    throw DocumentOpenException(DocumentOpenException.Reason.PasswordProtected)
+                    // The renderer's way of saying the file is encrypted, or the password is wrong.
+                    if (password == null) throw DocumentOpenException(DocumentOpenException.Reason.PasswordProtected)
+                    PdfPasswords.remove(uri)
+                    throw DocumentOpenException(DocumentOpenException.Reason.WrongPassword)
                 }
-                if (renderer.pageCount == 0) {
+                val sizes = try {
+                    pageSizesOf(renderer)
+                } catch (e: Exception) {
+                    renderer.close()
+                    throw e
+                }
+                if (sizes.isEmpty()) {
                     renderer.close()
                     throw DocumentOpenException(DocumentOpenException.Reason.NoPages)
                 }
-                // Reading every page size costs ~0.4 ms a page (1000 pages ≈ 0.4 s on an emulator).
-                val sizes = (0 until renderer.pageCount).map { i ->
-                    renderer.openPage(i).use { PageSize(it.width.toFloat(), it.height.toFloat()) }
-                }
                 val app = context.applicationContext
-                PdfDocument(fd, renderer, sizes) { app.contentResolver.openFileDescriptor(uri, "r") }
+                PdfDocument(fd, renderer, sizes, { app.contentResolver.openFileDescriptor(uri, "r") }, password)
             } catch (e: Exception) {
                 fd.close()
                 throw e
             }
         }
+
+        // Reading every page size costs ~0.4 ms a page (1000 pages ≈ 0.4 s on an emulator).
+        private fun pageSizesOf(renderer: AutoCloseable): List<PageSize> = when {
+            renderer is PdfRenderer -> (0 until renderer.pageCount).map { i ->
+                renderer.openPage(i).use { PageSize(it.width.toFloat(), it.height.toFloat()) }
+            }
+            preVSearch -> pageSizesPreV(renderer as PdfRendererPreV)
+            else -> emptyList()
+        }
+
+        @RequiresExtension(extension = Build.VERSION_CODES.S, version = 13)
+        private fun pageSizesPreV(renderer: PdfRendererPreV): List<PageSize> = (0 until renderer.pageCount).map { i ->
+            renderer.openPage(i).use { PageSize(it.width.toFloat(), it.height.toFloat()) }
+        }
+
+        @RequiresExtension(extension = Build.VERSION_CODES.S, version = 13)
+        private fun loadParams(password: String): LoadParams = LoadParams.Builder().setPassword(password).build()
+
+        @RequiresExtension(extension = Build.VERSION_CODES.S, version = 13)
+        private fun openPreV(fd: ParcelFileDescriptor, password: String): PdfRendererPreV = PdfRendererPreV(fd, loadParams(password))
     }
 }

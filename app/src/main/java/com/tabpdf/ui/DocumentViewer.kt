@@ -51,6 +51,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -89,6 +95,8 @@ import androidx.compose.ui.graphics.BlendMode
 import com.tabpdf.doc.DocumentOpenException
 import com.tabpdf.doc.Documents
 import com.tabpdf.doc.FileFormat
+import com.tabpdf.pdf.PdfDocument
+import com.tabpdf.pdf.PdfPasswords
 import com.tabpdf.ink.INK_PAGE_WIDTH
 import com.tabpdf.ink.InkBinding
 import com.tabpdf.ink.InkPainter
@@ -178,7 +186,10 @@ fun DocumentViewer(
     val currentOnDocumentOpened by rememberUpdatedState(onDocumentOpened)
     val currentOnDocument by rememberUpdatedState(onDocument)
 
-    LaunchedEffect(uri, revision, format) {
+    // Raised when a password is typed for a locked PDF: open it again with that.
+    var attempt by remember { mutableStateOf(0) }
+
+    LaunchedEffect(uri, revision, format, attempt) {
         error = null
         val doc = try {
             // Not cancellable, so a document opened just as the page leaves is still closed below.
@@ -223,7 +234,17 @@ fun DocumentViewer(
         val doc = document
         val failure = error
         when {
-            failure != null -> OpenFailure(failure, onRelocate, onClose, Modifier.align(Alignment.Center))
+            failure != null -> OpenFailure(
+                failure, onRelocate, onClose,
+                pdf = format == FileFormat.Pdf,
+                onPassword = if (format == FileFormat.Pdf && PdfDocument.takesPasswords) {
+                    { password ->
+                        PdfPasswords[uri] = password
+                        attempt++
+                    }
+                } else null,
+                Modifier.align(Alignment.Center),
+            )
             doc == null -> CircularProgressIndicator(Modifier.align(Alignment.Center))
             else -> DocumentPages(
                 document = doc,
@@ -755,17 +776,30 @@ private fun PageImage(
 
 private fun IntSize.toSize() = androidx.compose.ui.geometry.Size(width.toFloat(), height.toFloat())
 
-/** Missing or unreadable file: say so and offer to find it again or close the tab (기획서 5.3). */
+/**
+ * Missing or unreadable file: say so and offer to find it again or close the tab (기획서 5.3).
+ * A locked PDF asks for its password where the device can take one ([onPassword]).
+ */
 @Composable
-private fun OpenFailure(error: Exception, onRelocate: () -> Unit, onClose: () -> Unit, modifier: Modifier) {
+private fun OpenFailure(
+    error: Exception,
+    onRelocate: () -> Unit,
+    onClose: () -> Unit,
+    pdf: Boolean,
+    onPassword: ((String) -> Unit)?,
+    modifier: Modifier,
+) {
     // A SecurityException here comes from opening the file (access lost), not from PdfRenderer —
     // PdfDocument turns the renderer's one into PasswordProtected.
     val missing = error is FileNotFoundException || error is SecurityException
     val reason = (error as? DocumentOpenException)?.reason
+    val wrongPassword = reason == DocumentOpenException.Reason.WrongPassword
+    val asksPassword = onPassword != null && (reason == DocumentOpenException.Reason.PasswordProtected || wrongPassword)
     val (title, detail) = when {
         missing -> "파일을 찾을 수 없습니다" to "이동되었거나 삭제되었을 수 있습니다."
-        reason == DocumentOpenException.Reason.PasswordProtected ->
-            "암호가 걸린 문서입니다" to "암호 문서는 아직 지원하지 않습니다."
+        asksPassword -> "암호가 걸린 문서입니다" to "문서를 열려면 암호를 입력하세요."
+        reason == DocumentOpenException.Reason.PasswordProtected || wrongPassword ->
+            "암호가 걸린 문서입니다" to if (pdf) "이 기기에서는 암호 PDF를 열 수 없습니다." else "암호 문서는 아직 지원하지 않습니다."
         reason == DocumentOpenException.Reason.Protected -> "보호된 문서입니다" to "DRM 등으로 보호된 문서는 열 수 없습니다."
         reason == DocumentOpenException.Reason.NoPages -> "빈 PDF입니다" to "페이지가 하나도 없습니다."
         reason == DocumentOpenException.Reason.Unsupported -> "이 형식은 열 수 없습니다" to "아직 지원하지 않는 파일 형식입니다."
@@ -777,10 +811,30 @@ private fun OpenFailure(error: Exception, onRelocate: () -> Unit, onClose: () ->
         Spacer(Modifier.height(4.dp))
         Text(detail, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(16.dp))
+        // Not saved with the screen's state: a password stays in memory only (기획서 5.5).
+        var password by remember { mutableStateOf("") }
+        val submit = { if (password.isNotEmpty()) onPassword?.invoke(password) }
+        if (asksPassword) {
+            OutlinedTextField(
+                value = password,
+                onValueChange = { password = it },
+                label = { Text("암호") },
+                singleLine = true,
+                isError = wrongPassword,
+                supportingText = if (wrongPassword) {
+                    { Text("암호가 맞지 않습니다.") }
+                } else null,
+                visualTransformation = PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = { submit() }),
+            )
+            Spacer(Modifier.height(8.dp))
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(onClick = onClose) { Text("탭 닫기") }
             // Finding the file again only helps when it went missing.
             if (missing) Button(onClick = onRelocate) { Text("다시 찾기") }
+            if (asksPassword) Button(onClick = submit, enabled = password.isNotEmpty()) { Text("열기") }
         }
     }
 }
