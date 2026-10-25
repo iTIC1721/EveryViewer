@@ -156,6 +156,8 @@ fun DocumentViewer(
     pageJump: PageJump?,
     onPageJumpHandled: (PageJump) -> Unit,
     onDocumentOpened: (pageCount: Int) -> Unit,
+    /** The document while it is shown, then null once it is let go of. */
+    onDocument: (Document?) -> Unit = {},
     /** The tab's handwriting, all pages. */
     strokes: List<InkStroke>,
     /** Set while handwriting mode is on (기획서 5.8). */
@@ -174,6 +176,7 @@ fun DocumentViewer(
     var document by remember { mutableStateOf<Document?>(null) }
     var error by remember { mutableStateOf<Exception?>(null) }
     val currentOnDocumentOpened by rememberUpdatedState(onDocumentOpened)
+    val currentOnDocument by rememberUpdatedState(onDocument)
 
     LaunchedEffect(uri, revision, format) {
         error = null
@@ -190,10 +193,12 @@ fun DocumentViewer(
             // A document still being laid out is shown once it reaches the page last read.
             doc.awaitPages(initialState.page + 1)
             document = doc
+            currentOnDocument(doc)
             currentOnDocumentOpened(doc.pageCount)
             doc.progress?.collect { currentOnDocumentOpened(it.pages) } ?: awaitCancellation()
         } finally {
             document = null
+            currentOnDocument(null)
             doc.close()
         }
     }

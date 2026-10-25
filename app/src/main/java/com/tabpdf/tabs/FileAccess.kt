@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.provider.OpenableColumns
+import com.tabpdf.doc.Bundles
 import com.tabpdf.doc.FileFormat
 import com.tabpdf.doc.FileFormats
 import kotlinx.coroutines.Dispatchers
@@ -34,14 +35,34 @@ object FileAccess {
     }
 
     /** Frees what [tab] held, once no tab uses its file any more. */
-    suspend fun release(context: Context, tab: DocTab) = withContext(Dispatchers.IO) {
-        if (tab.isInternalCopy) {
-            tab.uri.path?.let { File(it).delete() }
-        } else if (tab.uri.scheme == "content") {
+    suspend fun release(context: Context, tab: DocTab) = release(context, tab.uri, tab.isInternalCopy)
+
+    /** Frees file [uri] (a copy is deleted, a grant given back), once nothing uses it any more. */
+    suspend fun release(context: Context, uri: Uri, isInternalCopy: Boolean) = withContext(Dispatchers.IO) {
+        if (isInternalCopy) {
+            uri.path?.let { File(it).delete() }
+        } else if (uri.scheme == "content") {
             try {
-                context.contentResolver.releasePersistableUriPermission(tab.uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                context.contentResolver.releasePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
             } catch (_: SecurityException) {
                 // Never had a persistable grant.
+            }
+        }
+    }
+
+    /**
+     * Every file the given tabs use: their own, and for a bundle (기획서 5.1), the files it lists.
+     * A file in a bundle and in a tab of its own (or in two bundles) is freed only when none is left.
+     */
+    fun filesInUse(tabs: List<Pair<Uri, FileFormat>>): Set<Uri> = buildSet {
+        for ((uri, format) in tabs) {
+            add(uri)
+            if (format == FileFormat.Bundle) {
+                try {
+                    Bundles.read(uri).forEach { add(it.uri) }
+                } catch (_: Exception) {
+                    // A broken list holds nothing.
+                }
             }
         }
     }
@@ -62,6 +83,9 @@ object FileAccess {
             }
         }
         File(context.filesDir, COPY_DIR).listFiles()?.forEach { file ->
+            if (Uri.fromFile(file) !in inUse && file.lastModified() < before) file.delete()
+        }
+        Bundles.dir(context).listFiles()?.forEach { file ->
             if (Uri.fromFile(file) !in inUse && file.lastModified() < before) file.delete()
         }
     }

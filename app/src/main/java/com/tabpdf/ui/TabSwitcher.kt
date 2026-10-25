@@ -548,7 +548,7 @@ private fun EmptyTabs(onOpen: () -> Unit) {
  * animate into their new places; the dragged one is placed directly under the finger instead.
  */
 @Composable
-private fun LazyGridItemScope.DraggableCard(
+fun LazyGridItemScope.DraggableCard(
     key: String,
     gestures: ItemGestureState,
     isMergeTarget: Boolean,
@@ -597,15 +597,15 @@ private fun <T : TopItem> MutableList<T>.move(from: Any, to: Any) {
     if (fromIndex >= 0 && toIndex >= 0) add(toIndex, removeAt(fromIndex))
 }
 
-private fun LazyGridState.keyAt(position: Offset): Any? =
+fun LazyGridState.keyAt(position: Offset): Any? =
     layoutInfo.visibleItemsInfo.firstOrNull { IntRect(it.offset, it.size).contains(position.round()) }?.key
 
-private fun LazyGridState.rectOf(key: Any): Rect? =
+fun LazyGridState.rectOf(key: Any): Rect? =
     layoutInfo.visibleItemsInfo.firstOrNull { it.key == key }?.let { IntRect(it.offset, it.size).toRect() }
 
 // ---- Cards ----
 
-private val CardShape = RoundedCornerShape(12.dp)
+val CardShape = RoundedCornerShape(12.dp)
 
 @Composable
 private fun TabCard(tab: DocTab, page: Int, isCurrent: Boolean, onClose: () -> Unit) {
@@ -694,7 +694,7 @@ private fun GroupCard(
 
 /** A plain clickable circle: IconButton would force a 48dp box that overflows the card corner. */
 @Composable
-private fun CloseBadge(description: String, onClick: () -> Unit, modifier: Modifier) {
+fun CloseBadge(description: String, onClick: () -> Unit, modifier: Modifier) {
     Box(
         modifier
             .padding(6.dp)
@@ -709,7 +709,7 @@ private fun CloseBadge(description: String, onClick: () -> Unit, modifier: Modif
 }
 
 @Composable
-private fun Thumbnail(tab: DocTab, page: Int, modifier: Modifier) {
+fun Thumbnail(tab: DocTab, page: Int, modifier: Modifier) {
     val context = LocalContext.current
     // null while loading; a failed load (missing or unreadable file) gives Result.failure.
     val inkStore = LocalInkStore.current

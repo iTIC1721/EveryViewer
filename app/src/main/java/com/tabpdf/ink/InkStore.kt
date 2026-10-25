@@ -120,6 +120,27 @@ class InkStore(private val app: TabPdfApp, private val scope: CoroutineScope) {
         _history.value++
     }
 
+    /**
+     * Tab [tabId]'s pages were rearranged (a bundle edited): each stroke goes to [move] of its
+     * page, or away if that is null. Undo history is dropped — it was about the old pages.
+     */
+    fun movePages(tabId: String, move: (Int) -> Int?) {
+        val ink = tab(tabId)
+        val moved = mutableListOf<InkStroke>()
+        val gone = mutableListOf<InkStroke>()
+        for (s in ink.strokes.value) {
+            val page = move(s.page)
+            if (page == null) gone += s else if (page != s.page) moved += InkStroke(s.id, page, s.seq, s.tool, s.stroke)
+        }
+        val movedIds = moved.associateBy { it.id }
+        ink.strokes.value = ink.strokes.value.filterNot { s -> gone.any { it.id == s.id } }.map { movedIds[it.id] ?: it }
+        ink.undo.clear()
+        ink.redo.clear()
+        _history.value++
+        if (gone.isNotEmpty()) delete(gone)
+        if (moved.isNotEmpty()) save(tabId, moved)
+    }
+
     /** The tabs are gone for good (their undo offer ended): drop their strokes. */
     fun forget(tabIds: List<String>) {
         tabIds.forEach { tabs.remove(it) }

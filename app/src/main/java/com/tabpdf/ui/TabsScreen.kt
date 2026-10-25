@@ -53,6 +53,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.input.ImeAction
+import com.tabpdf.doc.FileFormat
 import com.tabpdf.doc.TextSearch
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
@@ -102,7 +103,13 @@ private val TOP_BAR_HEIGHT = 56.dp
  * [onOpenFiles] opens the file picker for a group, or for ungrouped tabs (null).
  */
 @Composable
-fun TabsScreen(viewModel: TabsViewModel, onOpenFiles: (groupId: String?) -> Unit, onRelocate: (DocTab) -> Unit) {
+fun TabsScreen(
+    viewModel: TabsViewModel,
+    onOpenFiles: (groupId: String?) -> Unit,
+    onRelocate: (DocTab) -> Unit,
+    /** Opens the file picker for files to add to the bundle being edited. */
+    onAddToBundle: () -> Unit,
+) {
     // Loading the saved session takes a few ms; show just the background until then, so the pager
     // can start on the saved tab instead of jumping to it.
     val session = viewModel.state.collectAsState().value ?: run {
@@ -110,6 +117,8 @@ fun TabsScreen(viewModel: TabsViewModel, onOpenFiles: (groupId: String?) -> Unit
         return
     }
     val undoOffer by viewModel.undoOffer.collectAsState()
+    val openChoice by viewModel.openChoice.collectAsState()
+    val bundleEdit by viewModel.bundleEdit.collectAsState()
     var barsVisible by rememberSaveable { mutableStateOf(true) }
     var showSwitcher by rememberSaveable { mutableStateOf(false) }
     var openGroupId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -178,8 +187,19 @@ fun TabsScreen(viewModel: TabsViewModel, onOpenFiles: (groupId: String?) -> Unit
             SettingsScreen(viewModel.settings, onDismiss = { showSettings = false })
         }
 
+        bundleEdit?.let { edit -> BundleEditor(edit, viewModel, onAddFiles = onAddToBundle) }
+
         SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).navigationBarsPadding())
     }
+    }
+
+    openChoice?.let { choice ->
+        OpenChoiceDialog(
+            count = choice.files.size,
+            onBundle = { viewModel.resolveOpenChoice(bundle = true) },
+            onSeparate = { viewModel.resolveOpenChoice(bundle = false) },
+            onDismiss = { viewModel.resolveOpenChoice(bundle = null) },
+        )
     }
 
     // Closing a tab or group offers undo; once the snackbar goes away, the close is final.
@@ -301,6 +321,7 @@ private fun ContextPager(
                     pageJump = pageJump?.takeIf { it.tabId == tab.id },
                     onPageJumpHandled = viewModel::onPageJumpHandled,
                     onDocumentOpened = { viewModel.onDocumentOpened(tab.id, it) },
+                    onDocument = { viewModel.onDocument(tab.id, it) },
                     strokes = strokes,
                     ink = ink,
                     searchQuery = searchQuery.takeIf { searchOpen && tab.id == session.currentTabId },
@@ -337,7 +358,11 @@ private fun ContextPager(
                 onInkMode = { viewModel.setInkMode(!inkMode) },
                 menu = { dismiss ->
                     val canJump = session.currentTab?.let { viewModel.pageCount(it.id) } != null
-                    ViewerMenu(canJump, open = { dialog = it }, onSearch = { searchOpen = true }, onSettings = onShowSettings, dismiss = dismiss)
+                    val bundle = session.currentTab?.takeIf { it.format == FileFormat.Bundle }
+                    ViewerMenu(
+                        canJump, open = { dialog = it }, onSearch = { searchOpen = true }, onSettings = onShowSettings,
+                        onEditBundle = bundle?.let { { viewModel.startBundleEdit(it.id) } }, dismiss = dismiss,
+                    )
                 },
             )
             if (inkMode && tabs.isNotEmpty()) {
@@ -505,9 +530,16 @@ private fun SearchBar(
     }
 }
 
-/** ⋮ menu items: find, go to page, settings (기획서 4.1, 5.6). */
+/** ⋮ menu items: find, go to page, editing a bundle (when one is shown), settings (기획서 4.1, 5.1, 5.6). */
 @Composable
-private fun ViewerMenu(canJump: Boolean, open: (ViewerDialog) -> Unit, onSearch: () -> Unit, onSettings: () -> Unit, dismiss: () -> Unit) {
+private fun ViewerMenu(
+    canJump: Boolean,
+    open: (ViewerDialog) -> Unit,
+    onSearch: () -> Unit,
+    onSettings: () -> Unit,
+    onEditBundle: (() -> Unit)?,
+    dismiss: () -> Unit,
+) {
     DropdownMenuItem(
         text = { Text("찾기") },
         enabled = canJump,
@@ -518,6 +550,7 @@ private fun ViewerMenu(canJump: Boolean, open: (ViewerDialog) -> Unit, onSearch:
         enabled = canJump,
         onClick = { dismiss(); open(ViewerDialog.PageJump) },
     )
+    if (onEditBundle != null) DropdownMenuItem(text = { Text("묶음 편집") }, onClick = { dismiss(); onEditBundle() })
     DropdownMenuItem(text = { Text("설정") }, onClick = { dismiss(); onSettings() })
 }
 

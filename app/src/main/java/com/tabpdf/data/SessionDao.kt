@@ -56,8 +56,8 @@ abstract class SessionDao {
         format: String,
     )
 
-    @Query("SELECT COUNT(*) FROM tabs WHERE uri = :uri")
-    abstract suspend fun countTabsWithUri(uri: String): Int
+    @Query("SELECT uri, format FROM tabs")
+    abstract suspend fun tabFiles(): List<TabFile>
 
     @Query("UPDATE tabs SET lastOpenedAt = :time WHERE id = :id")
     abstract suspend fun touchTab(id: String, time: Long)
@@ -108,3 +108,6 @@ abstract class SessionDao {
         upsertAppState(AppStateEntity(currentTabId = currentTabId))
     }
 }
+
+/** A tab's file and what kind of file it is (for [SessionDao.tabFiles]). */
+data class TabFile(val uri: String, val format: String)

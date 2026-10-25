@@ -81,6 +81,6 @@ class SessionRepositoryTest {
         val (loaded, states) = repository.load()
         assertEquals(closed, loaded)
         assertEquals(setOf("d"), states.keys)
-        assertEquals(false, repository.isUriInUse(Uri.parse("content://test/b")))
+        assertEquals(false, repository.tabFiles().any { it.first == Uri.parse("content://test/b") })
     }
 }
