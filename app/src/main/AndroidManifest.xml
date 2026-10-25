@@ -42,6 +42,7 @@
                 <data android:mimeType="application/x-hwp" />
                 <data android:mimeType="application/haansofthwp" />
                 <data android:mimeType="application/vnd.hancom.hwp" />
+                <data android:mimeType="application/epub+zip" />
                 <data android:mimeType="application/octet-stream" />
             </intent-filter>
             <!-- "Share" -->
@@ -63,6 +64,7 @@
                 <data android:mimeType="application/x-hwp" />
                 <data android:mimeType="application/haansofthwp" />
                 <data android:mimeType="application/vnd.hancom.hwp" />
+                <data android:mimeType="application/epub+zip" />
                 <data android:mimeType="application/octet-stream" />
             </intent-filter>
         </activity>

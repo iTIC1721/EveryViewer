@@ -33,7 +33,11 @@ class HtmlPage(val blocks: List<OfficeBlock>, val background: Int, val bottom: F
  * go one under another, as a browser shows a page without its style sheet's layout. Scripts are
  * never run, and nothing is fetched: only images inside the file (data: URIs) are drawn.
  */
-class HtmlReader private constructor(private val resolver: StyleResolver) {
+class HtmlReader private constructor(
+    private val resolver: StyleResolver,
+    /** Files next to the page, by the address the page uses (an e-book's own files); null: none can be reached. */
+    private val resources: ((String) -> ByteArray?)?,
+) {
 
     companion object {
         /** Points per CSS pixel. */
@@ -45,13 +49,24 @@ class HtmlReader private constructor(private val resolver: StyleResolver) {
         /** Images inside the file larger than this are not read (a few MB each in a big saved page is normal). */
         private const val MAX_IMAGE_BYTES = 16 * 1024 * 1024
 
-        fun read(doc: Document): HtmlPage {
+        /**
+         * [resources] gives the files the page refers to (style sheets, pictures) where they can be
+         * reached; [margin] is room kept at the sides of the page, in pixels.
+         */
+        fun read(doc: Document, resources: ((String) -> ByteArray?)? = null, margin: Float = 0f): HtmlPage {
             val sheet = Stylesheet()
-            for (style in doc.select("style")) {
+            // Style sheets in document order, inline or linked.
+            for (style in doc.select("style, link")) {
                 val media = style.attr("media")
-                if (media.isBlank() || Stylesheet.mediaMatches(media)) sheet.add(style.data())
+                if (media.isNotBlank() && !Stylesheet.mediaMatches(media)) continue
+                if (style.normalName() == "style") {
+                    sheet.add(style.data())
+                } else if (style.attr("rel").split(' ').any { it.equals("stylesheet", true) }) {
+                    val css = style.attr("href").takeIf { it.isNotBlank() }?.let { resources?.invoke(it) } ?: continue
+                    sheet.add(String(css, Charsets.UTF_8).removePrefix("\uFEFF"))
+                }
             }
-            val reader = HtmlReader(StyleResolver(sheet))
+            val reader = HtmlReader(StyleResolver(sheet), resources)
             val root = doc.child(0)
             val htmlStyle = reader.resolver.compute(root, Style.root())
             val body = doc.body()
@@ -59,7 +74,7 @@ class HtmlReader private constructor(private val resolver: StyleResolver) {
             // A background on the page (html or body) is the whole page's, as in a browser.
             val background = htmlStyle.background.takeIf { it != 0 } ?: bodyStyle.background
             val out = Out()
-            val ctx = Ctx(0f, 0f, VIEWPORT_PX, htmlStyle, null, 0)
+            val ctx = Ctx(margin, margin, VIEWPORT_PX, htmlStyle, null, 0)
             reader.block(root, htmlStyle, ctx, out, pageRoot = true)
             return HtmlPage(out.blocks, background, out.take() * PT)
         }
@@ -365,6 +380,8 @@ class HtmlReader private constructor(private val resolver: StyleResolver) {
             } catch (_: IllegalArgumentException) {
                 null
             }
+        } else if (src.isNotEmpty() && !src.contains(':')) {
+            resources?.invoke(src)?.takeIf { it.size <= MAX_IMAGE_BYTES }
         } else {
             null
         }
@@ -398,9 +415,25 @@ class HtmlReader private constructor(private val resolver: StyleResolver) {
 
     /** Embedded content this viewer can't draw: an empty box of its size, if it has one. */
     private fun placeholder(e: Element, s: Style, inline: Inline) {
-        val width = s.width?.takeIf { !it.auto && it.percent == 0f }?.px ?: pixels(e.attr("width"))
-        val height = s.height?.takeIf { !it.auto && it.percent == 0f }?.px ?: pixels(e.attr("height"))
+        var width = s.width?.takeIf { !it.auto && it.percent == 0f }?.px ?: pixels(e.attr("width"))
+        var height = s.height?.takeIf { !it.auto && it.percent == 0f }?.px ?: pixels(e.attr("height"))
         val tag = e.normalName()
+        // An SVG holding just a picture (e-book covers): the picture, at the SVG's size.
+        if (tag == "svg") {
+            // The HTML parser may have renamed <image> to <img>.
+            val image = e.select("image, img").firstOrNull()
+            val href = image?.let { it.attr("xlink:href").ifBlank { it.attr("href") }.ifBlank { it.attr("src") } }?.trim()
+            val bytes = href?.takeIf { it.isNotEmpty() && !it.contains(':') }?.let { resources?.invoke(it) }
+            if (bytes != null) {
+                val box = e.attr("viewBox").trim().split(Regex("[\\s,]+")).mapNotNull { it.toFloatOrNull() }
+                if (box.size == 4 && (width == null || height == null)) {
+                    width = width ?: pixels(image.attr("width")) ?: box[2]
+                    height = height ?: (width * box[3] / box[2].coerceAtLeast(1f))
+                }
+                inline.add(Run.Picture(bytes, (width ?: 300f) * PT, (height ?: 400f) * PT))
+                return
+            }
+        }
         when {
             width != null && height != null -> inline.add(Run.Unsupported(width * PT, height * PT))
             // Videos and frames have a default size; icons drawn as inline SVG without one are left out.

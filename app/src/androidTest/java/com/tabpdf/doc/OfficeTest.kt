@@ -168,6 +168,7 @@ class OfficeTest {
         assertEquals(FileFormat.Docx, FileFormats.detect("report.docx", null, zipHead))
         assertEquals(FileFormat.Hwpx, FileFormats.detect("계획서.hwpx", "application/octet-stream", zipHead))
         assertEquals(FileFormat.Hwpx, FileFormats.detect("download", "application/hwp+zip", zipHead))
-        assertEquals(FileFormat.Unsupported, FileFormats.detect("old.hwp", null, zipHead))
+        assertEquals(FileFormat.Hwp, FileFormats.detect("old.hwp", null, zipHead))
+        assertEquals(FileFormat.Unsupported, FileFormats.detect("old.doc", null, zipHead))
     }
 }

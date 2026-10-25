@@ -2,6 +2,7 @@ package com.tabpdf.doc
 
 import android.content.Context
 import android.net.Uri
+import com.tabpdf.doc.html.EpubDocument
 import com.tabpdf.doc.html.HtmlDocument
 import com.tabpdf.doc.office.OfficeDocuments
 import com.tabpdf.pdf.PdfDocument
@@ -40,6 +41,7 @@ object Documents {
                 if (e.reason != DocumentOpenException.Reason.TooLarge) throw e
                 TextDocument.open(context, uri, name, notice = "파일이 커서 HTML 미리보기를 지원하지 않습니다. 원문으로 표시합니다.")
             }
+            FileFormat.Epub -> EpubDocument.open(context, uri)
             FileFormat.Docx, FileFormat.Hwpx, FileFormat.Hwp, FileFormat.Pptx, FileFormat.Xlsx -> OfficeDocuments.open(context, uri, format)
             // Detected again: this version may read what the one that opened the tab could not.
             FileFormat.Unsupported -> FileFormats.detect(context, uri, name).let {

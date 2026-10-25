@@ -542,17 +542,34 @@ private class LineHeightRule(private val spacing: LineSpacing, private val unit:
     }
 }
 
-/** An embedded picture, decoded no larger than it is drawn at a 3× zoom. */
-private class PictureSpan(bytes: ByteArray?, private val width: Float, private val height: Float) : ReplacementSpan() {
-    private val bitmap: Bitmap? = bytes?.let {
-        try {
+/**
+ * An embedded picture, decoded no larger than it is drawn at a 3× zoom. Decoded when drawn and
+ * kept in a cache shared by all documents, so a book with hundreds of pictures holds only the
+ * ones being shown.
+ */
+private class PictureSpan(private val bytes: ByteArray?, private val width: Float, private val height: Float) : ReplacementSpan() {
+    private fun bitmap(): Bitmap? {
+        val data = bytes ?: return null
+        cache.get(this)?.let { return it }
+        return try {
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            BitmapFactory.decodeByteArray(it, 0, it.size, bounds)
+            BitmapFactory.decodeByteArray(data, 0, data.size, bounds)
             var sample = 1
-            while (bounds.outWidth / (sample * 2) >= width * 3) sample *= 2
-            BitmapFactory.decodeByteArray(it, 0, it.size, BitmapFactory.Options().apply { inSampleSize = sample })
-        } catch (_: Throwable) {
+            while (bounds.outWidth / (sample * 2) >= width * 3 ||
+                bounds.outWidth.toLong() * bounds.outHeight / (sample.toLong() * sample) > MAX_PIXELS) sample *= 2
+            BitmapFactory.decodeByteArray(data, 0, data.size, BitmapFactory.Options().apply { inSampleSize = sample })
+                ?.also { cache.put(this, it) }
+        } catch (_: Exception) {
             null
+        } catch (_: OutOfMemoryError) {
+            null
+        }
+    }
+
+    private companion object {
+        const val MAX_PIXELS = 8_000_000L
+        val cache = object : android.util.LruCache<PictureSpan, Bitmap>(48 * 1024 * 1024) {
+            override fun sizeOf(key: PictureSpan, value: Bitmap) = value.byteCount
         }
     }
 
@@ -568,7 +585,7 @@ private class PictureSpan(bytes: ByteArray?, private val width: Float, private v
 
     override fun draw(canvas: Canvas, text: CharSequence?, start: Int, end: Int, x: Float, top: Int, y: Int, bottom: Int, paint: Paint) {
         val dst = RectF(x, y - height, x + width, y.toFloat())
-        val b = bitmap
+        val b = bitmap()
         if (b != null) canvas.drawBitmap(b, null, dst, Paint(Paint.FILTER_BITMAP_FLAG))
         else EmptyBoxSpan.drawBox(canvas, dst)
     }

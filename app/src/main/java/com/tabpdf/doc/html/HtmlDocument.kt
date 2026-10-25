@@ -39,16 +39,16 @@ object HtmlDocument {
      * Reading follows the page's nesting by recursion, a few frames per element; a thread with a
      * large stack lets pages nest as deep as [com.tabpdf.doc.office.Element.MAX_DEPTH] allows.
      */
-    fun render(html: String): FlowDocument {
+    fun render(html: String, resources: ((String) -> ByteArray?)? = null, margin: Float = 0f): FlowDocument {
         var result: Result<FlowDocument>? = null
-        val thread = Thread(null, { result = runCatching { renderNow(html) } }, "html-layout", 16L * 1024 * 1024)
+        val thread = Thread(null, { result = runCatching { renderNow(html, resources, margin) } }, "html-layout", 16L * 1024 * 1024)
         thread.start()
         thread.join()
         return result!!.getOrThrow()
     }
 
-    private fun renderNow(html: String): FlowDocument {
-        val page = HtmlReader.read(Jsoup.parse(html))
+    private fun renderNow(html: String, resources: ((String) -> ByteArray?)?, margin: Float): FlowDocument {
+        val page = HtmlReader.read(Jsoup.parse(html), resources, margin)
         val blocks = if (page.background != 0) listOf(Box(page.blocks, fill = page.background, padding = com.tabpdf.doc.office.Insets(0f, 0f, 0f, page.bottom))) else page.blocks
         return OfficeLayout.flow(blocks, HtmlReader.PAGE_WIDTH, if (page.background != 0) 0f else page.bottom, MAX_PAGE_HEIGHT)
     }
