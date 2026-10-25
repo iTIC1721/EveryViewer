@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Under the artwork, which fills the whole icon: its average colour, for launchers that show the layers apart. -->
+    <color name="ic_launcher_background">#6A24DE</color>
+</resources>

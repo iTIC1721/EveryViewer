@@ -1,3 +1,5 @@
+<img src="docs/images/icon.png" width="96" alt="EveryViewer 아이콘" align="right">
+
 # EveryViewer
 
 ![version](https://img.shields.io/badge/version-0.12.0-blue)
