@@ -39,7 +39,7 @@ Git 작업(브랜치, 커밋, 머지, 태그) 전에는 반드시 `git-workflow`
 #    새로 설치한 직후에는 files/ 폴더가 없으므로 먼저 만든다
 adb shell run-as com.tabpdf mkdir -p files
 adb exec-in run-as com.tabpdf sh -c "cat > files/Sample.pdf" < Sample.pdf
-# 2. files/의 파일을 모두 탭으로 열며 실행
+# 2. files/의 파일을 모두 탭으로 열며 실행 (--ez debug_ask_to_bundle true 를 더하면 "따로/묶어서"를 묻는다)
 adb shell am start -n com.tabpdf/.MainActivity --ez debug_open_test_files true
 ```
 
@@ -71,7 +71,8 @@ app/src/main/java/com/tabpdf/
   doc/                   형식과 무관한 Document 인터페이스, 형식 판별(FileFormat), 형식별 여는 곳(Documents),
                          흐르는 문서 조판·페이지 나누기(Flow), 텍스트·마크다운·이미지 문서, 인코딩 판별, 썸네일.
                          텍스트는 크기 제한 없이 조각씩 읽고 뒤에서 이어서 조판(StreamedTextDocument: 쪽 목록이 자라는
-                         문서 — Document.progress). 쪽 나눔은 TextDocument.layOut(통째 조판)과 같아야 한다(LargeTextTest)
+                         문서 — Document.progress). 쪽 나눔은 TextDocument.layOut(통째 조판)과 같아야 한다(LargeTextTest).
+                         파일 묶음(BundleDocument): 여러 문서의 쪽을 이어 붙임, 목록은 files/bundles/*.json(Bundles)
   doc/office/            docx·hwpx·pptx: 안전한 zip·XML 읽기, 형식별 해석기(DocxReader, HwpxReader) → 공통 모델(OfficeModel)
                          → 용지 단위 조판(OfficeLayout: 문단·줄 간격·표 병합·테두리·쪽 넘김) → SheetDocument.
                          pptx: PptxReader(레이아웃·마스터 상속, 테마 색) → 슬라이드 모델(SlideModel) → SlideDocument

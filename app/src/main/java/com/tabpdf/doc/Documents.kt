@@ -26,6 +26,7 @@ object Documents {
             FileFormat.Pdf -> PdfDocument.open(context, uri)
             FileFormat.Text -> TextDocument.open(context, uri, name)
             FileFormat.Image -> ImageDocument.open(context, uri)
+            FileFormat.Bundle -> BundleDocument.open(context, uri)
             FileFormat.Markdown -> try {
                 MarkdownDocument.open(context, uri)
             } catch (e: DocumentOpenException) {

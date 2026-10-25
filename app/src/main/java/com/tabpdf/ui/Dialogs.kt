@@ -179,11 +179,17 @@ fun FileInfoDialog(tab: DocTab, page: Int, onDismiss: () -> Unit) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 InfoRow("형식", tab.format.label)
                 InfoRow("읽던 위치", "${page + 1}페이지")
-                InfoRow(
-                    "저장 방식",
-                    if (tab.isInternalCopy) "앱에 복사본 저장 (탭을 닫으면 삭제)" else "원본 파일을 직접 엶",
-                )
-                InfoRow("위치", Uri.decode(tab.uri.path ?: tab.uri.toString()))
+                when {
+                    // A bundle's own file is just its list; where its files are shows in its editor.
+                    tab.format == FileFormat.Bundle -> InfoRow("저장 방식", "파일 목록만 앱에 저장 (각 파일은 따로 열린 것과 같음)")
+                    else -> {
+                        InfoRow(
+                            "저장 방식",
+                            if (tab.isInternalCopy) "앱에 복사본 저장 (탭을 닫으면 삭제)" else "원본 파일을 직접 엶",
+                        )
+                        InfoRow("위치", Uri.decode(tab.uri.path ?: tab.uri.toString()))
+                    }
+                }
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("닫기") } },
@@ -236,6 +242,18 @@ fun AddToGroupDialog(
     )
 }
 
+/** 기획서 5.1: several files picked at once — a tab each, or one bundle. */
+@Composable
+fun OpenChoiceDialog(count: Int, onBundle: () -> Unit, onSeparate: () -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("파일 ${count}개 열기") },
+        text = { Text("하나로 묶으면 한 탭에서 쪽이 이어지는 한 문서처럼 봅니다.") },
+        confirmButton = { TextButton(onClick = onBundle) { Text("하나로 묶어 열기") } },
+        dismissButton = { TextButton(onClick = onSeparate) { Text("따로 열기") } },
+    )
+}
+
 /** What a format is called on screen. */
 val FileFormat.label: String
     get() = when (this) {
@@ -246,5 +264,6 @@ val FileFormat.label: String
         FileFormat.Docx -> "Word 문서"
         FileFormat.Hwpx -> "한글 문서"
         FileFormat.Pptx -> "PowerPoint 프레젠테이션"
+        FileFormat.Bundle -> "파일 묶음"
         FileFormat.Unsupported -> "지원하지 않는 형식"
     }

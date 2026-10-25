@@ -15,6 +15,31 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.util.UUID
+import com.tabpdf.doc.BundleDocument
+import com.tabpdf.doc.BundleItem
+import com.tabpdf.doc.BundlePages
+import com.tabpdf.doc.Bundles
+import com.tabpdf.doc.Document
+import com.tabpdf.doc.Documents
+import com.tabpdf.doc.FileFormat
+import com.tabpdf.doc.awaitComplete
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+
+/** Several files picked at once, waiting for the choice: a tab each, or one bundle (기획서 5.1). */
+data class OpenChoice(val files: List<OpenedFile>, val groupId: String?)
+
+/**
+ * A bundle being edited (기획서 5.1: 파일 묶음): its name and files as they will be, applied when
+ * the editor closes; [original] and [originalName] as they were.
+ */
+data class BundleEdit(
+    val tabId: String,
+    val name: String,
+    val items: List<BundleItem>,
+    val original: List<BundleItem>,
+    val originalName: String,
+)
 
 /** Something just closed that the snackbar can bring back. */
 data class UndoOffer(val id: Long, val message: String)
@@ -34,6 +59,15 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _state = MutableStateFlow<SessionState?>(null)
     val state: StateFlow<SessionState?> = _state.asStateFlow()
+
+    private val _openChoice = MutableStateFlow<OpenChoice?>(null)
+    val openChoice: StateFlow<OpenChoice?> = _openChoice.asStateFlow()
+
+    private val _bundleEdit = MutableStateFlow<BundleEdit?>(null)
+    val bundleEdit: StateFlow<BundleEdit?> = _bundleEdit.asStateFlow()
+
+    /** Documents open in viewers, by tab: a bundle's page counts are read from it when it is edited. */
+    private val openDocuments = mutableMapOf<String, Document>()
 
     private val _undoOffer = MutableStateFlow<UndoOffer?>(null)
     val undoOffer: StateFlow<UndoOffer?> = _undoOffer.asStateFlow()
@@ -66,7 +100,9 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
             .withValidCurrent(null, 0)
         _state.value = cleaned
         if (cleaned != saved) commit(cleaned)
-        app.enqueueWrite { FileAccess.releaseUnused(app, cleaned.allTabs.map { it.uri }.toSet(), app.startedAt) }
+        app.enqueueWrite {
+            FileAccess.releaseUnused(app, FileAccess.filesInUse(cleaned.allTabs.map { it.uri to it.format }), app.startedAt)
+        }
         ink.deleteOrphans()
     }
 
@@ -84,10 +120,15 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
     /**
      * Opens [files] in [groupId] (null: as ungrouped tabs) and shows the first one. A file already
      * open gets another tab all the same, as a browser opens a page twice (기획서 11장 3번): each
-     * tab keeps its own place and handwriting.
+     * tab keeps its own place and handwriting. With [askToBundle], several files wait for the
+     * choice between a tab each and one bundle ([openChoice]).
      */
-    fun open(files: List<OpenedFile>, groupId: String?) {
+    fun open(files: List<OpenedFile>, groupId: String?, askToBundle: Boolean = false) {
         if (files.isEmpty()) return
+        if (askToBundle && files.size > 1) {
+            _openChoice.value = OpenChoice(files, groupId)
+            return
+        }
         viewModelScope.launch {
             loadJob.join()
             var s = current()
@@ -97,6 +138,38 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
             commit(s.copy(currentTabId = added.first().id))
         }
     }
+
+    /** Answer to [openChoice]: one bundle (true), a tab each (false), or nothing (null — dismissed). */
+    fun resolveOpenChoice(bundle: Boolean?) {
+        val choice = _openChoice.value ?: return
+        _openChoice.value = null
+        when (bundle) {
+            true -> openBundle(choice.files, choice.groupId)
+            false -> open(choice.files, choice.groupId)
+            // The files were made readable for nothing: free what no tab uses.
+            null -> app.enqueueWrite {
+                val used = FileAccess.filesInUse(repository.tabFiles())
+                for (file in choice.files) if (file.uri !in used) FileAccess.release(app, file.uri, file.isInternalCopy)
+            }
+        }
+    }
+
+    /** Opens [files] as one bundle tab (기획서 5.1: 파일 묶음), named after the first file. */
+    private fun openBundle(files: List<OpenedFile>, groupId: String?) {
+        viewModelScope.launch {
+            loadJob.join()
+            val items = files.map { BundleItem(UUID.randomUUID().toString(), it.uri, it.name, it.format, it.isInternalCopy) }
+            val uri = withContext(Dispatchers.IO) { Bundles.create(app, items) }
+            val s = current()
+            val tab = DocTab(
+                UUID.randomUUID().toString(), groupId?.takeIf { s.group(it) != null }, uri,
+                bundleName(files.first().name, files.size), isInternalCopy = true, FileFormat.Bundle,
+            )
+            commit(s.appendTab(tab).copy(currentTabId = tab.id))
+        }
+    }
+
+    private fun bundleName(first: String, count: Int) = "${first.substringBeforeLast('.')} 외 ${count - 1}개"
 
     private fun newTab(file: OpenedFile, groupId: String?) =
         DocTab(UUID.randomUUID().toString(), groupId, file.uri, file.name, file.isInternalCopy, file.format)
@@ -204,9 +277,7 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
         }
         tabs.forEach { viewerStates -= it.id }
         ink.forget(tabs.map { it.id })
-        app.enqueueWrite {
-            for (tab in tabs) if (!repository.isUriInUse(tab.uri)) FileAccess.release(app, tab)
-        }
+        app.enqueueWrite { for (tab in tabs) releaseIfUnused(tab) }
     }
 
     // ---- Replacing a missing file ----
@@ -223,7 +294,7 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
         if (existing != null) {
             commit(s.removeTab(id).copy(currentTabId = existing.id))
             ink.forget(listOf(id))
-            app.enqueueWrite { if (!repository.isUriInUse(old.uri)) FileAccess.release(app, old) }
+            app.enqueueWrite { releaseIfUnused(old) }
             return
         }
         // Bumping the revision makes the viewer retry even when the same location was picked again.
@@ -232,7 +303,128 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
             revision = old.revision + 1,
         )
         commit(s.replaceTab(updated))
-        app.enqueueWrite { if (!repository.isUriInUse(old.uri)) FileAccess.release(app, old) }
+        app.enqueueWrite { releaseIfUnused(old) }
+    }
+
+    /**
+     * In the write queue, after the tab is gone from the saved session: frees its file — and a
+     * bundle's list and files — where no saved tab or bundle uses them any more.
+     */
+    private suspend fun releaseIfUnused(tab: DocTab) {
+        val used = FileAccess.filesInUse(repository.tabFiles())
+        if (tab.format == FileFormat.Bundle) {
+            val items = try {
+                withContext(Dispatchers.IO) { Bundles.read(tab.uri) }
+            } catch (_: Exception) {
+                emptyList()
+            }
+            for (item in items) if (item.uri !in used) FileAccess.release(app, item.uri, item.isInternalCopy)
+        }
+        if (tab.uri !in used) FileAccess.release(app, tab)
+    }
+
+    // ---- Bundles (기획서 5.1: 파일 묶음) ----
+
+    /** A viewer opened ([document]) or let go of (null) tab [tabId]'s file. */
+    fun onDocument(tabId: String, document: Document?) {
+        if (document != null) openDocuments[tabId] = document else openDocuments -= tabId
+    }
+
+    fun startBundleEdit(tabId: String) {
+        val tab = current().tab(tabId)?.takeIf { it.format == FileFormat.Bundle } ?: return
+        viewModelScope.launch {
+            val items = try {
+                withContext(Dispatchers.IO) { Bundles.read(tab.uri) }
+            } catch (_: Exception) {
+                return@launch
+            }
+            _bundleEdit.value = BundleEdit(tabId, tab.name, items, items, tab.name)
+        }
+    }
+
+    fun moveBundleItem(fromId: String, toId: String) = updateBundleEdit { edit ->
+        val items = edit.items.toMutableList()
+        val from = items.indexOfFirst { it.id == fromId }
+        val to = items.indexOfFirst { it.id == toId }
+        if (from < 0 || to < 0) return@updateBundleEdit edit
+        items.add(to, items.removeAt(from))
+        edit.copy(items = items)
+    }
+
+    /** A bundle keeps at least one file: the last one can't be taken out. */
+    fun removeBundleItem(id: String) = updateBundleEdit { edit ->
+        if (edit.items.size <= 1) edit else edit.copy(items = edit.items.filterNot { it.id == id })
+    }
+
+    fun renameBundle(name: String) = updateBundleEdit { edit ->
+        edit.copy(name = name.trim().ifEmpty { edit.name })
+    }
+
+    /** Files picked from the editor's ＋, added at the end. */
+    fun addBundleItems(files: List<OpenedFile>) = updateBundleEdit { edit ->
+        edit.copy(items = edit.items + files.map { BundleItem(UUID.randomUUID().toString(), it.uri, it.name, it.format, it.isInternalCopy) })
+    }
+
+    private inline fun updateBundleEdit(change: (BundleEdit) -> BundleEdit) {
+        _bundleEdit.value = _bundleEdit.value?.let(change)
+    }
+
+    /**
+     * Closes the editor and applies what changed: the list is saved, handwriting and the reading
+     * position move with their files' pages (strokes on a file taken out go with it), and files no
+     * longer used anywhere are freed. The viewer then opens the bundle as it now is.
+     */
+    fun finishBundleEdit() {
+        val edit = _bundleEdit.value ?: return
+        _bundleEdit.value = null
+        if (edit.items == edit.original && edit.name == edit.originalName) return
+        viewModelScope.launch {
+            val tab = current().tab(edit.tabId) ?: return@launch
+            if (edit.items != edit.original) {
+                val counts = pageCounts(tab, edit)
+                val move = BundlePages.mover(edit.original.map { it.id to (counts[it.id] ?: 1) }, edit.items.map { it.id to (counts[it.id] ?: 1) })
+                withContext(Dispatchers.IO) { Bundles.write(tab.uri, edit.items) }
+                ink.movePages(tab.id, move)
+                viewerStates[tab.id]?.let { state ->
+                    viewerStates[tab.id] = move(state.page)?.let { state.copy(page = it) } ?: ViewerState()
+                }
+            }
+            val now = current().tab(edit.tabId) ?: return@launch
+            // A new revision makes the viewer open the bundle again as it now is.
+            commit(current().replaceTab(now.copy(name = edit.name, revision = now.revision + 1)))
+            val gone = edit.original.filter { old -> edit.items.none { it.id == old.id } }
+            if (gone.isNotEmpty()) app.enqueueWrite {
+                val used = FileAccess.filesInUse(repository.tabFiles())
+                for (item in gone) if (item.uri !in used) FileAccess.release(app, item.uri, item.isInternalCopy)
+            }
+        }
+    }
+
+    /** Pages of every file before and after [edit]: from the open bundle, and by opening files added. */
+    private suspend fun pageCounts(tab: DocTab, edit: BundleEdit): Map<String, Int> {
+        val counts = mutableMapOf<String, Int>()
+        val open = openDocuments[tab.id] as? BundleDocument
+        counts += open?.pageCounts()
+            ?: try {
+                val reopened = BundleDocument.open(app, tab.uri)
+                try { reopened.pageCounts() } finally { reopened.close() }
+            } catch (_: Exception) {
+                emptyMap()
+            }
+        for (item in edit.items) if (item.id !in counts) {
+            counts[item.id] = try {
+                val document = Documents.open(app, item.uri, item.name, item.format)
+                try {
+                    document.awaitComplete()
+                    document.pageCount
+                } finally {
+                    document.close()
+                }
+            } catch (_: Exception) {
+                1 // shown as one blank page
+            }
+        }
+        return counts
     }
 
     // ---- Arranging ----

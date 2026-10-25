@@ -14,6 +14,8 @@ enum class FileFormat(val key: String) {
     Docx("docx"),
     Hwpx("hwpx"),
     Pptx("pptx"),
+    /** Several files shown as one ([BundleDocument]); never detected, only made in the app. */
+    Bundle("bundle"),
     /** Nothing we can show. Detected again on every open, so a later version can take it over. */
     Unsupported("unsupported");
 

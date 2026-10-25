@@ -78,7 +78,13 @@ class MainActivity : ComponentActivity() {
                     ActivityResultContracts.OpenMultipleDocuments()
                 ) { uris ->
                     val groupId = openingIntoGroup
-                    prepare(uris) { tabsViewModel.open(it, groupId) }
+                    // Several at once: a tab each, or one bundle (기획서 5.1).
+                    prepare(uris) { tabsViewModel.open(it, groupId, askToBundle = true) }
+                }
+
+                // Files added to a bundle from its editor.
+                val addToBundle = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+                    prepare(uris) { tabsViewModel.addBundleItems(it) }
                 }
 
                 // Tab waiting for a replacement file from "다시 찾기"; saved across the picker round trip.
@@ -101,6 +107,7 @@ class MainActivity : ComponentActivity() {
                         relocatingTabId = tab.id
                         relocate.launch(arrayOf(ANY_MIME))
                     },
+                    onAddToBundle = { addToBundle.launch(arrayOf(ANY_MIME)) },
                 )
             }
             }
@@ -139,7 +146,7 @@ class MainActivity : ComponentActivity() {
             }
             return
         }
-        prepare(uris) { tabsViewModel.open(it, groupId = null) }
+        prepare(uris) { tabsViewModel.open(it, groupId = null, askToBundle = true) }
     }
 
     override fun onStop() {
@@ -182,6 +189,8 @@ class MainActivity : ComponentActivity() {
         val debuggable = applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
         if (!debuggable || !intent.getBooleanExtra("debug_open_test_files", false)) return
         val files = filesDir.listFiles { f -> f.isFile }.orEmpty().sortedBy { it.name }
-        prepare(files.map { Uri.fromFile(it) }) { tabsViewModel.open(it, groupId = null) }
+        // --ez debug_ask_to_bundle true: as if picked together, asking whether to bundle them.
+        val ask = intent.getBooleanExtra("debug_ask_to_bundle", false)
+        prepare(files.map { Uri.fromFile(it) }) { tabsViewModel.open(it, groupId = null, askToBundle = ask) }
     }
 }

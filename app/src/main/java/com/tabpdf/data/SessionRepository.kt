@@ -51,7 +51,8 @@ class SessionRepository(private val dao: SessionDao) {
         dao.touchTab(tabId, System.currentTimeMillis())
     }
 
-    suspend fun isUriInUse(uri: Uri): Boolean = dao.countTabsWithUri(uri.toString()) > 0
+    /** Every saved tab's file and format. */
+    suspend fun tabFiles(): List<Pair<Uri, FileFormat>> = dao.tabFiles().map { Uri.parse(it.uri) to FileFormat.fromKey(it.format) }
 
     suspend fun saveViewerStates(states: Map<String, ViewerState>) = dao.updateViewerStates(states)
 
