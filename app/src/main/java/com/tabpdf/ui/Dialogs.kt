@@ -265,6 +265,7 @@ val FileFormat.label: String
         FileFormat.Docx -> "Word 문서"
         FileFormat.Hwpx -> "한글 문서"
         FileFormat.Pptx -> "PowerPoint 프레젠테이션"
+        FileFormat.Xlsx -> "Excel 통합 문서"
         FileFormat.Bundle -> "파일 묶음"
         FileFormat.Unsupported -> "지원하지 않는 형식"
     }

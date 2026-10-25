@@ -8,7 +8,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.FileNotFoundException
 
-/** Opens a docx, hwpx or pptx file: read it into its model, then lay it out on sheets or slides. */
+/** Opens a docx, hwpx, pptx or xlsx file: read it into its model, then lay it out on sheets or slides. */
 object OfficeDocuments {
     suspend fun open(context: Context, uri: Uri, format: FileFormat): Document {
         val parts = withContext(Dispatchers.IO) {
@@ -18,6 +18,7 @@ object OfficeDocuments {
             when (format) {
                 FileFormat.Pptx -> SlideDocument.layOut(PptxReader.read(parts))
                 FileFormat.Hwpx -> OfficeLayout.layOut(HwpxReader.read(parts))
+                FileFormat.Xlsx -> WorkbookDocument.of(XlsxReader.read(parts))
                 else -> OfficeLayout.layOut(DocxReader.read(parts))
             }
         }
