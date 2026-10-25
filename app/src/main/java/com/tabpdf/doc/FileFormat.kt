@@ -11,6 +11,7 @@ enum class FileFormat(val key: String) {
     Text("text"),
     Markdown("markdown"),
     Html("html"),
+    Epub("epub"),
     Image("image"),
     Docx("docx"),
     Hwpx("hwpx"),
@@ -36,7 +37,7 @@ object FileFormats {
 
     /** Known to be something else than text, even if the bytes happen to look like it. */
     private val binaryExtensions = setOf(
-        "doc", "ppt", "xls", "odt", "odp", "ods", "epub",
+        "doc", "ppt", "xls", "odt", "odp", "ods",
         "zip", "apk", "rar", "7z", "gz", "mp3", "mp4", "m4a", "mov", "avi", "mkv",
     )
 
@@ -64,12 +65,15 @@ object FileFormats {
         when {
             head.startsWith("%PDF-") -> return FileFormat.Pdf
             isImage(head) -> return FileFormat.Image
+            // An EPUB's first zip entry is "mimetype" holding its type, stored uncompressed.
+            head.size >= 58 && String(head, 30, 28, Charsets.ISO_8859_1) == "mimetypeapplication/epub+zip" -> return FileFormat.Epub
         }
         val extension = name.substringAfterLast('.', "").lowercase()
         when (extension) {
             "pdf" -> return FileFormat.Pdf
             in markdownExtensions -> return FileFormat.Markdown
             "html", "htm", "xhtml", "xht", "shtml" -> return FileFormat.Html
+            "epub" -> return FileFormat.Epub
             in imageExtensions -> return FileFormat.Image
             "docx", "docm", "dotx" -> return FileFormat.Docx
             "hwpx" -> return FileFormat.Hwpx
@@ -83,6 +87,7 @@ object FileFormats {
             type == "application/pdf" -> return FileFormat.Pdf
             type == "text/markdown" || type == "text/x-markdown" -> return FileFormat.Markdown
             type == "text/html" || type == "application/xhtml+xml" -> return FileFormat.Html
+            type == "application/epub+zip" -> return FileFormat.Epub
             type != null && type.startsWith("image/") -> return FileFormat.Image
             type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document" -> return FileFormat.Docx
             type == "application/vnd.openxmlformats-officedocument.presentationml.presentation" -> return FileFormat.Pptx
