@@ -41,9 +41,10 @@
 | 이미지 | jpg, png, webp, gif, bmp, heic | 사진 회전 정보 반영 |
 | Word | docx | 문단·글자 모양, 표(병합·테두리·음영), 그림, 머리글/바닥글 |
 | 한글 | hwpx | docx와 같은 범위 + 장평·자간, 줄 간격 % |
+| Excel | xlsx, xlsm | 시트마다 사용한 범위를 원래 열 너비·행 높이로. 셀 서식(글꼴·채우기·테두리·맞춤·줄 바꿈), 숫자·날짜 표시 형식, 병합, 넘치는 글, 링크, 그림 |
 | PowerPoint | pptx | 슬라이드 한 장 = 한 페이지. 글상자, 도형, 연결선, 그림, 표, 레이아웃·마스터 |
 
-docx·hwpx·pptx는 직접 해석해 용지·슬라이드 크기 그대로 그립니다. 원본과 크게 틀어지지 않는 수준이 목표이며, 차트·수식·SmartArt처럼 지원하지 않는 개체는 자리만 표시합니다. 자세한 범위는 [기획서 5.7](docs/기획서.md#57-지원-형식-확장)에 있습니다.
+docx·hwpx·pptx·xlsx는 직접 해석해 용지·슬라이드 크기 그대로 그립니다. 원본과 크게 틀어지지 않는 수준이 목표이며, 차트·수식·SmartArt처럼 지원하지 않는 개체는 자리만 표시합니다. 자세한 범위는 [기획서 5.7](docs/기획서.md#57-지원-형식-확장)에 있습니다.
 
 ## 설치
 
@@ -75,7 +76,7 @@ Windows에서는 `gradlew.bat`을 씁니다.
 | 마크다운 | [commonmark-java](https://github.com/commonmark/commonmark-java) + GFM 확장 |
 | HTML | [jsoup](https://jsoup.org/)으로 해석, CSS·조판은 직접 (docx와 같은 조판) |
 | 인코딩 판별 | [juniversalchardet](https://github.com/albfernandez/juniversalchardet) |
-| docx·hwpx·pptx | 직접 해석 (zip + XmlPullParser) → 문서·슬라이드 모델 → 용지·슬라이드 단위 조판 |
+| docx·hwpx·pptx·xlsx | 직접 해석 (zip + XmlPullParser) → 문서·슬라이드 모델 → 용지·슬라이드 단위 조판 |
 | 저장 | Room |
 | 파일 접근 | Storage Access Framework (영구 URI 권한) |
 
@@ -84,7 +85,7 @@ Windows에서는 `gradlew.bat`을 씁니다.
 ```
 app/src/main/java/com/tabpdf/
   doc/          형식 판별, 형식별 문서(텍스트·마크다운·이미지), 조판·페이지 나누기, 썸네일
-  doc/office/   docx·hwpx·pptx 해석과 조판
+  doc/office/   docx·hwpx·pptx·xlsx 해석과 조판
   doc/html/     HTML 해석, CSS 적용
   pdf/          PdfRenderer 래퍼
   ink/          필기 도구·저장·입력 규칙
