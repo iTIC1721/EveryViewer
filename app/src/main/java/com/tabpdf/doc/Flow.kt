@@ -93,6 +93,9 @@ class Placed(val block: FlowBlock, val x: Float, val y: Float) {
     val bottom: Float get() = y + block.height
 }
 
+/** A heading at [y] in the flow, for the table of contents; [level] 0 is the top. */
+class FlowHeading(val level: Int, val title: String, val y: Float)
+
 /** Stacks blocks top to bottom. */
 class FlowBuilder {
     private val placed = mutableListOf<Placed>()
@@ -102,6 +105,23 @@ class FlowBuilder {
 
     /** What has been stacked so far. */
     val blocks: List<Placed> get() = placed
+
+    /** Headings so far, in order (기획서 5.5 목차). */
+    val headings = mutableListOf<FlowHeading>()
+
+    /** Where each named place starts (an HTML id), for links into the flow. */
+    val anchors = HashMap<String, Float>()
+
+    /** The next block is a heading. */
+    fun heading(level: Int, title: String) {
+        val t = title.replace(SPACES, " ").trim()
+        if (t.isNotEmpty()) headings += FlowHeading(level.coerceIn(0, 8), t, y)
+    }
+
+    /** The next block starts the place named [id] (the first of a name counts). */
+    fun anchor(id: String) {
+        anchors.putIfAbsent(id, y)
+    }
 
     fun add(block: FlowBlock, x: Float = 0f) {
         placed += Placed(block, x, y)
@@ -133,7 +153,11 @@ class FlowBuilder {
      * page may end: between blocks or between lines.
      */
     fun build(maxPageHeight: Float, pageGaps: Boolean): FlowDocument =
-        FlowDocument(placed.toList(), paginate(y, breaks(), maxPageHeight, pageBreaks()), pageGaps)
+        FlowDocument(placed.toList(), paginate(y, breaks(), maxPageHeight, pageBreaks()), pageGaps, headings.toList(), anchors.toMap())
+
+    private companion object {
+        val SPACES = Regex("\\s+")
+    }
 }
 
 /**
@@ -160,6 +184,20 @@ fun paginate(total: Float, breaks: FloatArray, maxPage: Float, forced: FloatArra
     return result.toFloatArray()
 }
 
+/** The page of [boundaries] holding flow position [y], and how far down it (a fraction). */
+fun pageAt(boundaries: FloatArray, y: Float): Pair<Int, Float> {
+    // The last page starting at or above y.
+    var lo = 0
+    var hi = boundaries.size - 2
+    while (lo < hi) {
+        val mid = (lo + hi + 1) / 2
+        if (boundaries[mid] <= y) lo = mid else hi = mid - 1
+    }
+    val i = lo
+    val height = (boundaries[i + 1] - boundaries[i]).coerceAtLeast(1f)
+    return i to ((y - boundaries[i]) / height).coerceIn(0f, 1f)
+}
+
 /** The last break in (from, to], or null. */
 private fun lastBreakIn(breaks: FloatArray, from: Float, to: Float): Float? {
     var lo = 0
@@ -180,12 +218,23 @@ class FlowDocument(
     private val placed: List<Placed>,
     private val boundaries: FloatArray,
     override val pageGaps: Boolean,
+    private val headings: List<FlowHeading> = emptyList(),
+    private val anchors: Map<String, Float> = emptyMap(),
 ) : Document {
     private val mutex = Mutex()
     private var closed = false
 
     override val pageSizes: List<PageSize> =
         (0 until boundaries.size - 1).map { PageSize(FLOW_WIDTH, boundaries[it + 1] - boundaries[it]) }
+
+    override suspend fun tableOfContents(): List<TocEntry> =
+        TocEntry.tree(headings.map { h -> place(h.y).let { (page, y) -> TocEntry.Flat(h.level, h.title, page, y) } })
+
+    /** Where the place named [id] is: page, and how far down it (a fraction). */
+    fun anchor(id: String): Pair<Int, Float>? = anchors[id]?.let(::place)
+
+    /** The page holding flow position [y], and how far down it. */
+    private fun place(y: Float): Pair<Int, Float> = pageAt(boundaries, y)
 
     override suspend fun renderPage(index: Int, widthPx: Int): Bitmap? = withContext(Dispatchers.Default) {
         mutex.withLock {

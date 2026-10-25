@@ -69,7 +69,16 @@ class SheetDocument(
     private val frame: SheetFrame,
     /** The sheet's width on paper, in points. */
     private val paperWidth: Float,
+    /** Outline headings, in body flow positions. */
+    private val headings: List<FlowHeading> = emptyList(),
 ) : Document {
+    override suspend fun tableOfContents(): List<TocEntry> = TocEntry.tree(headings.map { h ->
+        val (page, down) = pageAt(boundaries, h.y)
+        // The body slice sits below the header on the sheet.
+        val bodyY = down * (boundaries[page + 1] - boundaries[page])
+        TocEntry.Flat(h.level, h.title, page, ((frame.bodyTop + bodyY) / frame.height).coerceIn(0f, 1f))
+    })
+
     private val mutex = Mutex()
     private var closed = false
 

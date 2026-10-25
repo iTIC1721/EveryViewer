@@ -35,6 +35,13 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.FileNotFoundException
+import java.io.File
+import java.io.IOException
+import java.io.RandomAccessFile
+import com.tabpdf.doc.TocEntry
+import com.tabpdf.export.PdfCrypt
+import com.tabpdf.export.PdfFile
+import com.tabpdf.export.PdfOutline
 import kotlin.math.roundToInt
 
 /**
@@ -58,6 +65,61 @@ class PdfDocument private constructor(
 
     /** Pages are in points already. */
     override fun paperWidth(index: Int): Float = pageSizes[index].width
+
+    private var contents: List<TocEntry>? = null
+
+    /**
+     * The bookmarks (기획서 5.5 목차). Android's PDF support doesn't give them, so the file's
+     * structure is read here ([PdfOutline]); a file that can't be followed has none.
+     */
+    override suspend fun tableOfContents(): List<TocEntry> = withContext(Dispatchers.IO) {
+        contents?.let { return@withContext it }
+        val result = try {
+            openForReading().use { (raf, _, _) ->
+                val pdf = PdfFile(raf)
+                if (pdf.trailer.containsKey("Encrypt")) {
+                    pdf.crypt = PdfCrypt.forFile(pdf, password ?: "") ?: return@use emptyList()
+                }
+                val pages = pdf.pages()
+                if (pages.size != pageCount) emptyList() else TocEntry.tree(PdfOutline.read(pdf, pages))
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("EveryViewer", "No bookmarks", e)
+            emptyList()
+        } catch (e: StackOverflowError) {
+            emptyList()
+        }
+        contents = result
+        result
+    }
+
+    /**
+     * The file for random access: opened again and read through /proc (the renderer owns the first
+     * descriptor), or, where that can't seek, a copy that is deleted after.
+     */
+    private fun openForReading(): Readable {
+        val pfd = reopen() ?: throw FileNotFoundException()
+        try {
+            return Readable(RandomAccessFile("/proc/self/fd/${pfd.fd}", "r"), pfd, null)
+        } catch (_: IOException) {
+        }
+        val copy = File.createTempFile("outline", ".pdf")
+        try {
+            ParcelFileDescriptor.AutoCloseInputStream(pfd).use { input -> copy.outputStream().use { input.copyTo(it) } }
+            return Readable(RandomAccessFile(copy, "r"), null, copy)
+        } catch (e: Exception) {
+            copy.delete()
+            throw e
+        }
+    }
+
+    private data class Readable(val file: RandomAccessFile, val descriptor: ParcelFileDescriptor?, val copy: File?) : java.io.Closeable {
+        override fun close() {
+            file.close()
+            descriptor?.close()
+            copy?.delete()
+        }
+    }
 
     private val mutex = Mutex()
     private var closed = false

@@ -28,6 +28,7 @@ import java.io.InputStream
 import kr.dogfoot.hwplib.`object`.bodytext.paragraph.Paragraph as HwpParagraph
 import kr.dogfoot.hwplib.`object`.docinfo.CharShape as HwpCharShape
 import kr.dogfoot.hwplib.`object`.docinfo.ParaShape as HwpParaShape
+import kr.dogfoot.hwplib.`object`.docinfo.parashape.ParaHeadShape
 
 /**
  * Hangul's binary documents (.hwp, HWP 5.0) into an [OfficeDocument] (기획서 5.7, 11장 26번).
@@ -136,6 +137,9 @@ private class Hwp(private val file: HWPFile) {
                     // hwplib names that value ByLetter.
                     keepWords = shape?.property1?.lineDivideForHangul == LineDivideForHangul.ByLetter,
                     markStyle = markStyle,
+                    // 개요 paragraphs make the table of contents, as in hwpx.
+                    outlineLevel = shape?.property1?.takeIf { it.paraHeadShape == ParaHeadShape.Outline }
+                        ?.paraLevel?.toInt()?.takeIf { it in 0..9 && result.none { b -> b is Paragraph } },
                 )
                 pageBreak = false
             }

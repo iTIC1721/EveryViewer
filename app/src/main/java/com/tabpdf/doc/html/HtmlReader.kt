@@ -130,6 +130,10 @@ class HtmlReader private constructor(
         private var collapsing = 0f
         /** Marker of the list item whose first paragraph is next. */
         var label: Run.Text? = null
+        /** Outline level of the heading whose first paragraph is next (h1 = 0). */
+        var heading: Int? = null
+        /** Ids of the elements that start with the next paragraph. */
+        val anchors = mutableListOf<String>()
 
         fun margin(px: Float) {
             collapsing = if (px < 0f || collapsing < 0f) collapsing + px else max(collapsing, px)
@@ -229,7 +233,11 @@ class HtmlReader private constructor(
                 keepWords = s.keepAll,
                 label = label,
                 labelInHang = true,
+                outlineLevel = out.heading,
+                anchors = out.anchors.toList(),
             )
+            out.heading = null
+            out.anchors.clear()
             runs.clear()
             spaceBefore = true
             started = false
@@ -280,9 +288,16 @@ class HtmlReader private constructor(
         val list = if (tag in LISTS) ListState(start(e), if (e.hasAttr("reversed")) -1 else 1) else ctx.list
         // The page background is drawn under the whole page, not as a box.
         val fill = if (pageRoot || tag == "body") 0 else s.background
+        val level = HEADINGS.indexOf(tag).takeIf { it >= 0 }
+        val id = e.id().trim()
         if (fill != 0 || borders.any { it != null }) {
             val inner = Out()
             inner.label = label
+            inner.heading = level
+            // Places named before the box start with it.
+            inner.anchors += out.anchors
+            out.anchors.clear()
+            if (id.isNotEmpty()) inner.anchors += id
             val innerWidth = (available - left - right - padding[1] - padding[3] - borderPx[1] - borderPx[3]).coerceAtLeast(1f)
             container(e, s, Ctx(0f, 0f, innerWidth, s, list, ctx.depth + 1), inner)
             val bottom = inner.take()
@@ -304,9 +319,13 @@ class HtmlReader private constructor(
             if (padding[0] > 0f) out.solid(padding[0])
             // A list item's marker goes on its first paragraph, however deep; other blocks pass it on.
             if (label != null) out.label = label
+            if (level != null) out.heading = level
+            if (id.isNotEmpty()) out.anchors += id
             val inner = Ctx(ctx.left + left + padding[3], ctx.right + right + padding[1], ctx.width, s, list, ctx.depth + 1)
             container(e, s, inner, out)
             if (label != null) out.label = null
+            // An empty heading makes none.
+            if (level != null) out.heading = null
             if (padding[2] > 0f) out.solid(padding[2])
         }
         out.margin(s.margin[2].resolve(base))
@@ -347,6 +366,8 @@ class HtmlReader private constructor(
             inline.flush(out, ctx)
             block(e, s, ctx, out)
         } else {
+            // A named place inside a paragraph: that paragraph.
+            e.id().trim().takeIf { it.isNotEmpty() }?.let { out.anchors += it }
             val href = e.attr("href").trim()
             val link = if (e.normalName() == "a" && isWebLink(href)) href else state.link
             val inner = InlineState(link, if (s.background != 0) s.background else state.background)
@@ -598,3 +619,6 @@ private val COLLAPSE = Regex("[ \t\n\r\u000C]+")
 private val SPACES = Regex("[ \t\u000C]+")
 private val PRE_LINE = Regex(" *\n *")
 private val LISTS = setOf("ul", "ol", "menu", "dir")
+
+/** Heading elements by outline level. */
+private val HEADINGS = listOf("h1", "h2", "h3", "h4", "h5", "h6")

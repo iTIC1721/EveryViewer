@@ -8,7 +8,8 @@ package com.tabpdf.doc.office
 
 class Presentation(val width: Float, val height: Float, val slides: List<SlideContent>)
 
-class SlideContent(val background: Fill?, val shapes: List<SlideShape>)
+/** [title]: the text of its title placeholder, for the table of contents. */
+class SlideContent(val background: Fill?, val shapes: List<SlideShape>, val title: String? = null)
 
 /** Where a shape sits on the slide; [rotation] is clockwise around its centre. */
 data class Frame(

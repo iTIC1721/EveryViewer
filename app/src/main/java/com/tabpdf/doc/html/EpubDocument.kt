@@ -13,6 +13,7 @@ import com.tabpdf.doc.PageSize
 import com.tabpdf.doc.SearchMatch
 import com.tabpdf.doc.TextSearch
 import com.tabpdf.doc.TextSelection
+import com.tabpdf.doc.TocEntry
 import com.tabpdf.doc.awaitComplete
 import com.tabpdf.doc.office.Element
 import com.tabpdf.doc.office.ZipParts
@@ -44,7 +45,22 @@ class EpubDocument private constructor(
     private var parts: ZipParts?,
     private val spine: List<String>,
     first: FlowDocument,
+    /** The book's table of contents, by chapter path; placed on pages once laid out. */
+    private val contents: List<Contents>,
 ) : Document {
+    override suspend fun tableOfContents(): List<TocEntry> {
+        // Pages are known once every chapter is laid out.
+        awaitComplete()
+        val l = laid
+        // A book without one: its chapters' headings.
+        if (contents.isEmpty()) return l.chapters.indices.flatMap { TocEntry.shift(l.chapters[it].tableOfContents(), l.starts[it]) }
+        return TocEntry.tree(contents.mapNotNull { c ->
+            val chapter = spine.indexOf(c.path).takeIf { it in l.chapters.indices } ?: return@mapNotNull null
+            val at = c.fragment?.let { l.chapters[chapter].anchor(it) }
+            TocEntry.Flat(c.level, c.title, l.starts[chapter] + (at?.first ?: 0), at?.second ?: 0f)
+        })
+    }
+
     /** Chapters laid out so far, and where each one's pages start; replaced whole as it grows. */
     private class Laid(val chapters: List<FlowDocument>, val starts: IntArray, val pages: Int)
 
@@ -163,7 +179,7 @@ class EpubDocument private constructor(
             return withContext(Dispatchers.Default) {
                 val spine = spine(parts)
                 if (spine.isEmpty()) throw DocumentOpenException(DocumentOpenException.Reason.NoPages)
-                EpubDocument(parts, spine, layOut(parts, spine.first()))
+                EpubDocument(parts, spine, layOut(parts, spine.first()), contents(parts))
             }
         }
 
@@ -182,6 +198,75 @@ class EpubDocument private constructor(
                 id to resolve(opfPath, href)
             }.toMap()
             return all(opf, "itemref").mapNotNull { ref -> items[ref.attr("idref")] }.filter { parts[it] != null }
+        }
+
+        /** A table of contents entry before layout: where in the book it points. */
+        class Contents(val level: Int, val title: String, val path: String, val fragment: String?)
+
+        /**
+         * The book's own table of contents: the EPUB 3 navigation document's "toc" nav, or the
+         * EPUB 2 NCX. Empty if it has neither (or they can't be read).
+         */
+        fun contents(parts: ZipParts): List<Contents> = try {
+            val container = parts.xml("META-INF/container.xml") ?: return emptyList()
+            val opfPath = all(container, "rootfile").firstNotNullOfOrNull { it.attr("full-path") } ?: return emptyList()
+            val opf = parts.xml(opfPath) ?: return emptyList()
+            val items = all(opf, "item")
+            val nav = items.firstOrNull { it.attr("properties")?.split(' ')?.contains("nav") == true }?.attr("href")
+            val ncxId = all(opf, "spine").firstOrNull()?.attr("toc")
+            val ncx = (items.firstOrNull { it.attr("id") == ncxId } ?: items.firstOrNull { it.attr("media-type") == "application/x-dtbncx+xml" })?.attr("href")
+            nav?.let { navContents(parts, resolve(opfPath, it)) }?.takeIf { it.isNotEmpty() }
+                ?: ncx?.let { ncxContents(parts, resolve(opfPath, it)) }
+                ?: emptyList()
+        } catch (e: Exception) {
+            android.util.Log.w("EveryViewer", "No table of contents", e)
+            emptyList()
+        }
+
+        private fun target(from: String, href: String): Pair<String, String?> =
+            resolve(from, href) to href.substringAfter('#', "").takeIf { it.isNotEmpty() }
+
+        private fun navContents(parts: ZipParts, path: String): List<Contents> {
+            val doc = org.jsoup.Jsoup.parse(HtmlDocument.decode(parts[path] ?: return emptyList()))
+            val navs = doc.select("nav")
+            val toc = navs.firstOrNull { it.attr("epub:type").split(' ').contains("toc") } ?: navs.firstOrNull() ?: return emptyList()
+            val result = mutableListOf<Contents>()
+            fun list(ol: org.jsoup.nodes.Element, level: Int) {
+                if (level > 16) return
+                for (li in ol.children().filter { it.normalName() == "li" }) {
+                    val label = li.children().firstOrNull { it.normalName() == "a" || it.normalName() == "span" }
+                    val title = label?.text()?.trim().orEmpty()
+                    val href = label?.takeIf { it.normalName() == "a" }?.attr("href")?.takeIf { it.isNotBlank() }
+                    if (title.isNotEmpty() && href != null) {
+                        val (p, f) = target(path, href)
+                        result += Contents(level, title, p, f)
+                    }
+                    li.children().filter { it.normalName() == "ol" || it.normalName() == "ul" }.forEach { list(it, if (href != null) level + 1 else level) }
+                }
+            }
+            toc.select("ol, ul").firstOrNull()?.let { list(it, 0) }
+            return result
+        }
+
+        private fun ncxContents(parts: ZipParts, path: String): List<Contents> {
+            val ncx = parts.xml(path) ?: return emptyList()
+            val map = (ncx.findAll("navMap") + ncx.findAll("ncx:navMap")).firstOrNull() ?: return emptyList()
+            val result = mutableListOf<Contents>()
+            fun points(parent: com.tabpdf.doc.office.Element, level: Int) {
+                if (level > 16) return
+                for (point in parent.children.filter { it.name.substringAfter(':') == "navPoint" }) {
+                    val label = point.children.firstOrNull { it.name.substringAfter(':') == "navLabel" }
+                        ?.children?.firstOrNull { it.name.substringAfter(':') == "text" }?.text?.trim().orEmpty()
+                    val src = point.children.firstOrNull { it.name.substringAfter(':') == "content" }?.attr("src")
+                    if (label.isNotEmpty() && src != null) {
+                        val (p, f) = target(path, src)
+                        result += Contents(level, label, p, f)
+                    }
+                    points(point, level + 1)
+                }
+            }
+            points(map, 0)
+            return result
         }
 
         /** Elements named [local] with any namespace prefix (package documents use them or not). */

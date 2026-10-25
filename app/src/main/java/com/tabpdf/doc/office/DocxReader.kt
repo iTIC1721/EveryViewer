@@ -17,6 +17,9 @@ object DocxReader {
 private const val TWIP = 1f / 20f // points per twip
 private const val EMU = 1f / 12700f // points per EMU
 
+/** Word's built-in heading style names ("heading 1" … "heading 9"). */
+private val HEADING_STYLE = Regex("heading ([1-9])")
+
 /**
  * Word's "single" line pitch relative to the font size. It comes from the font's own metrics, so
  * it differs a lot between fonts: Malgun Gothic (Korean Word's default) is measured at 1.73.
@@ -260,8 +263,21 @@ private class Docx(private val parts: ZipParts) {
                 keepWords = props.keepWords ?: true,
                 label = if (i == 0) label else null,
                 markStyle = markR.toStyle(),
+                outlineLevel = if (i == 0) outlineLevel(pPr, styleId) else null,
             )
         }
+    }
+
+    /** Outline level (0–8) set on the paragraph or its style; 9 is body text. */
+    private fun outlineLevel(pPr: Element?, styleId: String?): Int? =
+        (pPr?.child("w:outlineLvl")?.attr("w:val")?.toIntOrNull() ?: styleOutline(styleId))?.takeIf { it in 0..8 }
+
+    private fun styleOutline(id: String?, depth: Int = 0): Int? {
+        val s = style(id) ?: return null
+        s.child("w:pPr")?.child("w:outlineLvl")?.attr("w:val")?.toIntOrNull()?.let { return it }
+        // Built-in heading styles saved without the level (other editors).
+        HEADING_STYLE.matchEntire(s.child("w:name")?.attr("w:val")?.lowercase().orEmpty())?.let { return it.groupValues[1].toInt() - 1 }
+        return if (depth > 20) null else styleOutline(s.child("w:basedOn")?.attr("w:val"), depth + 1)
     }
 
     /** Runs of [e] in order; [pageBreak] is called where the text continues on a new page. */

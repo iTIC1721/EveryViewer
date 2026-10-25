@@ -46,6 +46,25 @@ class HwpTest {
     }
 
     @Test
+    fun outlineParagraphsMakeTheTableOfContents() = runBlocking {
+        val hwp = BlankFileMaker.make()
+        val paragraph = hwp.bodyText.sectionList[0].getParagraph(0)
+        paragraph.text.addString("개요 문단")
+        paragraph.header.characterCount = paragraph.text.charSize.toLong()
+        // The paragraph's shape is an outline level 2 (개요 2).
+        val shape = hwp.docInfo.paraShapeList[paragraph.header.paraShapeId]
+        shape.property1.paraHeadShape = kr.dogfoot.hwplib.`object`.docinfo.parashape.ParaHeadShape.Outline
+        shape.property1.paraLevel = 1
+        val out = ByteArrayOutputStream()
+        HWPWriter.toStream(hwp, out)
+        val doc = open("outline.hwp", out.toByteArray())
+        val toc = doc.tableOfContents()
+        assertEquals("개요 문단", toc.single().title)
+        assertEquals(0, toc.single().page)
+        doc.close()
+    }
+
+    @Test
     fun brokenFilesAreAnErrorNotACrash() {
         val notHwp = "이것은 hwp가 아닙니다".toByteArray()
         assertTrue(runCatching { open("broken.hwp", notHwp) }.isFailure)

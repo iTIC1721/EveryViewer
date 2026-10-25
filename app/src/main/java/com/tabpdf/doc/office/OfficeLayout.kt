@@ -65,7 +65,7 @@ class OfficeLayout private constructor(private val unit: Float) {
                 footer = if (doc.footer.isEmpty()) emptyList() else listOf(Placed(footer, left, page.footerBottom * u - footer.height)),
             )
             val boundaries = paginate(body.y, body.breaks(), frame.bodyHeight, body.pageBreaks())
-            return SheetDocument(body.blocks.toList(), boundaries, frame, page.width)
+            return SheetDocument(body.blocks.toList(), boundaries, frame, page.width, body.headings.toList())
         }
 
         /**
@@ -123,6 +123,15 @@ class OfficeLayout private constructor(private val unit: Float) {
                 }
                 is Box -> {
                     out.space(block.spaceBefore * unit)
+                    // Headings inside count as at the box's top (it is laid out as one block).
+                    fun inner(list: List<OfficeBlock>) {
+                        for (b in list) when (b) {
+                            is Paragraph -> marks(b, out)
+                            is Box -> inner(b.blocks)
+                            is Table -> Unit
+                        }
+                    }
+                    inner(block.blocks)
                     val left = block.indentLeft * unit
                     out.add(BoxBlock(block, (width - left - block.indentRight * unit).coerceAtLeast(unit * 20)), x + left)
                 }
@@ -147,6 +156,7 @@ class OfficeLayout private constructor(private val unit: Float) {
     private fun paragraph(p: Paragraph, width: Float, x: Float, out: FlowBuilder) {
         if (p.pageBreakBefore) out.pageBreak()
         out.space(p.spaceBefore * unit)
+        marks(p, out)
         val hanging = (-p.firstLine).coerceAtLeast(0f) * unit
         val left = (p.indentLeft * unit - hanging).coerceAtLeast(0f)
         val textWidth = (width - left - p.indentRight * unit).coerceAtLeast(unit * 20)
@@ -163,6 +173,12 @@ class OfficeLayout private constructor(private val unit: Float) {
         }
         out.add(ParagraphBlock(layout, trailing), x + left)
         out.space(p.spaceAfter * unit)
+    }
+
+    /** [p]'s heading and named places, at the flow's current position. */
+    private fun marks(p: Paragraph, out: FlowBuilder) {
+        p.outlineLevel?.let { out.heading(it, p.plainText) }
+        for (id in p.anchors) out.anchor(id)
     }
 
     /** Width the blocks of [list] take when no line is broken. */

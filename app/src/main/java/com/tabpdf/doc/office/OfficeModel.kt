@@ -55,7 +55,14 @@ class Paragraph(
     val labelInHang: Boolean = false,
     /** Style of the paragraph mark: sets the height of an empty paragraph. */
     val markStyle: TextStyle? = null,
-) : OfficeBlock
+    /** A heading of the outline (table of contents), 0 the top level (Word's outline level, Hangul's 개요, HTML's h1). */
+    val outlineLevel: Int? = null,
+    /** Names of places that start here (HTML ids), for links into the document. */
+    val anchors: List<String> = emptyList(),
+) : OfficeBlock {
+    /** The text, for the table of contents. */
+    val plainText: String get() = runs.joinToString("") { (it as? Run.Text)?.text ?: "" }
+}
 
 sealed interface LineSpacing {
     /**

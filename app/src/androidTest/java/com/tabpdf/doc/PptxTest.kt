@@ -158,6 +158,8 @@ class PptxTest {
         assertEquals(1, found.page)
         assertTrue(found.rects.single().left > 100f / 720f)
         assertEquals(1, doc.search("wide").single().page)
+        // The table of contents (기획서 5.5): slides by their titles; the first has none.
+        assertEquals(listOf("1. 슬라이드 1", "2. Title"), doc.tableOfContents().map { it.title })
         doc.close()
     }
 
