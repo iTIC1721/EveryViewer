@@ -1,6 +1,4 @@
-<img src="docs/images/icon.png" width="96" alt="EveryViewer 아이콘" align="right">
-
-# EveryViewer
+# <img src="docs/images/icon.png" width="44" alt="" align="top"> EveryViewer
 
 ![version](https://img.shields.io/badge/version-0.12.0-blue)
 ![minSdk](https://img.shields.io/badge/Android-8.0%2B%20(API%2026)-3DDC84?logo=android&logoColor=white)
