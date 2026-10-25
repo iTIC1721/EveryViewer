@@ -10,6 +10,7 @@ enum class FileFormat(val key: String) {
     Pdf("pdf"),
     Text("text"),
     Markdown("markdown"),
+    Html("html"),
     Image("image"),
     Docx("docx"),
     Hwpx("hwpx"),
@@ -66,6 +67,7 @@ object FileFormats {
         when (extension) {
             "pdf" -> return FileFormat.Pdf
             in markdownExtensions -> return FileFormat.Markdown
+            "html", "htm", "xhtml", "xht", "shtml" -> return FileFormat.Html
             in imageExtensions -> return FileFormat.Image
             "docx", "docm", "dotx" -> return FileFormat.Docx
             "hwpx" -> return FileFormat.Hwpx
@@ -76,12 +78,21 @@ object FileFormats {
         when {
             type == "application/pdf" -> return FileFormat.Pdf
             type == "text/markdown" || type == "text/x-markdown" -> return FileFormat.Markdown
+            type == "text/html" || type == "application/xhtml+xml" -> return FileFormat.Html
             type != null && type.startsWith("image/") -> return FileFormat.Image
             type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document" -> return FileFormat.Docx
             type == "application/vnd.openxmlformats-officedocument.presentationml.presentation" -> return FileFormat.Pptx
             type in setOf("application/hwp+zip", "application/haansofthwpx", "application/vnd.hancom.hwpx") -> return FileFormat.Hwpx
         }
-        return if (TextDecoding.looksLikeText(head)) FileFormat.Text else FileFormat.Unsupported
+        if (!TextDecoding.looksLikeText(head)) return FileFormat.Unsupported
+        // Only a file without an extension is taken for a page by its content: notes.txt stays text.
+        return if (extension.isEmpty() && isHtml(head)) FileFormat.Html else FileFormat.Text
+    }
+
+    /** A page saved without its extension (downloads, messengers): starts like an HTML document. */
+    private fun isHtml(head: ByteArray): Boolean {
+        val start = String(head, 0, minOf(head.size, 512), Charsets.ISO_8859_1).trimStart('\uFEFF', '\u00EF', '\u00BB', '\u00BF', ' ', '\t', '\r', '\n')
+        return start.startsWith("<!doctype html", ignoreCase = true) || start.startsWith("<html", ignoreCase = true)
     }
 
     private fun isImage(head: ByteArray): Boolean =

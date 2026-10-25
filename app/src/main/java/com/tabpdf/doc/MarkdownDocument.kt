@@ -55,7 +55,6 @@ import org.commonmark.node.Text
 import org.commonmark.node.ThematicBreak
 import org.commonmark.parser.Parser
 import java.io.FileNotFoundException
-import java.io.InputStream
 import kotlin.math.max
 
 /** Embedded images are read at most this many pixels wide or high (pages are drawn about 1000 wide). */
@@ -75,18 +74,6 @@ object MarkdownDocument {
             ?: throw FileNotFoundException(uri.toString())
         if (bytes.size > MAX_BYTES) throw DocumentOpenException(DocumentOpenException.Reason.TooLarge)
         render(TextDecoding.decode(bytes))
-    }
-
-    /** At most [limit] bytes from the start of the stream. */
-    private fun InputStream.readUpTo(limit: Int): ByteArray {
-        val out = java.io.ByteArrayOutputStream()
-        val buffer = ByteArray(64 * 1024)
-        while (out.size() < limit) {
-            val n = read(buffer, 0, minOf(buffer.size, limit - out.size()))
-            if (n < 0) break
-            out.write(buffer, 0, n)
-        }
-        return out.toByteArray()
     }
 
     private val parser: Parser = Parser.builder()

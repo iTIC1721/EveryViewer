@@ -13,6 +13,7 @@ ksp = "2.3.10"
 juniversalchardet = "2.5.0"
 commonmark = "0.24.0"
 ink = "1.0.0"
+jsoup = "1.21.1"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -35,6 +36,7 @@ commonmark-ext-gfm-tables = { group = "org.commonmark", name = "commonmark-ext-g
 commonmark-ext-gfm-strikethrough = { group = "org.commonmark", name = "commonmark-ext-gfm-strikethrough", version.ref = "commonmark" }
 commonmark-ext-task-list-items = { group = "org.commonmark", name = "commonmark-ext-task-list-items", version.ref = "commonmark" }
 commonmark-ext-autolink = { group = "org.commonmark", name = "commonmark-ext-autolink", version.ref = "commonmark" }
+jsoup = { group = "org.jsoup", name = "jsoup", version.ref = "jsoup" }
 androidx-ink-authoring = { group = "androidx.ink", name = "ink-authoring", version.ref = "ink" }
 androidx-ink-brush = { group = "androidx.ink", name = "ink-brush", version.ref = "ink" }
 androidx-ink-geometry = { group = "androidx.ink", name = "ink-geometry", version.ref = "ink" }

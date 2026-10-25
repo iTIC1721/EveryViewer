@@ -136,9 +136,13 @@ fun collectLayoutText(layout: Layout, sink: TextSink, dx: Float, dy: Float) {
 }
 
 /** [sink] seen through a move: characters given in a block's coordinates arrive in its parent's. */
-fun TextSink.offset(dx: Float, dy: Float): TextSink = object : TextSink {
-    override fun char(c: Char, box: RectF) = this@offset.char(c, RectF(box).apply { offset(dx, dy) })
-    override fun endBlock() = this@offset.endBlock()
+fun TextSink.offset(dx: Float, dy: Float): TextSink =
+    // Moves add up into one, so blocks nested deep (boxes in boxes) don't stack a call per level.
+    if (this is OffsetSink) OffsetSink(target, this.dx + dx, this.dy + dy) else OffsetSink(this, dx, dy)
+
+private class OffsetSink(val target: TextSink, val dx: Float, val dy: Float) : TextSink {
+    override fun char(c: Char, box: RectF) = target.char(c, RectF(box).apply { offset(dx, dy) })
+    override fun endBlock() = target.endBlock()
 }
 
 /** [sink] taking only characters whose middle is between [top] and [bottom] (one page of a flow). */

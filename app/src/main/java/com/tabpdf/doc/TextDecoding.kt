@@ -5,6 +5,19 @@ import java.nio.charset.CharacterCodingException
 import java.nio.charset.Charset
 import java.nio.charset.CodingErrorAction
 import org.mozilla.universalchardet.UniversalDetector
+import java.io.InputStream
+
+/** At most [limit] bytes from the start of the stream (files parsed whole: Markdown, HTML). */
+internal fun InputStream.readUpTo(limit: Int): ByteArray {
+    val out = java.io.ByteArrayOutputStream()
+    val buffer = ByteArray(64 * 1024)
+    while (out.size() < limit) {
+        val n = read(buffer, 0, minOf(buffer.size, limit - out.size()))
+        if (n < 0) break
+        out.write(buffer, 0, n)
+    }
+    return out.toByteArray()
+}
 
 /**
  * Turns the bytes of a text file into a string, guessing the encoding (기획서 5.7): a byte order
