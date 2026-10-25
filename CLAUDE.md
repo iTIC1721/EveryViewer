@@ -52,6 +52,7 @@ adb shell am start -n com.tabpdf/.MainActivity --ez debug_open_test_files true
 - 파일 없이 글만 공유하는 경우: `adb shell am start -a android.intent.action.SEND -t text/plain --es android.intent.extra.TEXT "'공유할 글'" -n com.tabpdf/.MainActivity`
 - 테스트 파일은 경로가 짧은 곳(예: `%TEMP%\evtest`)에서 만든다. 세션 임시 폴더는 경로가 길어 Windows 프로그램(python 등)이 실행되지 않는다.
 - 필기: `adb shell input stylus ...`는 펜(TOOL_TYPE_STYLUS)으로 인식되지 않는다. 펜·측면 버튼·여러 손가락 규칙은 계측 테스트 `InkInputTest`(UiAutomation으로 이벤트 주입)로 확인한다. 이 테스트는 에뮬레이터의 탭·필기·files/·설정을 지운다. 펜 지연·손바닥 무시·S펜 버튼은 실기기로 확인.
+- hwp: 한글로 같은 문서를 hwpx로도 저장해 두 파일을 RenderDump로 뽑으면 쪽마다 같아야 한다 (같은 모델로 옮기므로).
 - docx·hwpx 조판 비교: 원본을 Word·한글로 PDF로 만든 뒤(이 PC의 Office·한글 COM 자동화), 같은 파일을 `files/render-in/`에 복사하고 `adb shell am instrument -w -e class com.tabpdf.doc.RenderDump com.tabpdf.test/androidx.test.runner.AndroidJUnitRunner`(앱이 지워지지 않게 단독 실행)로 `files/render-out/`에 쪽 PNG를 뽑아 나란히 본다. 한글의 PDF 내보내기는 전체가 약 16pt 어긋나므로 위치는 hwpx 안의 `Preview/PrvImage.png`로 확인한다. pptx는 PowerPoint COM의 `Slide.Export(경로, "PNG", 폭, 높이)`로 슬라이드마다 그림을 뽑아 비교한다. 사용자 견본 파일은 저장소에 넣지 않는다.
 - 에뮬레이터는 두 개다: C 드라이브 SDK의 `Pixel_4_XL_API_30`(Android 11)과, C 드라이브 용량 때문에 D 드라이브에 둔 `Pixel_6_API_35`(Android 15; SDK `D:\Android\sdk`, AVD `D:\Android\avd`, `platform-tools`는 C SDK로 연결). Android 15 실행:
   `$env:ANDROID_AVD_HOME='D:\Android\avd'; $env:ANDROID_SDK_ROOT='D:\Android\sdk'; $env:ANDROID_HOME='D:\Android\sdk'; & D:\Android\sdk\emulator\emulator.exe -avd Pixel_6_API_35`
@@ -73,7 +74,7 @@ app/src/main/java/com/tabpdf/
                          텍스트는 크기 제한 없이 조각씩 읽고 뒤에서 이어서 조판(StreamedTextDocument: 쪽 목록이 자라는
                          문서 — Document.progress). 쪽 나눔은 TextDocument.layOut(통째 조판)과 같아야 한다(LargeTextTest).
                          파일 묶음(BundleDocument): 여러 문서의 쪽을 이어 붙임, 목록은 files/bundles/*.json(Bundles)
-  doc/office/            docx·hwpx·pptx: 안전한 zip·XML 읽기, 형식별 해석기(DocxReader, HwpxReader) → 공통 모델(OfficeModel)
+  doc/office/            docx·hwpx·pptx: 안전한 zip·XML 읽기, 형식별 해석기(DocxReader, HwpxReader, hwp는 hwplib → HwpReader) → 공통 모델(OfficeModel)
                          → 용지 단위 조판(OfficeLayout: 문단·줄 간격·표 병합·테두리·쪽 넘김) → SheetDocument.
                          pptx: PptxReader(레이아웃·마스터 상속, 테마 색) → 슬라이드 모델(SlideModel) → SlideDocument
                          (도형·연결선·그림을 슬라이드 위치에 그림, 글상자·표는 OfficeLayout.box로 조판, TableStyles: 기본 표 스타일)
