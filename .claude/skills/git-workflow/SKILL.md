@@ -89,7 +89,7 @@ git commit -F <메시지파일 경로>
 
 ## 4. 버전과 태그
 
-- [SemVer](https://semver.org/lang/ko/) `vMAJOR.MINOR.PATCH`. 출시 전에는 `v0.x.y`.
+- [SemVer](https://semver.org/lang/ko/) `vMAJOR.MINOR.PATCH`. 지금은 `v0.x.y`이고, 앞자리는 사용자가 정할 때만 올린다.
 - 기획서 개발 단계를 마칠 때 `main`에 태그를 붙인다 (사용자 확인 후).
 
 | 태그 | 시점 |
@@ -107,7 +107,6 @@ git commit -F <메시지파일 경로>
 | `v0.11.0` | 실기기 피드백(다크 모드, 설정 화면, 그룹 끌어내기), 큰 텍스트 파일, 보안 점검, PDF 링크 |
 | `v0.12.0` | 2차: 형식 추가(HTML, xlsx, hwp, epub), 파일 묶음, 그룹 끝 넘어가기 설정, 같은 파일 중복 열기 단순화 |
 | `v0.13.0` | 2차 마무리: 암호 PDF, PDF로 내보내기, 목차, 손가락 필기 버튼, 앱 아이콘, 보안 점검 |
-| `v1.0.0` | 첫 출시 — **사용자가 출시를 언급할 때만.** 그 전에 실기기 확인(핀치, 파일 선택기, 끌기 판정, 탭 넘김, 펜 필기)을 마친다 |
 
 - 태그는 주석 태그로: `git tag -a v0.1.0 -m "v0.1.0: <요약>"`
 - 태그를 붙일 때 `app/build.gradle.kts`의 `versionName`도 같은 값으로, `versionCode`는 1씩 올린다 (별도 `build:` 커밋).
