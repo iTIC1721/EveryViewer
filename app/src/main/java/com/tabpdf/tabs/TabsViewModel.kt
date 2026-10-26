@@ -112,6 +112,9 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
         if (cleaned != saved) commit(cleaned)
         app.enqueueWrite {
             FileAccess.releaseUnused(app, FileAccess.filesInUse(cleaned.allTabs.map { it.uri to it.format }), app.startedAt)
+            // The last export was shared in an earlier session; one made from a locked PDF has no
+            // password, so it isn't kept on the disk longer than that (as for thumbnails).
+            withContext(Dispatchers.IO) { File(app.cacheDir, EXPORT_DIR).deleteRecursively() }
         }
         ink.deleteOrphans()
     }
