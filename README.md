@@ -108,12 +108,6 @@ app/src/main/java/com/tabpdf/
 
 ## 라이선스
 
-```
-Copyright 2026 iTIC
-
-Licensed under the Apache License, Version 2.0
-```
-
-전문은 [LICENSE](LICENSE)에 있습니다.
+Apache License 2.0으로 배포합니다. 전문은 [LICENSE](LICENSE)에 있습니다.
 
 함께 쓰는 라이브러리와 라이선스: Kotlin·kotlinx.coroutines·AndroidX(Jetpack Compose, Room, Ink 등)·[hwplib](https://github.com/neolord0/hwplib) — Apache-2.0, [jsoup](https://jsoup.org/) — MIT, [commonmark-java](https://github.com/commonmark/commonmark-java) — BSD 2-Clause, [juniversalchardet](https://github.com/albfernandez/juniversalchardet) — MPL 1.1.
