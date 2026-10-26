@@ -63,12 +63,16 @@ class WorkbookDocument private constructor(private val book: Workbook) : Documen
         val covered = HashSet<Long>()
 
         init {
+            // For all merges together: a file can repeat a merge of 100 000 cells without end.
+            var budget = MAX_COVERED_CELLS
             for (m in sheet.merges) {
                 mergeAt[XlsxReader.key(m.firstRow, m.firstColumn)] = m
                 // Huge merges (whole rows) only matter where cells are.
                 val lastRow = min(m.lastRow, sheet.rowHeights.size - 1)
                 val lastColumn = min(m.lastColumn, sheet.columnWidths.size - 1)
-                if ((lastRow - m.firstRow + 1).toLong() * (lastColumn - m.firstColumn + 1) > 100_000) continue
+                val cells = (lastRow - m.firstRow + 1).toLong() * (lastColumn - m.firstColumn + 1)
+                if (cells > 100_000 || cells > budget) continue
+                budget -= cells
                 for (r in m.firstRow..lastRow) for (c in m.firstColumn..lastColumn) {
                     if (r != m.firstRow || c != m.firstColumn) covered += XlsxReader.key(r, c)
                 }
@@ -585,6 +589,8 @@ class WorkbookDocument private constructor(private val book: Workbook) : Documen
         /** Pages short enough that a zoomed render (capped in pixels) stays sharp on wide sheets. */
         private const val MIN_PAGE_HEIGHT = 480f
         private const val MAX_PAGE_HEIGHT = 900f
+        /** Cells hidden under merges, per sheet (Excel files with real merges cover far fewer). */
+        private const val MAX_COVERED_CELLS = 1_000_000L
         private const val MARGIN = 6f
         private const val HEADER = 26f
         private const val PADDING = 2f

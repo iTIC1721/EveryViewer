@@ -37,10 +37,20 @@ object NumberFormat {
 
     fun builtIn(id: Int): String = BUILT_IN[id] ?: "General"
 
+    /**
+     * Excel's own limits: format codes of at most 255 characters, at most 30 decimals. Longer ones
+     * come from crafted files and only serve to blow one cell up to megabytes of text.
+     */
+    private const val MAX_CODE_LENGTH = 255
+    private const val MAX_DECIMALS = 30
+
     /** Whether [code] shows numbers as dates or times. */
-    fun isDate(code: String): Boolean = sections(code).firstOrNull()?.let { dateTokens(it) } ?: false
+    fun isDate(code: String): Boolean = code.length <= MAX_CODE_LENGTH && (sections(code).firstOrNull()?.let { dateTokens(it) } ?: false)
 
     fun format(value: Double, code: String, date1904: Boolean): Formatted {
+        // Excel never stores these (a cell with an error says so); rounding them would throw.
+        if (!value.isFinite()) return Formatted("#NUM!", null)
+        if (code.length > MAX_CODE_LENGTH) return Formatted(general(value), null)
         val all = sections(code)
         if (all.isEmpty() || code.equals("General", true)) return Formatted(general(value), null)
         // Conditions ([>=100]) pick a section; otherwise positive;negative;zero.
@@ -67,6 +77,7 @@ object NumberFormat {
 
     /** Text in a cell with format [code]: its text section, with @ for the text. */
     fun formatText(text: String, code: String): Formatted {
+        if (code.length > MAX_CODE_LENGTH) return Formatted(text, null)
         val all = sections(code)
         val section = when {
             all.size >= 4 -> all[3]
@@ -206,6 +217,8 @@ object NumberFormat {
         }
         val p = plain.toString()
         if (p.contains('%')) v *= 100.0.pow(p.count { it == '%' })
+        // Enough percent signs take any number past Double's range (and zero to NaN, which can't be rounded).
+        if (!v.isFinite()) return "#NUM!"
         val firstDigit = p.indexOfFirst { it == '0' || it == '#' || it == '?' }
         if (firstDigit < 0) return literal(section) { if (it == '@') general(value) else null }
         var lastDigit = p.indexOfLast { it == '0' || it == '#' || it == '?' }
@@ -220,7 +233,7 @@ object NumberFormat {
         if (e != null) {
             val mantissaPattern = section.substring(firstDigit, e)
             val expDigits = section.substring(e + 2, lastDigit + 1).count { it == '0' }.coerceAtLeast(1)
-            val decimals = mantissaPattern.substringAfter('.', "").count { it == '0' || it == '#' }
+            val decimals = mantissaPattern.substringAfter('.', "").count { it == '0' || it == '#' }.coerceAtMost(MAX_DECIMALS)
             val intDigits = mantissaPattern.substringBefore('.').count { it == '0' || it == '#' }.coerceAtLeast(1)
             if (v == 0.0) return before + "0" + (if (decimals > 0) "." + "0".repeat(decimals) else "") + "E+" + "0".repeat(expDigits) + after
             var exponent = floor(log10(abs(v))).toInt()
@@ -238,8 +251,8 @@ object NumberFormat {
         val point = pattern.indexOf('.')
         val intPattern = if (point >= 0) pattern.substring(0, point) else pattern
         val decPattern = if (point >= 0) pattern.substring(point + 1) else ""
-        val decimals = decPattern.count { it == '0' || it == '#' || it == '?' }
-        val minDecimals = decPattern.count { it == '0' }
+        val decimals = decPattern.count { it == '0' || it == '#' || it == '?' }.coerceAtMost(MAX_DECIMALS)
+        val minDecimals = decPattern.count { it == '0' }.coerceAtMost(decimals)
         val grouping = intPattern.contains(',')
         val minInt = intPattern.count { it == '0' }
         val factor = 10.0.pow(decimals)
