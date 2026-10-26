@@ -6,6 +6,7 @@ import android.graphics.PointF
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import java.io.IOException
+import kotlin.coroutines.cancellation.CancellationException
 
 /** A file that was read fine but can't be shown. */
 class DocumentOpenException(val reason: Reason) : IOException(reason.name) {
@@ -159,4 +160,23 @@ suspend fun Document.awaitPages(count: Int) {
 /** Suspends until the document is laid out in full. */
 suspend fun Document.awaitComplete() {
     progress?.first { it.complete }
+}
+
+/**
+ * [block] on an open document, or [fallback] if it fails — even out of memory or stack. As for
+ * [Documents.open]: a crafted file can make drawing, search or selection fail too, and a crash there
+ * would come back on every start, as the tab is reopened at the same page.
+ */
+suspend fun <T> guarded(fallback: T, block: suspend () -> T): T = try {
+    block()
+} catch (e: CancellationException) {
+    throw e
+} catch (e: Exception) {
+    // Only the kind: messages may hold the file's address (and so its name).
+    android.util.Log.w("EveryViewer", "Document failed: ${e.javaClass.simpleName}")
+    fallback
+} catch (_: OutOfMemoryError) {
+    fallback
+} catch (_: StackOverflowError) {
+    fallback
 }

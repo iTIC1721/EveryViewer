@@ -90,6 +90,7 @@ import com.tabpdf.doc.Link
 import com.tabpdf.doc.isWebLink
 import com.tabpdf.doc.LayoutProgress
 import com.tabpdf.doc.awaitPages
+import com.tabpdf.doc.guarded
 import com.tabpdf.doc.SearchMatch
 import androidx.compose.ui.graphics.BlendMode
 import com.tabpdf.doc.DocumentOpenException
@@ -362,7 +363,7 @@ private fun DocumentPages(
     suspend fun linkAt(position: Offset): Link? {
         val hit = pageAt(position) ?: return null
         val inPage = hit.toPage(position)
-        return document.link(hit.index, inPage.x / INK_PAGE_WIDTH, inPage.y / (INK_PAGE_WIDTH * document.pageSizes[hit.index].aspect))
+        return guarded(null) { document.link(hit.index, inPage.x / INK_PAGE_WIDTH, inPage.y / (INK_PAGE_WIDTH * document.pageSizes[hit.index].aspect)) }
     }
 
     /**
@@ -460,7 +461,7 @@ private fun DocumentPages(
         }
         currentOnSearchResults(null)
         delay(250) // typing
-        val found = document.search(searchQuery)
+        val found = guarded(emptyList()) { document.search(searchQuery) }
         matches = found
         currentOnSearchResults(found.size)
     }
@@ -533,7 +534,7 @@ private fun DocumentPages(
                     val start = selectionEndAt(down.position) ?: return@awaitEachGesture
                     selectionClaimed[0] = true
                     scope.launch {
-                        val word = document.selectWord(start.page, PointF(start.point.x, start.point.y)) ?: return@launch
+                        val word = guarded(null) { document.selectWord(start.page, PointF(start.point.x, start.point.y)) } ?: return@launch
                         haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                         selectionAnchors.value = SelectionAnchors.around(start.page, word)
                     }
@@ -735,7 +736,8 @@ private fun PageImage(
     LaunchedEffect(renderWidth) {
         // Keep showing the previous (blurrier) bitmap while a sharper one renders.
         if (bitmap != null) delay(150)
-        document.renderPage(index, renderWidth)?.let { bitmap = it }
+        // A page that can't be drawn stays blank; the rest of the document is still readable.
+        guarded(null) { document.renderPage(index, renderWidth) }?.let { bitmap = it }
     }
     val image = remember(bitmap) { bitmap?.asImageBitmap() }
     Canvas(Modifier.fillMaxWidth().height(height)) {
