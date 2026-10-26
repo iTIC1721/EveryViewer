@@ -13,7 +13,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.tabpdf"
+        applicationId = "io.github.itic1721.everyviewer"
         minSdk = 26
         targetSdk = 37
         versionCode = 13

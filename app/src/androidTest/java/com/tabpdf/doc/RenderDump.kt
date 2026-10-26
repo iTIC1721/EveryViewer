@@ -14,7 +14,7 @@ import java.io.File
  * Not a check: renders every page of the files in the app's files/render-in/ to
  * files/render-out/<name>-<page>.png, for comparing layouts with the original (기획서 5.7).
  * Skipped when there is nothing to render. Run on its own so the app (and its files) stay:
- *   adb shell am instrument -w -e class com.tabpdf.doc.RenderDump com.tabpdf.test/androidx.test.runner.AndroidJUnitRunner
+ *   adb shell am instrument -w -e class com.tabpdf.doc.RenderDump io.github.itic1721.everyviewer.test/androidx.test.runner.AndroidJUnitRunner
  */
 @RunWith(AndroidJUnit4::class)
 class RenderDump {
