@@ -2,7 +2,7 @@
 
 PDF·텍스트·마크다운·이미지·오피스 문서를 탭으로 열어두고 좌우 스와이프로 넘기며, 탭 그룹으로 관리하고, 탭 위에 필기하는 Android 뷰어.
 
-- 내부 식별자(`applicationId`, 패키지 `com.tabpdf`)는 기존 탭 데이터가 이어지도록 바꾸지 않는다.
+- 앱 식별자(`applicationId`)는 `io.github.itic1721.everyviewer`(v0.14.0부터; 그 전은 `com.tabpdf`). 설치된 앱의 업데이트와 데이터가 이 값에 묶이므로 바꾸지 않는다. 코드의 Kotlin 패키지는 옛 이름 `com.tabpdf` 그대로다(설치와 무관).
 
 - 기획서: [docs/기획서.md](docs/기획서.md) — 기능·UX 결정의 기준. 기획과 다르게 구현해야 하면 먼저 사용자와 상의하고 기획서를 갱신한다.
 
@@ -38,23 +38,23 @@ Git 작업(브랜치, 커밋, 머지, 태그) 전에는 반드시 `git-workflow`
 ```bash
 # 1. 테스트 파일을 앱 내부 저장소로 복사 (Git Bash; 파일마다, 형식은 무엇이든)
 #    새로 설치한 직후에는 files/ 폴더가 없으므로 먼저 만든다
-adb shell run-as com.tabpdf mkdir -p files
-adb exec-in run-as com.tabpdf sh -c "cat > files/Sample.pdf" < Sample.pdf
+adb shell run-as io.github.itic1721.everyviewer mkdir -p files
+adb exec-in run-as io.github.itic1721.everyviewer sh -c "cat > files/Sample.pdf" < Sample.pdf
 # 2. files/의 파일을 모두 탭으로 열며 실행 (--ez debug_ask_to_bundle true 를 더하면 "따로/묶어서"를 묻는다)
-adb shell am start -n com.tabpdf/.MainActivity --ez debug_open_test_files true
+adb shell am start -n io.github.itic1721.everyviewer/com.tabpdf.MainActivity --ez debug_open_test_files true
 ```
 
 - 제스처는 `adb shell input swipe/tap`으로 확인한다. 핀치는 adb로 재현할 수 없으므로 실기기에서 확인.
 - adb로 `/sdcard`에 push한 파일은 앱이 읽을 수 없다 (소유자가 shell).
-- 세션 복원 확인: `adb shell am force-stop com.tabpdf` 후 훅 없이 `am start`로 다시 실행한다. 이전 세션은 DB에 남으므로, 처음부터 확인하려면 앱을 삭제 후 재설치.
+- 세션 복원 확인: `adb shell am force-stop io.github.itic1721.everyviewer` 후 훅 없이 `am start`로 다시 실행한다. 이전 세션은 DB에 남으므로, 처음부터 확인하려면 앱을 삭제 후 재설치.
 - 버튼·메뉴는 좌표 대신 `uiautomator dump`로 텍스트나 content-desc의 bounds를 찾아 누른다 (화면 캡처는 축소본이라 좌표 환산이 틀리기 쉽다). 아이콘 버튼에는 화면 낭독기용 설명을 꼭 단다 — 테스트에서도 그것으로 찾는다.
 - 다른 앱에서 열기·공유 확인: 테스트 APK를 설치(`installDebugAndroidTest`)하면 그 안의 `TestPdfProvider`가 보내는 앱 역할을 한다.
-  `adb shell am start -a android.intent.action.SEND -t application/pdf --eu android.intent.extra.STREAM content://com.tabpdf.test.pdfs/shared.pdf -n com.tabpdf/.MainActivity`
-- 파일 없이 글만 공유하는 경우: `adb shell am start -a android.intent.action.SEND -t text/plain --es android.intent.extra.TEXT "'공유할 글'" -n com.tabpdf/.MainActivity`
+  `adb shell am start -a android.intent.action.SEND -t application/pdf --eu android.intent.extra.STREAM content://com.tabpdf.test.pdfs/shared.pdf -n io.github.itic1721.everyviewer/com.tabpdf.MainActivity`
+- 파일 없이 글만 공유하는 경우: `adb shell am start -a android.intent.action.SEND -t text/plain --es android.intent.extra.TEXT "'공유할 글'" -n io.github.itic1721.everyviewer/com.tabpdf.MainActivity`
 - 테스트 파일은 경로가 짧은 곳(예: `%TEMP%\evtest`)에서 만든다. 세션 임시 폴더는 경로가 길어 Windows 프로그램(python 등)이 실행되지 않는다.
-- 필기: `adb shell input stylus ...`는 펜(TOOL_TYPE_STYLUS)으로 인식되지 않는다. 펜·측면 버튼·여러 손가락 규칙은 계측 테스트 `InkInputTest`(UiAutomation으로 이벤트 주입)로 확인한다. 이 테스트는 에뮬레이터의 탭·필기·files/·설정을 지운다. 펜 지연·손바닥 무시·S펜 버튼은 실기기로 확인.
+- 필기: `adb shell input stylus ...`는 펜(TOOL_TYPE_STYLUS)으로 인식되지 않는다. 펜·측면 버튼·여러 손가락 규칙은 계측 테스트 `InkInputTest`(UiAutomation으로 이벤트 주입)로 확인한다. 이 테스트는 에뮬레이터의 탭·필기·files/·설정을 지운다. 화면이 꺼진 에뮬레이터(막 부팅했거나 잠든 것)에서는 획이 하나도 들어가지 않아 모두 실패하므로 먼저 `adb shell input keyevent KEYCODE_WAKEUP; adb shell svc power stayon true`. 펜 지연·손바닥 무시·S펜 버튼은 실기기로 확인.
 - hwp: 한글로 같은 문서를 hwpx로도 저장해 두 파일을 RenderDump로 뽑으면 쪽마다 같아야 한다 (같은 모델로 옮기므로).
-- docx·hwpx 조판 비교: 원본을 Word·한글로 PDF로 만든 뒤(이 PC의 Office·한글 COM 자동화), 같은 파일을 `files/render-in/`에 복사하고 `adb shell am instrument -w -e class com.tabpdf.doc.RenderDump com.tabpdf.test/androidx.test.runner.AndroidJUnitRunner`(앱이 지워지지 않게 단독 실행)로 `files/render-out/`에 쪽 PNG를 뽑아 나란히 본다. 한글의 PDF 내보내기는 전체가 약 16pt 어긋나므로 위치는 hwpx 안의 `Preview/PrvImage.png`로 확인한다. pptx는 PowerPoint COM의 `Slide.Export(경로, "PNG", 폭, 높이)`로 슬라이드마다 그림을 뽑아 비교한다. 사용자 견본 파일은 저장소에 넣지 않는다.
+- docx·hwpx 조판 비교: 원본을 Word·한글로 PDF로 만든 뒤(이 PC의 Office·한글 COM 자동화), 같은 파일을 `files/render-in/`에 복사하고 `adb shell am instrument -w -e class com.tabpdf.doc.RenderDump io.github.itic1721.everyviewer.test/androidx.test.runner.AndroidJUnitRunner`(앱이 지워지지 않게 단독 실행)로 `files/render-out/`에 쪽 PNG를 뽑아 나란히 본다. 한글의 PDF 내보내기는 전체가 약 16pt 어긋나므로 위치는 hwpx 안의 `Preview/PrvImage.png`로 확인한다. pptx는 PowerPoint COM의 `Slide.Export(경로, "PNG", 폭, 높이)`로 슬라이드마다 그림을 뽑아 비교한다. 사용자 견본 파일은 저장소에 넣지 않는다.
 - 에뮬레이터는 두 개다: C 드라이브 SDK의 `Pixel_4_XL_API_30`(Android 11)과, C 드라이브 용량 때문에 D 드라이브에 둔 `Pixel_6_API_35`(Android 15; SDK `D:\Android\sdk`, AVD `D:\Android\avd`, `platform-tools`는 C SDK로 연결). Android 15 실행:
   `$env:ANDROID_AVD_HOME='D:\Android\avd'; $env:ANDROID_SDK_ROOT='D:\Android\sdk'; $env:ANDROID_HOME='D:\Android\sdk'; & D:\Android\sdk\emulator\emulator.exe -avd Pixel_6_API_35`
   (`ANDROID_HOME`도 지정해야 한다: 시스템에 C 드라이브 SDK로 잡혀 있으면 그쪽에서 시스템 이미지를 찾다 실패한다)

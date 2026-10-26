@@ -180,7 +180,7 @@ class SecurityTest {
     fun onlyWebAndMailLinksAreKept() = runBlocking {
         val rels = """<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">""" +
             """<Relationship Id="web" Type="h" Target="https://example.com/" TargetMode="External"/>""" +
-            """<Relationship Id="file" Type="h" Target="file:///data/data/com.tabpdf/databases/tabs.db" TargetMode="External"/>""" +
+            """<Relationship Id="file" Type="h" Target="file:///data/data/io.github.itic1721.everyviewer/databases/tabs.db" TargetMode="External"/>""" +
             """<Relationship Id="intent" Type="h" Target="intent://x#Intent;scheme=x;end" TargetMode="External"/>""" +
             "</Relationships>"
         val paragraphs = listOf("web", "file", "intent").joinToString("") {

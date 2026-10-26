@@ -1,6 +1,6 @@
 # <img src="docs/images/icon.png" width="44" alt="" align="top"> EveryViewer
 
-![version](https://img.shields.io/badge/version-0.13.0-blue)
+![version](https://img.shields.io/badge/version-0.14.0-blue)
 ![minSdk](https://img.shields.io/badge/Android-8.0%2B%20(API%2026)-3DDC84?logo=android&logoColor=white)
 ![Kotlin](https://img.shields.io/badge/Kotlin-Jetpack%20Compose-7F52FF?logo=kotlin&logoColor=white)
 
@@ -99,7 +99,7 @@ app/src/main/java/com/tabpdf/
   data/         Room DB
 ```
 
-패키지 이름 `com.tabpdf`는 예전 이름(TabPDF)에서 왔습니다. 기존 탭 데이터가 이어지도록 바꾸지 않습니다.
+앱 식별자는 `io.github.itic1721.everyviewer`입니다(0.13.0까지는 `com.tabpdf`). 코드의 패키지 `com.tabpdf`는 예전 이름(TabPDF)에서 왔습니다.
 
 ## 문서
 
@@ -108,10 +108,6 @@ app/src/main/java/com/tabpdf/
 
 ## 라이선스
 
-```
-Copyright 2026 iTIC
+Apache License 2.0으로 배포합니다. 전문은 [LICENSE](LICENSE)에 있습니다.
 
-Licensed under the Apache License, Version 2.0
-```
-
-전문은 [LICENSE](LICENSE)에 있습니다.
+함께 쓰는 라이브러리와 라이선스: Kotlin·kotlinx.coroutines·AndroidX(Jetpack Compose, Room, Ink 등)·[hwplib](https://github.com/neolord0/hwplib) — Apache-2.0, [jsoup](https://jsoup.org/) — MIT, [commonmark-java](https://github.com/commonmark/commonmark-java) — BSD 2-Clause, [juniversalchardet](https://github.com/albfernandez/juniversalchardet) — MPL 1.1.

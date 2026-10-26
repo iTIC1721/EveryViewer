@@ -182,8 +182,8 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * Debug builds only: `adb shell am start -n com.tabpdf/.MainActivity --ez debug_open_test_files true`
-     * opens every file in the app's internal files dir (copy them in with `adb shell run-as com.tabpdf`).
+     * Debug builds only: `adb shell am start -n io.github.itic1721.everyviewer/com.tabpdf.MainActivity --ez debug_open_test_files true`
+     * opens every file in the app's internal files dir (copy them in with `adb shell run-as io.github.itic1721.everyviewer`).
      * Lets gestures be tested on an emulator without driving the system file picker.
      */
     private fun openDebugTestFiles() {
