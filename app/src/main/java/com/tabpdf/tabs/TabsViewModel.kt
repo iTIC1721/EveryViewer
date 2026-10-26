@@ -24,6 +24,7 @@ import com.tabpdf.doc.Documents
 import com.tabpdf.doc.FileFormat
 import com.tabpdf.doc.TocEntry
 import com.tabpdf.doc.awaitComplete
+import com.tabpdf.doc.guarded
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import android.net.Uri
@@ -111,6 +112,9 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
         if (cleaned != saved) commit(cleaned)
         app.enqueueWrite {
             FileAccess.releaseUnused(app, FileAccess.filesInUse(cleaned.allTabs.map { it.uri to it.format }), app.startedAt)
+            // The last export was shared in an earlier session; one made from a locked PDF has no
+            // password, so it isn't kept on the disk longer than that (as for thumbnails).
+            withContext(Dispatchers.IO) { File(app.cacheDir, EXPORT_DIR).deleteRecursively() }
         }
         ink.deleteOrphans()
     }
@@ -500,7 +504,7 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /** Tab [tabId]'s table of contents (기획서 5.5), or null if its file isn't open. */
-    suspend fun tableOfContents(tabId: String): List<TocEntry>? = openDocuments[tabId]?.tableOfContents()
+    suspend fun tableOfContents(tabId: String): List<TocEntry>? = openDocuments[tabId]?.let { guarded(emptyList()) { it.tableOfContents() } }
 
     fun onPageJumpHandled(jump: PageJump) {
         if (_pageJump.value == jump) _pageJump.value = null

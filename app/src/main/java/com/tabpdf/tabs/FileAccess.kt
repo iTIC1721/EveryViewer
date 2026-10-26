@@ -1,8 +1,11 @@
 package com.tabpdf.tabs
 
+import android.app.ActivityManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
+import android.os.StatFs
 import android.provider.OpenableColumns
 import com.tabpdf.doc.Bundles
 import com.tabpdf.doc.FileFormat
@@ -10,6 +13,7 @@ import com.tabpdf.doc.FileFormats
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.IOException
 import java.util.UUID
 
 /** A file ready to become a tab: readable now and after an app restart. */
@@ -22,10 +26,23 @@ data class OpenedFile(val uri: Uri, val name: String, val isInternalCopy: Boolea
 object FileAccess {
     private const val COPY_DIR = "tab-copies"
 
+    /**
+     * Room always left on the device after a copy: the file comes from another app, whose provider
+     * can send an endless stream. Any size that fits is still taken (text files have no size limit).
+     */
+    private const val KEEP_FREE_BYTES = 256L * 1024 * 1024
+
     suspend fun prepare(context: Context, uri: Uri): OpenedFile = withContext(Dispatchers.IO) {
         val name = displayName(context, uri)
         val format = FileFormats.detect(context, uri, name)
         if (uri.scheme == "file") return@withContext OpenedFile(uri, name, isInternalCopy = false, format)
+        // Android keeps a limited number of grants per app and silently drops the oldest past that:
+        // the files of tabs opened long ago. Another app can send hundreds of files at once to make
+        // that happen, so past our own share of the limit, files are copied instead.
+        val grants = context.contentResolver.persistedUriPermissions
+        if (grants.size >= maxGrants(context) && grants.none { it.uri == uri }) {
+            return@withContext OpenedFile(copyToAppStorage(context, uri, name), name, isInternalCopy = true, format)
+        }
         try {
             context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
             OpenedFile(uri, name, isInternalCopy = false, format)
@@ -107,10 +124,36 @@ object FileAccess {
             e.isNotEmpty() && e.length <= 10 && e.all { it in 'a'..'z' || it in 'A'..'Z' || it in '0'..'9' }
         }
         val target = File(dir, UUID.randomUUID().toString() + (extension?.let { ".$it" } ?: ""))
-        context.contentResolver.openInputStream(uri)?.use { input ->
-            target.outputStream().use { input.copyTo(it) }
-        } ?: throw java.io.FileNotFoundException(uri.toString())
+        val limit = StatFs(dir.path).availableBytes - KEEP_FREE_BYTES
+        try {
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                target.outputStream().use { output ->
+                    val buffer = ByteArray(64 * 1024)
+                    var total = 0L
+                    while (true) {
+                        val n = input.read(buffer)
+                        if (n < 0) break
+                        total += n
+                        if (total > limit) throw IOException("Too large to copy")
+                        output.write(buffer, 0, n)
+                    }
+                }
+            } ?: throw java.io.FileNotFoundException(uri.toString())
+        } catch (e: Throwable) {
+            // Half a copy is no use, and would hold the space until the next start (releaseUnused).
+            target.delete()
+            throw e
+        }
         return Uri.fromFile(target)
+    }
+
+    /**
+     * Persisted grants this app takes for itself: below the system's limit (128 on older Android
+     * versions, more on newer ones), with room left for files picked in other ways.
+     */
+    private fun maxGrants(context: Context): Int {
+        val lowRam = context.getSystemService(ActivityManager::class.java)?.isLowRamDevice == true
+        return if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R || lowRam) 100 else 400
     }
 
     private fun displayName(context: Context, uri: Uri): String {

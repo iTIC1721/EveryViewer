@@ -14,6 +14,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
@@ -68,6 +69,34 @@ class SecurityTest {
 
     private fun body(xml: String) = "<w:document $ns><w:body>$xml</w:body></w:document>"
 
+    /** An xlsx of one sheet: [rows] in its sheetData, [tail] after that; style 1 shows [format] (or 0.00). */
+    private fun xlsx(rows: String, format: String? = null, tail: String = "", sheetRels: String? = null): ByteArray {
+        val main = "xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" " +
+            "xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\""
+        val rel = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+        val numFmts = format?.let { "<numFmts count=\"1\"><numFmt numFmtId=\"164\" formatCode=\"$it\"/></numFmts>" }.orEmpty()
+        val parts = mapOf(
+            "xl/workbook.xml" to "<workbook $main><sheets><sheet name=\"S\" sheetId=\"1\" r:id=\"rId1\"/></sheets></workbook>",
+            "xl/_rels/workbook.xml.rels" to "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">" +
+                "<Relationship Id=\"rId1\" Type=\"$rel/worksheet\" Target=\"worksheets/sheet1.xml\"/></Relationships>",
+            "xl/styles.xml" to "<styleSheet $main>$numFmts<cellXfs count=\"2\"><xf numFmtId=\"0\"/>" +
+                "<xf numFmtId=\"${if (format != null) 164 else 2}\"/></cellXfs></styleSheet>",
+            "xl/worksheets/sheet1.xml" to "<worksheet $main><sheetData>$rows</sheetData>$tail</worksheet>",
+        )
+        return docx(parts + (sheetRels?.let { mapOf("xl/worksheets/_rels/sheet1.xml.rels" to it) } ?: emptyMap()))
+    }
+
+    /** An EPUB with one chapter, which [spine] (itemref elements) lists. */
+    private fun epub(spine: String): ByteArray = docx(
+        mapOf(
+            "META-INF/container.xml" to "<container xmlns=\"urn:oasis:names:tc:opendocument:xmlns:container\" version=\"1.0\"><rootfiles>" +
+                "<rootfile full-path=\"OEBPS/content.opf\" media-type=\"application/oebps-package+xml\"/></rootfiles></container>",
+            "OEBPS/content.opf" to "<package xmlns=\"http://www.idpf.org/2007/opf\" version=\"3.0\"><manifest>" +
+                "<item id=\"c\" href=\"ch.xhtml\" media-type=\"application/xhtml+xml\"/></manifest><spine>$spine</spine></package>",
+            "OEBPS/ch.xhtml" to "<html xmlns=\"http://www.w3.org/1999/xhtml\"><body>" + "<p>${"가나다 ".repeat(200)}</p>".repeat(5) + "</body></html>",
+        )
+    )
+
     private suspend fun openFile(name: String, bytes: ByteArray, format: FileFormat): Document {
         val file = File(dir, name).apply { writeBytes(bytes) }
         return Documents.open(context, Uri.fromFile(file), name, format)
@@ -101,6 +130,50 @@ class SecurityTest {
         // Nesting real documents use still opens.
         val ok = body("<w:p>" + "<w:hyperlink>".repeat(50) + "<w:r><w:t>x</w:t></w:r>" + "</w:hyperlink>".repeat(50) + "</w:p>")
         openFile("ok.docx", docx(mapOf("word/document.xml" to ok)), FileFormat.Docx).close()
+    }
+
+    @Test
+    fun cellsThatCannotBeRoundedStillDraw() = runBlocking {
+        // NaN is read as a number, and enough percent signs take zero to NaN. Rounding NaN throws, and
+        // drawing the page used to throw with it: the app ended on every start, as the tab was reopened.
+        val cases = listOf("NaN" to null, "0" to "0" + "%".repeat(155), "1" to "0." + "0".repeat(400))
+        for ((value, format) in cases) {
+            val doc = openFile("cell.xlsx", xlsx("<row r=\"1\"><c r=\"A1\" s=\"1\"><v>$value</v></c></row>", format), FileFormat.Xlsx)
+            try {
+                assertNotNull(doc.renderPage(0, 400))
+            } finally {
+                doc.close()
+            }
+        }
+    }
+
+    @Test
+    fun repeatedLinksAndMergesOpenQuickly() = runBlocking {
+        // Two cells make the used range 1000 × 1000. Every link and merge over it used to be spread over
+        // its cells, one after another: hours of work for a file of a few dozen KB.
+        val rows = "<row r=\"1\"><c r=\"A1\"><v>1</v></c></row><row r=\"1000\"><c r=\"ALL1000\"><v>1</v></c></row>"
+        val tail = "<mergeCells>" + "<mergeCell ref=\"A2:CV1000\"/>".repeat(100_000) + "</mergeCells>" +
+            "<hyperlinks>" + "<hyperlink ref=\"A1:ALL1000\" r:id=\"rId1\"/>".repeat(100_000) + "</hyperlinks>"
+        val rels = "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">" +
+            "<Relationship Id=\"rId1\" Type=\"h\" Target=\"https://example.com/\" TargetMode=\"External\"/></Relationships>"
+        val started = SystemClock.elapsedRealtime()
+        openFile("links.xlsx", xlsx(rows, tail = tail, sheetRels = rels), FileFormat.Xlsx).close()
+        assertTrue(SystemClock.elapsedRealtime() - started < 10_000)
+    }
+
+    @Test
+    fun aChapterRepeatedInTheSpineIsLaidOutOnce() = runBlocking {
+        // Laying the same chapter out again and again in the background used to run the app out of memory.
+        val once = openFile("once.epub", epub("<itemref idref=\"c\"/>"), FileFormat.Epub)
+        val pages = once.pageCount
+        once.close()
+        val repeated = openFile("repeated.epub", epub("<itemref idref=\"c\"/>".repeat(100_000)), FileFormat.Epub)
+        try {
+            repeated.awaitComplete()
+            assertEquals(pages, repeated.pageCount)
+        } finally {
+            repeated.close()
+        }
     }
 
     @Test

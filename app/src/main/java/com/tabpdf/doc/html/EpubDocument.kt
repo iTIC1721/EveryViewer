@@ -75,11 +75,17 @@ class EpubDocument private constructor(
     init {
         if (spine.size > 1) scope.launch {
             val done = mutableListOf(first)
-            for (path in spine.drop(1)) {
-                ensureActive()
-                done += chapter(path)
-                laid = laidOf(done.toList())
-                _progress.value = LayoutProgress(laid.pages, complete = done.size == spine.size)
+            try {
+                for (path in spine.drop(1)) {
+                    ensureActive()
+                    done += chapter(path)
+                    laid = laidOf(done.toList())
+                    _progress.value = LayoutProgress(laid.pages, complete = done.size == spine.size)
+                }
+            } catch (e: OutOfMemoryError) {
+                // Nothing above catches it here (an error out of this scope ends the app): the
+                // chapters laid out so far stay readable, as for a text file that stops being read.
+                _progress.value = LayoutProgress(laid.pages, complete = true)
             }
             // Everything is laid out; the pictures in use are kept by their pages.
             parts = null
@@ -197,7 +203,9 @@ class EpubDocument private constructor(
                 val href = item.attr("href") ?: return@mapNotNull null
                 id to resolve(opfPath, href)
             }.toMap()
-            return all(opf, "itemref").mapNotNull { ref -> items[ref.attr("idref")] }.filter { parts[it] != null }
+            // Each chapter once (EPUB lists every item once): repeating one chapter a million times
+            // would otherwise lay it out a million times. Distinct parts are few (ZipParts' limit).
+            return all(opf, "itemref").mapNotNull { ref -> items[ref.attr("idref")] }.filter { parts[it] != null }.distinct()
         }
 
         /** A table of contents entry before layout: where in the book it points. */

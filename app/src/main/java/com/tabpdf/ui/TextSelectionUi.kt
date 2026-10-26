@@ -35,6 +35,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.tabpdf.doc.Document
 import com.tabpdf.doc.TextSelection
+import com.tabpdf.doc.guarded
 import kotlin.math.roundToInt
 
 /** One end of a text selection: a page, and a point on it in fractions of its width and height. */
@@ -79,7 +80,7 @@ suspend fun selectRange(document: Document, anchors: SelectionAnchors): List<Pai
     return (s.page..lastPage).mapNotNull { page ->
         val from = if (page == s.page) s.point else Offset.Zero
         val to = if (page == e.page) e.point else Offset(1f, 1f)
-        document.selectText(page, PointF(from.x, from.y), PointF(to.x, to.y))?.let { page to it }
+        guarded(null) { document.selectText(page, PointF(from.x, from.y), PointF(to.x, to.y)) }?.let { page to it }
     }
 }
 

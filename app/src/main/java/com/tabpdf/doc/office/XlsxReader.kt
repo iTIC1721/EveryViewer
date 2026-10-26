@@ -94,6 +94,12 @@ object XlsxReader {
     /** Cells kept in memory before the rest are left out ([Workbook.truncated]): about 110 bytes each with their values, kept to under half the heap. */
     private val maxCells = (Runtime.getRuntime().maxMemory() / 256).coerceIn(100_000L, 4_000_000L)
 
+    /**
+     * Cells a sheet's links are spread over, all links together. Each link is cut to the used range,
+     * but a file can repeat links over a million cells each without end (opening would never finish).
+     */
+    private const val MAX_LINK_CELLS = 1_000_000
+
     fun read(parts: ZipParts): Workbook {
         val workbook = parts.xml("xl/workbook.xml") ?: throw IOException("No workbook")
         val rels = relationships(parts, "xl/workbook.xml")
@@ -501,10 +507,12 @@ object XlsxReader {
 
             val sheetRels = relationships(parts, path)
             val links = HashMap<Long, String>()
-            for ((r, id) in linkRefs) {
+            var linkCells = MAX_LINK_CELLS
+            links@ for ((r, id) in linkRefs) {
                 val target = sheetRels[id]?.takeIf { it.startsWith("external:") }?.removePrefix("external:") ?: continue
                 // Links to many cells (a whole column) are kept for the cells that are used.
                 for (row in r.firstRow..minOf(r.lastRow, maxRow)) for (col in r.firstColumn..minOf(r.lastColumn, maxColumn)) {
+                    if (--linkCells < 0) break@links
                     links[key(row, col)] = target
                 }
             }
@@ -574,7 +582,8 @@ object XlsxReader {
             "b" -> raw?.trim() == "1"
             "e" -> raw?.let { CellError(it) }
             "d" -> raw
-            else -> raw?.trim()?.toDoubleOrNull()
+            // Kotlin reads "NaN" and "Infinity" as numbers; Excel never writes them (nor a number past Double's range).
+            else -> raw?.trim()?.toDoubleOrNull()?.let { if (it.isFinite()) it else CellError("#NUM!") }
         }
 
         /** Pictures and charts of a sheet's drawing part. Shapes without a picture are left out. */

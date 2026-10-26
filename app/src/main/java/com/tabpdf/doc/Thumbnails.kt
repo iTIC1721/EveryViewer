@@ -78,6 +78,11 @@ object Thumbnails {
             throw e
         } catch (e: Exception) {
             null
+        } catch (e: OutOfMemoryError) {
+            // Drawing a crafted page, not only opening it, can run out (Documents.open covers only that).
+            null
+        } catch (e: StackOverflowError) {
+            null
         }
     }
 }
