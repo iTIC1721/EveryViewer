@@ -163,8 +163,9 @@ class MainActivity : ComponentActivity() {
                 try {
                     FileAccess.prepare(applicationContext, uri)
                 } catch (e: Exception) {
-                    // Not the URI: file names in the log would tell what the user reads.
-                    android.util.Log.w("EveryViewer", "Could not open a file", e)
+                    // Not the URI: file names in the log would tell what the user reads. Nor the
+                    // exception itself: its message often is the URI (FileNotFoundException, SecurityException).
+                    android.util.Log.w("EveryViewer", "Could not open a file: ${e.javaClass.simpleName}")
                     null
                 }
             }
