@@ -129,6 +129,9 @@ import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
 private const val MAX_ZOOM = 5f
+
+/** Pages may be shrunk to half the screen width, centred with room on both sides (기획서 5.2). */
+private const val MIN_ZOOM = 0.5f
 private val OTHER_MATCH = Color(0xFFFFEB3B)
 private val CURRENT_MATCH = Color(0xFFFF9632)
 private const val DOUBLE_TAP_ZOOM = 2.5f
@@ -302,14 +305,14 @@ private fun DocumentPages(
 
     // The file may have fewer pages than when the position was saved.
     val initialPage = initialState.page.coerceIn(0, document.pageCount - 1)
-    val initialZoom = initialState.zoom.coerceIn(1f, MAX_ZOOM)
+    val initialZoom = initialState.zoom.coerceIn(MIN_ZOOM, MAX_ZOOM)
     val listState = rememberLazyListState(
         initialPage,
         (initialState.pageOffset * pageHeight(initialPage, initialZoom)).roundToInt(),
     )
     var zoom by remember { mutableFloatStateOf(initialZoom) }
     var panX by remember {
-        mutableFloatStateOf((initialState.panX * viewportWidth).coerceIn(0f, viewportWidth * (initialZoom - 1f)))
+        mutableFloatStateOf((initialState.panX * viewportWidth).coerceIn(panRange(viewportWidth, initialZoom)))
     }
     val currentOnTap by rememberUpdatedState(onTap)
     val currentOnStateChange by rememberUpdatedState(onStateChange)
@@ -418,10 +421,10 @@ private fun DocumentPages(
         onPageJumpHandled(jump)
     }
 
-    fun maxPan() = viewportWidth * (zoom - 1f)
+    fun maxPan() = panRange(viewportWidth, zoom).endInclusive
 
     fun panBy(dx: Float) {
-        panX = (panX + dx).coerceIn(0f, maxPan())
+        panX = (panX + dx).coerceIn(panRange(viewportWidth, zoom))
     }
 
     /**
@@ -430,13 +433,13 @@ private fun DocumentPages(
      * visible item's top scales exactly by the zoom ratio.
      */
     fun zoomBy(factor: Float, focus: Offset) {
-        val newZoom = (zoom * factor).coerceIn(1f, MAX_ZOOM)
+        val newZoom = (zoom * factor).coerceIn(MIN_ZOOM, MAX_ZOOM)
         val ratio = newZoom / zoom
         if (ratio == 1f) return
         val index = listState.firstVisibleItemIndex
         val offset = listState.firstVisibleItemScrollOffset
         zoom = newZoom
-        panX = ((panX + focus.x) * ratio - focus.x).coerceIn(0f, maxPan())
+        panX = ((panX + focus.x) * ratio - focus.x).coerceIn(panRange(viewportWidth, newZoom))
         val newOffset = ((offset + focus.y) * ratio - focus.y).roundToInt().coerceAtLeast(0)
         // Undispatched so the scroll position updates before the next pointer event reads it.
         scope.launch(start = CoroutineStart.UNDISPATCHED) { listState.scrollToItem(index, newOffset) }
@@ -603,7 +606,8 @@ private fun DocumentPages(
                             ) {
                                 pendingTap?.cancel()
                                 lastTapTime = 0L
-                                animateZoomTo(if (zoom > 1.01f) 1f else DOUBLE_TAP_ZOOM, position)
+                                // Back to the screen's width from any zoom, in or out; from there, in.
+                                animateZoomTo(if (abs(zoom - 1f) > 0.01f) 1f else DOUBLE_TAP_ZOOM, position)
                             } else {
                                 lastTapTime = now
                                 lastTapPosition = position
@@ -703,11 +707,22 @@ private fun DocumentPages(
 }
 
 /**
- * Bitmap width for a page: re-rendered only at a few zoom steps (1×, 2×, 3×) so pinching does not
+ * Where the page's left edge may be ([panX], in px of the page at [zoom]): from 0 to the part that
+ * doesn't fit when zoomed in; when shrunk, fixed so the page sits in the middle of the screen.
+ */
+private fun panRange(viewportWidth: Float, zoom: Float): ClosedFloatingPointRange<Float> {
+    val extra = viewportWidth * (zoom - 1f)
+    return if (extra < 0f) (extra / 2).let { it..it } else 0f..extra
+}
+
+/**
+ * Bitmap width for a page: re-rendered only at a few zoom steps (½×, 1×, 2×, 3×) so pinching does not
  * trigger a render per frame, capped by [MAX_RENDER_PIXELS].
  */
 private fun renderWidthFor(viewportWidth: Float, zoom: Float, aspect: Float): Int {
     val step = when {
+        // Shrunk: more pages show at once, each drawn smaller.
+        zoom < 0.75f -> 0.5f
         zoom < 1.5f -> 1f
         zoom < 2.5f -> 2f
         else -> 3f
