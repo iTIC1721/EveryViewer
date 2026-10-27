@@ -49,7 +49,6 @@ fun SettingsScreen(settings: AppSettings, onDismiss: () -> Unit) {
     val keepScreenOn by settings.keepScreenOn.collectAsState()
     val crossGroupSwipe by settings.crossGroupSwipe.collectAsState()
     val fingerDrawing by settings.fingerDrawing.collectAsState()
-    val stylusSeen by settings.stylusSeen.collectAsState()
     val sideButtonErases by settings.sideButtonErases.collectAsState()
     var showAbout by remember { mutableStateOf(false) }
     BackHandler(onBack = onDismiss)
@@ -68,33 +67,29 @@ fun SettingsScreen(settings: AppSettings, onDismiss: () -> Unit) {
             Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).navigationBarsPadding()) {
                 Section("화면")
                 Label("테마")
-                Choice(theme == ThemeMode.System, "시스템 설정에 따름") { settings.setTheme(ThemeMode.System) }
-                Choice(theme == ThemeMode.Light, "밝게") { settings.setTheme(ThemeMode.Light) }
-                Choice(theme == ThemeMode.Dark, "어둡게") { settings.setTheme(ThemeMode.Dark) }
-                Toggle("화면 켜짐 유지", "보는 동안 화면이 꺼지지 않음", keepScreenOn, settings::setKeepScreenOn)
+                Choice(theme == ThemeMode.System, "시스템 기본값") { settings.setTheme(ThemeMode.System) }
+                Choice(theme == ThemeMode.Light, "밝은 테마") { settings.setTheme(ThemeMode.Light) }
+                Choice(theme == ThemeMode.Dark, "어두운 테마") { settings.setTheme(ThemeMode.Dark) }
+                Toggle("화면 켜짐 유지", "문서를 보는 동안 화면이 꺼지지 않습니다.", keepScreenOn, settings::setKeepScreenOn)
 
                 Divider()
                 Section("탭")
                 Toggle(
-                    "그룹 끝에서 다음 그룹으로 넘어가기",
-                    "끄면 지금 그룹 안의 탭끼리만 넘어감",
+                    "다음 그룹으로 넘기기",
+                    "그룹의 마지막 탭에서 밀면 다음 그룹의 탭으로 넘어갑니다.",
                     crossGroupSwipe,
                     settings::setCrossGroupSwipe,
                 )
 
                 Divider()
                 Section("필기")
-                Label("필기 모드에서 손가락으로 그리기")
-                Choice(fingerDrawing == FingerDrawing.Auto, "자동 — 펜을 쓰면 펜만 그림" + if (stylusSeen) " (펜 사용 중)" else "") {
-                    settings.setFingerDrawing(FingerDrawing.Auto)
-                }
-                Choice(fingerDrawing == FingerDrawing.Always, "항상 — 펜이 있어도 손가락도 그림") {
-                    settings.setFingerDrawing(FingerDrawing.Always)
-                }
-                Choice(fingerDrawing == FingerDrawing.Never, "안 함 — 손가락은 넘기기만") {
-                    settings.setFingerDrawing(FingerDrawing.Never)
-                }
-                Toggle("펜 측면 버튼으로 지우기", "버튼을 누른 채 그리면 지우개", sideButtonErases, settings::setSideButtonErases)
+                // Whether a pen takes over drawing: automatic once one is used, always, or never
+                // (then fingers draw too).
+                Label("펜 사용")
+                Choice(fingerDrawing == FingerDrawing.Auto, "자동") { settings.setFingerDrawing(FingerDrawing.Auto) }
+                Choice(fingerDrawing == FingerDrawing.Never, "항상") { settings.setFingerDrawing(FingerDrawing.Never) }
+                Choice(fingerDrawing == FingerDrawing.Always, "사용 안 함") { settings.setFingerDrawing(FingerDrawing.Always) }
+                Toggle("측면 버튼을 지우개로 사용", null, sideButtonErases, settings::setSideButtonErases)
 
                 Divider()
                 Section("정보")
@@ -106,7 +101,7 @@ fun SettingsScreen(settings: AppSettings, onDismiss: () -> Unit) {
             }
         }
     }
-    if (showAbout) AboutDialog(onDismiss = { showAbout = false })
+    if (showAbout) AboutScreen(onDismiss = { showAbout = false })
 }
 
 @Composable
@@ -135,12 +130,12 @@ private fun Choice(selected: Boolean, label: String, onSelect: () -> Unit) {
     ) {
         RadioButton(selected = selected, onClick = null)
         Spacer(Modifier.width(16.dp))
-        Text(label, style = MaterialTheme.typography.bodyMedium)
+        Text(label, style = MaterialTheme.typography.bodyLarge)
     }
 }
 
 @Composable
-private fun Toggle(title: String, detail: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+private fun Toggle(title: String, detail: String?, checked: Boolean, onChange: (Boolean) -> Unit) {
     Row(
         Modifier
             .fillMaxWidth()
@@ -150,7 +145,7 @@ private fun Toggle(title: String, detail: String, checked: Boolean, onChange: (B
     ) {
         Column(Modifier.weight(1f)) {
             Text(title, style = MaterialTheme.typography.bodyLarge)
-            Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (detail != null) Text(detail, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         Switch(checked = checked, onCheckedChange = null)
     }

@@ -185,31 +185,6 @@ fun ExportProgress(done: Int, total: Int, onCancel: () -> Unit) {
 }
 
 @Composable
-fun AboutDialog(onDismiss: () -> Unit) {
-    val context = LocalContext.current
-    val version = remember {
-        context.packageManager.getPackageInfo(context.packageName, 0).versionName.orEmpty()
-    }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("EveryViewer $version") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("어떤 파일이든 탭으로 열어 두고 넘겨 보는 뷰어")
-                Text(
-                    "오픈소스: Kotlin, kotlinx.coroutines, AndroidX (Jetpack Compose, Room, Ink 등) — Apache License 2.0 · " +
-                        "hwplib — Apache License 2.0 · jsoup — MIT License · " +
-                        "commonmark-java — BSD 2-Clause · juniversalchardet — MPL 1.1",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("닫기") } },
-    )
-}
-
-@Composable
 fun ConfirmDialog(title: String, message: String, confirmLabel: String, onConfirm: () -> Unit, onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
