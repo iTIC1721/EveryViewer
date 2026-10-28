@@ -39,6 +39,9 @@ class PdfFile(file: RandomAccessFile) {
     private val objectStreams = HashMap<Int, Pair<ByteArray, IntArray>>()
     private val opening = HashSet<Int>()
 
+    /** Cross-reference stream data read so far (MAX_XREF_BYTES). */
+    private var xrefBytes = 0L
+
     init {
         lastXref = findStartXref()
         var newest: PdfDict? = null
@@ -111,11 +114,22 @@ class PdfFile(file: RandomAccessFile) {
         if (w == null || w.size != 3 || w.any { it !in 0..8 }) throw PdfSyntaxException("Bad /W")
         val sizeAll = (dict["Size"] as? PdfNumber)?.value?.toInt() ?: throw PdfSyntaxException("No /Size")
         val index = (dict["Index"] as? List<*>)?.map { (it as? PdfNumber)?.value?.toInt() ?: -1 } ?: listOf(0, sizeAll)
-        val data = streamData(stream)
-        val rowLength = w.sum()
-        var row = 0
-        for (pair in index.chunked(2)) {
+        // An entry with no offset field says nothing; with all fields empty, rows take no bytes and
+        // nothing below would bound the loop.
+        if (w[1] == 0) throw PdfSyntaxException("Bad /W")
+        val pairs = index.chunked(2)
+        for (pair in pairs) {
             if (pair.size != 2 || pair[0] < 0 || pair[1] !in 0..MAX_OBJECTS) throw PdfSyntaxException("Bad /Index")
+        }
+        val data = streamData(stream)
+        // Up to MAX_SECTIONS of them, each decoding up to MAX_STREAM: real ones are a few kilobytes.
+        xrefBytes += data.size
+        if (xrefBytes > MAX_XREF_BYTES) throw PdfSyntaxException("Cross-reference streams too large")
+        val rowLength = w.sum()
+        // Every row listed must be in the data: the work is bounded by its size.
+        if (pairs.sumOf { it[1].toLong() } * rowLength > data.size) throw PdfSyntaxException("Cross-reference stream too short")
+        var row = 0
+        for (pair in pairs) {
             for (i in 0 until pair[1]) {
                 val at = row++ * rowLength
                 if (at + rowLength > data.size) throw PdfSyntaxException("Cross-reference stream too short")
@@ -295,5 +309,6 @@ class PdfFile(file: RandomAccessFile) {
         const val MAX_CACHE = 10_000
         /** Structure streams (cross-reference, object streams) are small; a larger one is a crafted file. */
         const val MAX_STREAM = 32L * 1024 * 1024
+        const val MAX_XREF_BYTES = 64L * 1024 * 1024
     }
 }

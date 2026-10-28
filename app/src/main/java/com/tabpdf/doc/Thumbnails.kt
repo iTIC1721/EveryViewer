@@ -14,6 +14,8 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import java.io.File
+import kotlin.math.roundToInt
+import kotlin.math.sqrt
 
 /**
  * Small page images for the tab overview (기획서 4.2). Kept in memory and in the cache dir; both can
@@ -21,6 +23,9 @@ import java.io.File
  */
 object Thumbnails {
     private const val WIDTH_PX = 360
+
+    /** A tall page is drawn narrower: a thumbnail never needs more pixels than this (4 MB). */
+    private const val MAX_PIXELS = 1_000_000f
     private const val DIR = "thumbs"
 
     private val memory = object : LruCache<String, Bitmap>(16 * 1024 * 1024) {
@@ -60,8 +65,23 @@ object Thumbnails {
                     if (!locked) file.outputStream().use { rendered.compress(Bitmap.CompressFormat.PNG, 100, it) }
                     rendered
                 }
-            bitmap?.also { memory.put(key, it) }
+            // One cached by an older version can be larger than Android will draw.
+            bitmap?.takeIf { it.allocationByteCount <= MAX_DRAWN_BYTES }?.also { memory.put(key, it) }
         }
+    }
+
+    /**
+     * Drops the thumbnails of closed tabs [tabIds]: pictures of a document the user closed shouldn't
+     * stay on the disk until Android clears the cache.
+     */
+    suspend fun forget(context: Context, tabIds: Collection<String>) = keepOnly(context) { name -> tabIds.none { name.startsWith("$it-") } }
+
+    /** Drops thumbnails of tabs not in [tabIds] (closed while the app was ending, before [forget] ran). */
+    suspend fun keepOnly(context: Context, tabIds: Collection<String>) = keepOnly(context) { name -> tabIds.any { name.startsWith("$it-") } }
+
+    private suspend fun keepOnly(context: Context, keep: (String) -> Boolean) = withContext(Dispatchers.IO) {
+        memory.snapshot().keys.filterNot(keep).forEach { memory.remove(it) }
+        File(context.cacheDir, DIR).listFiles()?.forEach { if (!keep(it.name)) it.delete() }
     }
 
     /** The page, and whether its file was opened with a password. */
@@ -70,7 +90,9 @@ object Thumbnails {
             val document = Documents.open(context, tab.uri, tab.name, tab.format)
             try {
                 document.awaitPages(page + 1)
-                document.renderPage(page.coerceIn(0, document.pageCount - 1), WIDTH_PX)?.let { it to document.locked }
+                val index = page.coerceIn(0, document.pageCount - 1)
+                val width = minOf(WIDTH_PX.toFloat(), sqrt(MAX_PIXELS / document.pageSizes[index].aspect)).roundToInt().coerceAtLeast(1)
+                document.renderPage(index, width)?.let { it to document.locked }
             } finally {
                 document.close()
             }

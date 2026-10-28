@@ -1,6 +1,9 @@
 package com.tabpdf.doc.html
 
+import com.tabpdf.doc.DocumentOpenException
 import org.jsoup.nodes.Element
+import java.util.BitSet
+import java.util.IdentityHashMap
 
 /*
  * The CSS an HTML file brings (기획서 5.7: 간단한 CSS): style attributes and <style> sheets with
@@ -63,29 +66,54 @@ private class AttributeTest(val name: String, val op: String?, val value: String
     }
 }
 
+/**
+ * Matching work done for one page (all its style sheets and the default one): a crafted sheet must
+ * not take forever. One per page, not per sheet: the default sheet is shared by every page.
+ */
+class MatchSteps {
+    var count = 0L
+}
+
 /** Compounds from left to right, and between each two the combinator (' ' descendant, '>' child). */
 private class Selector(val parts: List<Compound>, val combinators: List<Char>) {
     val specificity = parts.sumOf { it.specificity }
     val key: Compound get() = parts.last()
 
-    fun matches(e: Element): Boolean = matchFrom(parts.size - 1, e)
+    fun matches(e: Element, steps: MatchSteps): Boolean = matchFrom(parts.size - 1, e, steps, IdentityHashMap())
 
-    private fun matchFrom(i: Int, e: Element): Boolean {
-        if (!parts[i].matches(e)) return false
-        if (i == 0) return true
-        return when (combinators[i - 1]) {
-            '>' -> e.parent()?.let { matchFrom(i - 1, it) } ?: false
+    /**
+     * [failed]: compounds already known not to match from an element. Without it a descendant
+     * combinator tries every chain of ancestors — exponential in the selector's length.
+     */
+    private fun matchFrom(i: Int, e: Element, steps: MatchSteps, failed: IdentityHashMap<Element, BitSet>): Boolean {
+        // Too much work for any real page: shown as source instead (DocumentOpenException.Reason.TooLarge).
+        if (++steps.count > MAX_MATCH_STEPS) throw DocumentOpenException(DocumentOpenException.Reason.TooLarge)
+        if (failed[e]?.get(i) == true) return false
+        val result = parts[i].matches(e) && (i == 0 || when (combinators[i - 1]) {
+            '>' -> e.parent()?.let { matchFrom(i - 1, it, steps, failed) } ?: false
             else -> {
                 var ancestor = e.parent()
-                while (ancestor != null) {
-                    if (matchFrom(i - 1, ancestor)) return true
+                var found = false
+                while (ancestor != null && !found) {
+                    found = matchFrom(i - 1, ancestor, steps, failed)
                     ancestor = ancestor.parent()
                 }
-                false
+                found
             }
-        }
+        })
+        if (!result) failed.getOrPut(e) { BitSet() }.set(i)
+        return result
     }
 }
+
+/** Steps (compounds tried) one page's styles may take; real pages take a small fraction. */
+private const val MAX_MATCH_STEPS = 200_000_000L
+
+/** Longer selectors are dropped: real ones have a few compounds. */
+private const val MAX_COMPOUNDS = 32
+
+/** Rules without a tag, class or id to look them up by are tried on every element: their number is limited. */
+private const val MAX_UNIVERSAL_RULES = 1_000
 
 private class Rule(val selector: Selector, val declarations: List<Declaration>, val order: Int)
 
@@ -102,15 +130,16 @@ class Stylesheet {
 
     /**
      * The declarations that apply to [e], in increasing priority: normal ones by specificity and
-     * order, then the [inline] style attribute, then !important ones the same way.
+     * order, then the [inline] style attribute, then !important ones the same way. [steps] counts
+     * the work for the page [e] is in.
      */
-    fun declarationsFor(e: Element, inline: List<Declaration>): List<Declaration> {
+    fun declarationsFor(e: Element, inline: List<Declaration>, steps: MatchSteps = MatchSteps()): List<Declaration> {
         val candidates = ArrayList<Rule>()
         byId[e.id()]?.let { candidates += it }
         for (name in e.classNames()) byClass[name]?.let { candidates += it }
         byTag[e.normalName()]?.let { candidates += it }
         candidates += universal
-        val matched = candidates.filter { it.selector.matches(e) }
+        val matched = candidates.filter { it.selector.matches(e, steps) }
             .distinct()
             .sortedWith(compareBy({ it.selector.specificity }, { it.order }))
         val normal = ArrayList<Declaration>()
@@ -160,7 +189,7 @@ class Stylesheet {
                                 key.id != null -> byId.getOrPut(key.id) { mutableListOf() } += rule
                                 key.classes.isNotEmpty() -> byClass.getOrPut(key.classes.first()) { mutableListOf() } += rule
                                 key.tag != null -> byTag.getOrPut(key.tag) { mutableListOf() } += rule
-                                else -> universal += rule
+                                universal.size < MAX_UNIVERSAL_RULES -> universal += rule
                             }
                         }
                     }
@@ -303,7 +332,7 @@ class Stylesheet {
                     }
                 }
             }
-            if (parts.isEmpty() || combinators.size != parts.size - 1) return null
+            if (parts.isEmpty() || parts.size > MAX_COMPOUNDS || combinators.size != parts.size - 1) return null
             return Selector(parts, combinators)
         }
 

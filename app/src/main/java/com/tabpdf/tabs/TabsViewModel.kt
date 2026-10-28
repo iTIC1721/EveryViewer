@@ -22,6 +22,7 @@ import com.tabpdf.doc.Bundles
 import com.tabpdf.doc.Document
 import com.tabpdf.doc.Documents
 import com.tabpdf.doc.FileFormat
+import com.tabpdf.doc.Thumbnails
 import com.tabpdf.doc.TocEntry
 import com.tabpdf.doc.awaitComplete
 import com.tabpdf.doc.guarded
@@ -30,6 +31,7 @@ import kotlinx.coroutines.withContext
 import android.net.Uri
 import android.provider.DocumentsContract
 import com.tabpdf.export.PdfExport
+import com.tabpdf.pdf.PdfDocument
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import java.io.File
@@ -112,9 +114,14 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
         if (cleaned != saved) commit(cleaned)
         app.enqueueWrite {
             FileAccess.releaseUnused(app, FileAccess.filesInUse(cleaned.allTabs.map { it.uri to it.format }), app.startedAt)
+            Thumbnails.keepOnly(app, cleaned.allTabs.map { it.id })
             // The last export was shared in an earlier session; one made from a locked PDF has no
             // password, so it isn't kept on the disk longer than that (as for thumbnails).
-            withContext(Dispatchers.IO) { File(app.cacheDir, EXPORT_DIR).deleteRecursively() }
+            withContext(Dispatchers.IO) {
+                File(app.cacheDir, EXPORT_DIR).deleteRecursively()
+                // Copies for reading bookmarks, left when the app ended while one was read.
+                File(app.cacheDir, PdfDocument.TEMP_DIR).listFiles()?.forEach { if (it.lastModified() < app.startedAt) it.delete() }
+            }
         }
         ink.deleteOrphans()
     }
@@ -300,7 +307,10 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
         }
         tabs.forEach { viewerStates -= it.id }
         ink.forget(tabs.map { it.id })
-        app.enqueueWrite { for (tab in tabs) releaseIfUnused(tab) }
+        app.enqueueWrite {
+            for (tab in tabs) releaseIfUnused(tab)
+            Thumbnails.forget(app, tabs.map { it.id })
+        }
     }
 
     // ---- Replacing a missing file ----
@@ -317,7 +327,10 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
         if (existing != null) {
             commit(s.removeTab(id).copy(currentTabId = existing.id))
             ink.forget(listOf(id))
-            app.enqueueWrite { releaseIfUnused(old) }
+            app.enqueueWrite {
+                releaseIfUnused(old)
+                Thumbnails.forget(app, listOf(id))
+            }
             return
         }
         // Bumping the revision makes the viewer retry even when the same location was picked again.

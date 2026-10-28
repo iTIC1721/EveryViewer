@@ -4,11 +4,13 @@ import android.net.Uri
 import android.os.SystemClock
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.tabpdf.doc.html.HtmlDocument
 import com.tabpdf.doc.office.DocxReader
 import com.tabpdf.doc.office.OfficeLayout
 import com.tabpdf.doc.office.ZipParts
 import com.tabpdf.export.PdfFile
 import com.tabpdf.export.PdfSyntaxException
+import com.tabpdf.tabs.DocTab
 import com.tabpdf.tabs.TabsViewModel
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -22,7 +24,12 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.io.DataOutputStream
 import java.io.File
+import java.io.IOException
+import java.nio.ByteBuffer
+import java.util.zip.CRC32
+import java.util.zip.DeflaterOutputStream
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
@@ -245,6 +252,113 @@ class SecurityTest {
         out.write(data)
         write("\nendstream\nendobj\nstartxref\n${offsets[xref]}\n%%EOF\n")
         return File(dir, "crafted.pdf").apply { writeBytes(out.toByteArray()) }
+    }
+
+    /** A black greyscale PNG of [width] × [height], written row by row: no bitmap that size is made. */
+    private fun png(width: Int, height: Int): ByteArray {
+        val out = ByteArrayOutputStream()
+        val data = DataOutputStream(out)
+        out.write(byteArrayOf(0x89.toByte(), 'P'.code.toByte(), 'N'.code.toByte(), 'G'.code.toByte(), 13, 10, 26, 10))
+        fun chunk(type: String, body: ByteArray) {
+            val name = type.toByteArray(Charsets.US_ASCII)
+            data.writeInt(body.size)
+            out.write(name)
+            out.write(body)
+            data.writeInt(CRC32().apply { update(name); update(body) }.value.toInt())
+        }
+        chunk("IHDR", ByteBuffer.allocate(13).putInt(width).putInt(height).put(8).put(0).put(0).put(0).put(0).array())
+        val pixels = ByteArrayOutputStream()
+        DeflaterOutputStream(pixels).use { z ->
+            val row = ByteArray(width + 1) // filter byte, then the row
+            repeat(height) { z.write(row) }
+        }
+        chunk("IDAT", pixels.toByteArray())
+        chunk("IEND", ByteArray(0))
+        return out.toByteArray()
+    }
+
+    @Test
+    fun pagesTooTallToLayOutAreRefused() = runBlocking {
+        // Taller than Compose can lay out: the app ended on opening it, and on every start after.
+        try {
+            openFile("tall.png", png(10, 3000), FileFormat.Image).close()
+            fail("opened")
+        } catch (e: DocumentOpenException) {
+            assertEquals(DocumentOpenException.Reason.PageTooTall, e.reason)
+        }
+        // Paper of no width made every length endless; margins taller than the paper, pages that never end.
+        val text = "<w:p><w:r><w:t>x</w:t></w:r></w:p>"
+        for (section in listOf("<w:pgSz w:w=\"0\" w:h=\"16838\"/>", "<w:pgSz w:w=\"11906\" w:h=\"16838\"/><w:pgMar w:top=\"9000\" w:bottom=\"9000\"/>")) {
+            try {
+                openFile("paper.docx", docx(mapOf("word/document.xml" to body("$text<w:sectPr>$section</w:sectPr>"))), FileFormat.Docx).close()
+                fail("opened")
+            } catch (e: IOException) {
+                // Refused.
+            }
+        }
+        // Long, but not too long, still opens.
+        openFile("long.png", png(100, 5000), FileFormat.Image).close()
+    }
+
+    @Test
+    fun imagesAreNeverDecodedPastTheLimit() = runBlocking {
+        // Asked for 2500 wide, a 4999-wide image was decoded whole: 20 million pixels. Android won't draw a
+        // bitmap over 100 MB at all, and the app ended (a 108-megapixel photo at 3× zoom did that).
+        val doc = openFile("big.png", png(4999, 4000), FileFormat.Image)
+        try {
+            val bitmap = doc.renderPage(0, 2500)!!
+            assertTrue(bitmap.width.toLong() * bitmap.height <= ImageDocument.MAX_DECODED_PIXELS)
+        } finally {
+            doc.close()
+        }
+    }
+
+    @Test
+    fun thumbnailsOfTallPagesStaySmallAndGoWithTheirTab() = runBlocking {
+        val file = File(dir, "tall.pdf")
+        android.graphics.pdf.PdfDocument().apply {
+            finishPage(startPage(android.graphics.pdf.PdfDocument.PageInfo.Builder(10, 900, 1).create()))
+            file.outputStream().use { writeTo(it) }
+            close()
+        }
+        val tab = DocTab("security-test-tab", null, Uri.fromFile(file), "tall.pdf", isInternalCopy = false, FileFormat.Pdf)
+        // 360 wide, it was 360 × 32 400 pixels: 47 MB for a picture on a card.
+        val thumbnail = Thumbnails.load(context, tab, 0, emptyList())!!
+        assertTrue(thumbnail.width.toLong() * thumbnail.height <= 1_000_000)
+        // Closed, its pictures leave the disk too.
+        Thumbnails.forget(context, listOf(tab.id))
+        assertTrue(File(context.cacheDir, "thumbs").listFiles().orEmpty().none { it.name.startsWith("${tab.id}-") })
+    }
+
+    @Test
+    fun longDescendantSelectorsMatchQuickly() = runBlocking {
+        // Each descendant combinator tried every chain of ancestors: C(59, 12) ≈ 2×10¹² steps here.
+        val html = "<style>x" + " div".repeat(12) + " p { color: red }</style>" + "<div>".repeat(60) + "<p>글</p>" + "</div>".repeat(60)
+        val started = SystemClock.elapsedRealtime()
+        HtmlDocument.render(html).close()
+        assertTrue(SystemClock.elapsedRealtime() - started < 5_000)
+    }
+
+    @Test
+    fun crossReferenceRowsOfNoBytesAreRefused() {
+        // /W [0 0 0]: rows of no bytes, so nothing bounded the loop over /Index (≈ 10¹¹ rounds here).
+        val index = "0 10000000 ".repeat(10_000)
+        val out = ByteArrayOutputStream()
+        fun write(s: String) = out.write(s.toByteArray(Charsets.ISO_8859_1))
+        write("%PDF-1.5\n")
+        val at = out.size()
+        write("1 0 obj\n<</Type/XRef/Size 2/W[0 0 0]/Index[$index]/Length 0>>\nstream\n\nendstream\nendobj\nstartxref\n$at\n%%EOF\n")
+        val file = File(dir, "rows.pdf").apply { writeBytes(out.toByteArray()) }
+        val started = SystemClock.elapsedRealtime()
+        java.io.RandomAccessFile(file, "r").use { raf ->
+            try {
+                PdfFile(raf)
+                fail("a crafted structure is refused")
+            } catch (_: PdfSyntaxException) {
+                // Refused.
+            }
+        }
+        assertTrue(SystemClock.elapsedRealtime() - started < 5_000)
     }
 
     @Test

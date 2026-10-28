@@ -38,6 +38,9 @@ class ImageDocument private constructor(
         // Largest power-of-two reduction that still leaves at least widthPx.
         var sample = 1
         while (shownWidth / (sample * 2) >= widthPx) sample *= 2
+        // Rounding down to a power of two can leave up to 4× the pixels asked for, and Android
+        // won't draw a bitmap over 100 MB (the app would crash, again on every start at that zoom).
+        while (storedWidth.toLong() * storedHeight / (sample.toLong() * sample) > MAX_DECODED_PIXELS) sample *= 2
         val options = BitmapFactory.Options().apply { inSampleSize = sample }
         val decoded = try {
             context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, options) }
@@ -88,6 +91,9 @@ class ImageDocument private constructor(
     override suspend fun close() = Unit
 
     companion object {
+        /** Most pixels an image is decoded at (64 MB): twice what the viewer asks for at most. */
+        const val MAX_DECODED_PIXELS = 16_000_000L
+
         suspend fun open(context: Context, uri: Uri): ImageDocument = withContext(Dispatchers.IO) {
             val resolver = context.contentResolver
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }

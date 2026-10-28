@@ -7,6 +7,17 @@ package com.tabpdf.doc.office
  * into the same blocks and laid out as one flowing sheet (OfficeLayout.flow).
  */
 
+/** Paper a file can state, in points (PDF's own limit is 14 400); outside this it is broken or crafted. */
+private val PAPER_POINTS = 1f..14_400f
+
+/**
+ * Throws unless [width] × [height] (points) is paper that can be laid out: a zero width would make
+ * every length endless (lengths are scaled by FLOW_WIDTH / width).
+ */
+fun checkPaper(width: Float, height: Float) {
+    if (width !in PAPER_POINTS || height !in PAPER_POINTS) throw java.io.IOException("Bad paper size")
+}
+
 class OfficeDocument(
     val page: PageSetup,
     val body: List<OfficeBlock>,

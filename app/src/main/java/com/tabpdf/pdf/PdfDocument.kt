@@ -20,6 +20,7 @@ import androidx.annotation.RequiresApi
 import androidx.annotation.RequiresExtension
 import android.net.Uri
 import android.os.ParcelFileDescriptor
+import android.os.StatFs
 import com.tabpdf.doc.Document
 import com.tabpdf.doc.DocumentOpenException
 import com.tabpdf.doc.Link
@@ -60,6 +61,8 @@ class PdfDocument private constructor(
     private val reopen: () -> ParcelFileDescriptor?,
     /** The password it was opened with, if it needed one (기획서 5.5 암호 PDF). */
     private val password: String?,
+    /** Where a copy for reading the bookmarks goes, if the file can't be read in place ([TEMP_DIR]). */
+    private val tempDir: File,
 ) : Document {
     override val locked: Boolean get() = password != null
 
@@ -105,9 +108,23 @@ class PdfDocument private constructor(
             return Readable(RandomAccessFile("/proc/self/fd/${pfd.fd}", "r"), pfd, null)
         } catch (_: IOException) {
         }
-        val copy = File.createTempFile("outline", ".pdf")
+        val copy = File.createTempFile("outline", ".pdf", tempDir.apply { mkdirs() })
         try {
-            ParcelFileDescriptor.AutoCloseInputStream(pfd).use { input -> copy.outputStream().use { input.copyTo(it) } }
+            // As for copies of tab files (FileAccess): the device keeps room for everything else.
+            val limit = StatFs(tempDir.path).availableBytes - KEEP_FREE_BYTES
+            ParcelFileDescriptor.AutoCloseInputStream(pfd).use { input ->
+                copy.outputStream().use { output ->
+                    val buffer = ByteArray(64 * 1024)
+                    var total = 0L
+                    while (true) {
+                        val n = input.read(buffer)
+                        if (n < 0) break
+                        total += n
+                        if (total > limit) throw IOException("No room to copy")
+                        output.write(buffer, 0, n)
+                    }
+                }
+            }
             return Readable(RandomAccessFile(copy, "r"), null, copy)
         } catch (e: Exception) {
             copy.delete()
@@ -320,6 +337,14 @@ class PdfDocument private constructor(
     }
 
     companion object {
+        /**
+         * Under the cache folder: copies made to read bookmarks. Each is deleted after reading; ones
+         * left by an app that ended meanwhile are deleted at the next start (TabsViewModel).
+         */
+        const val TEMP_DIR = "outline"
+
+        private const val KEEP_FREE_BYTES = 256L * 1024 * 1024
+
         /** How far around a link a tap still hits it, in PDF points (1/72 inch). */
         private const val LINK_SLOP = 4f
 
@@ -368,7 +393,7 @@ class PdfDocument private constructor(
                     throw DocumentOpenException(DocumentOpenException.Reason.NoPages)
                 }
                 val app = context.applicationContext
-                PdfDocument(fd, renderer, sizes, { app.contentResolver.openFileDescriptor(uri, "r") }, password)
+                PdfDocument(fd, renderer, sizes, { app.contentResolver.openFileDescriptor(uri, "r") }, password, File(app.cacheDir, TEMP_DIR))
             } catch (e: Exception) {
                 fd.close()
                 throw e
