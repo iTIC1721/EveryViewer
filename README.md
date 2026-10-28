@@ -75,6 +75,7 @@ Windows에서는 `gradlew.bat`을 씁니다.
 | 영역 | 사용 |
 |---|---|
 | 언어·UI | Kotlin, Jetpack Compose (Material 3) |
+| UI 글꼴 | [Pretendard](https://github.com/orioncactus/pretendard) Std (SIL OFL 1.1) |
 | PDF | Android `PdfRenderer` |
 | 필기 | [Jetpack Ink](https://developer.android.com/jetpack/androidx/releases/ink) (저지연 획 그리기, 브러시, 직렬화) |
 | 마크다운 | [commonmark-java](https://github.com/commonmark/commonmark-java) + GFM 확장 |
@@ -110,4 +111,4 @@ app/src/main/java/com/tabpdf/
 
 Apache License 2.0으로 배포합니다. 전문은 [LICENSE](LICENSE)에 있습니다.
 
-함께 쓰는 라이브러리와 라이선스: Kotlin·kotlinx.coroutines·AndroidX(Jetpack Compose, Room, Ink 등)·[hwplib](https://github.com/neolord0/hwplib) — Apache-2.0, [jsoup](https://jsoup.org/) — MIT, [commonmark-java](https://github.com/commonmark/commonmark-java) — BSD 2-Clause, [juniversalchardet](https://github.com/albfernandez/juniversalchardet) — MPL 1.1.
+함께 쓰는 라이브러리와 라이선스: Kotlin·kotlinx.coroutines·AndroidX(Jetpack Compose, Room, Ink 등)·[hwplib](https://github.com/neolord0/hwplib) — Apache-2.0, [jsoup](https://jsoup.org/) — MIT, [commonmark-java](https://github.com/commonmark/commonmark-java) — BSD 2-Clause, [juniversalchardet](https://github.com/albfernandez/juniversalchardet) — MPL 1.1. 글꼴: [Pretendard](https://github.com/orioncactus/pretendard) — SIL Open Font License 1.1.
