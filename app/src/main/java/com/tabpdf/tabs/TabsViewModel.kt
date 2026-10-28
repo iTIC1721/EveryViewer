@@ -134,9 +134,10 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
      * Opens [files] in [groupId] (null: as ungrouped tabs) and shows the first one. A file already
      * open gets another tab all the same, as a browser opens a page twice (기획서 11장 3번): each
      * tab keeps its own place and handwriting. With [askToBundle], several files wait for the
-     * choice between a tab each and one bundle ([openChoice]).
+     * choice between a tab each and one bundle ([openChoice]). With [asNewGroup], ungrouped files
+     * go into a new unnamed group instead.
      */
-    fun open(files: List<OpenedFile>, groupId: String?, askToBundle: Boolean = false) {
+    fun open(files: List<OpenedFile>, groupId: String?, askToBundle: Boolean = false, asNewGroup: Boolean = false) {
         if (files.isEmpty()) return
         if (askToBundle && files.size > 1) {
             _openChoice.value = OpenChoice(files, groupId)
@@ -147,6 +148,12 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
             var s = current()
             val target = groupId?.takeIf { s.group(it) != null }
             val added = files.map { newTab(it, target) }
+            if (target == null && asNewGroup) {
+                val group = newGroup(s, "")
+                s = s.appendGroup(group, added)
+                commit(s.copy(currentTabId = s.tabsOf(group.id).first().id))
+                return@launch
+            }
             for (tab in added) s = s.appendTab(tab)
             commit(s.copy(currentTabId = added.first().id))
         }
@@ -158,7 +165,7 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
         _openChoice.value = null
         when (bundle) {
             true -> openBundle(choice.files, choice.groupId)
-            false -> open(choice.files, choice.groupId)
+            false -> open(choice.files, choice.groupId, asNewGroup = opensAsGroup(choice))
             // The files were made readable for nothing: free what no tab uses.
             null -> app.enqueueWrite {
                 val used = FileAccess.filesInUse(repository.tabFiles())
@@ -166,6 +173,9 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
     }
+
+    /** Whether "따로 열기" of [choice] makes a new group (기획서 5.1: several files from outside any group). */
+    fun opensAsGroup(choice: OpenChoice) = choice.groupId == null && choice.files.size > 1 && settings.openManyAsGroup.value
 
     /** Opens [files] as one bundle tab (기획서 5.1: 파일 묶음), named after the first file. */
     private fun openBundle(files: List<OpenedFile>, groupId: String?) {

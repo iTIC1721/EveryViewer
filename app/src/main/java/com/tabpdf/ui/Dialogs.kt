@@ -267,15 +267,15 @@ fun AddToGroupDialog(
     )
 }
 
-/** 기획서 5.1: several files picked at once — a tab each, or one bundle. */
+/** 기획서 5.1: several files picked at once — a tab each (in a new group with [asGroup]), or one bundle. */
 @Composable
-fun OpenChoiceDialog(count: Int, onBundle: () -> Unit, onSeparate: () -> Unit, onDismiss: () -> Unit) {
+fun OpenChoiceDialog(count: Int, asGroup: Boolean, onBundle: () -> Unit, onSeparate: () -> Unit, onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("파일 ${count}개 열기") },
         text = { Text("하나로 묶으면 한 탭에서 쪽이 이어지는 한 문서처럼 봅니다.") },
         confirmButton = { TextButton(onClick = onBundle) { Text("하나로 묶어 열기") } },
-        dismissButton = { TextButton(onClick = onSeparate) { Text("따로 열기") } },
+        dismissButton = { TextButton(onClick = onSeparate) { Text(if (asGroup) "그룹으로 열기" else "따로 열기") } },
     )
 }
 

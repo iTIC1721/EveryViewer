@@ -86,6 +86,14 @@ class SessionEditsTest {
     }
 
     @Test
+    fun filesOpenedTogetherBecomeANewGroupAtTheEnd() {
+        val s = abc.appendGroup(group("g"), listOf(tab("x"), tab("y")))
+        assertEquals(listOf("a", "b", "c", "G:g[x, y]"), s.shape())
+        assertEquals(listOf("g", "g"), s.tabsOf("g").map { it.groupId })
+        assertEquals(abc, abc.appendGroup(group("h"), emptyList())) // no empty groups
+    }
+
+    @Test
     fun ungroupingPutsTheTabsInTheGroupsPlaceInOrder() {
         val s = abc.groupTogether("c", "b", group("g"))!!
         assertEquals(listOf("a", "G:g[b, c]"), s.shape())

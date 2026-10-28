@@ -203,6 +203,7 @@ fun TabsScreen(
     openChoice?.let { choice ->
         OpenChoiceDialog(
             count = choice.files.size,
+            asGroup = viewModel.opensAsGroup(choice),
             onBundle = { viewModel.resolveOpenChoice(bundle = true) },
             onSeparate = { viewModel.resolveOpenChoice(bundle = false) },
             onDismiss = { viewModel.resolveOpenChoice(bundle = null) },
@@ -259,7 +260,8 @@ private fun ContextPager(
     val fingerDrawing by viewModel.settings.fingerDrawing.collectAsState()
     val stylusSeen by viewModel.settings.stylusSeen.collectAsState()
     val fingersToo by viewModel.settings.fingersToo.collectAsState()
-    val sideButtonErases by viewModel.settings.sideButtonErases.collectAsState()
+    val sideButton by viewModel.settings.sideButton.collectAsState()
+    val presets by viewModel.settings.presets.collectAsState()
     val inkHistory by viewModel.ink.history.collectAsState()
     val recentColors by viewModel.settings.recentColors.collectAsState()
     val fingerDraws = when (fingerDrawing) {
@@ -327,7 +329,8 @@ private fun ContextPager(
                     style = toolStyles.getValue(inkTool),
                     eraserSize = toolStyles.getValue(InkTool.Eraser).size,
                     fingerDraws = fingerDraws,
-                    sideButtonErases = sideButtonErases,
+                    sideButton = sideButton,
+                    onUndo = { viewModel.undoInk() },
                     strokes = strokes,
                     onStylusSeen = viewModel.settings::markStylusSeen,
                     onStroke = { p, tool, stroke -> viewModel.addStroke(tab.id, p, tool, stroke) },
@@ -340,7 +343,8 @@ private fun ContextPager(
                     revision = tab.revision,
                     initialState = viewModel.viewerState(tab.id),
                     onStateChange = { viewModel.updateViewerState(tab.id, it) },
-                    onTap = onToggleBars,
+                    // In handwriting mode the bars stay: a tap beside the pages must not hide the tools.
+                    onTap = { if (!inkMode) onToggleBars() },
                     onRelocate = { onRelocate(tab) },
                     onClose = { viewModel.close(tab.id) },
                     contentPadding = contentPadding,
@@ -359,7 +363,7 @@ private fun ContextPager(
         }
 
         AnimatedVisibility(
-            visible = barsVisible || tabs.isEmpty() || searchOpen,
+            visible = barsVisible || inkMode || tabs.isEmpty() || searchOpen,
             modifier = Modifier.align(Alignment.TopCenter),
             enter = fadeIn(),
             exit = fadeOut(),
@@ -401,6 +405,9 @@ private fun ContextPager(
                     tool = inkTool,
                     styles = toolStyles,
                     recentColors = recentColors,
+                    presets = presets,
+                    onAddPreset = viewModel.settings::addPreset,
+                    onRemovePreset = viewModel.settings::removePreset,
                     canUndo = inkHistory >= 0 && currentId != null && viewModel.ink.canUndo(currentId),
                     canRedo = inkHistory >= 0 && currentId != null && viewModel.ink.canRedo(currentId),
                     onTool = viewModel.settings::setInkTool,

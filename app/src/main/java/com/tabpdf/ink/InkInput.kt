@@ -24,6 +24,7 @@ import androidx.ink.geometry.Intersection
 import androidx.ink.strokes.Stroke
 import kotlin.math.atan2
 import kotlin.math.hypot
+import com.tabpdf.SideButton
 
 /**
  * Ink's low-latency view for strokes being drawn (front-buffered, 기획서 5.8.5). It sits over the
@@ -70,7 +71,8 @@ class InkBinding(
     val eraserSize: Float,
     /** Whether a finger draws now (no pen in use, or the user wants fingers to draw anyway). */
     val fingerDraws: Boolean,
-    val sideButtonErases: Boolean,
+    val sideButton: SideButton,
+    val onUndo: () -> Unit,
     val strokes: List<InkStroke>,
     val onStylusSeen: () -> Unit,
     val onStroke: (page: Int, tool: InkTool, stroke: Stroke) -> Unit,
@@ -98,7 +100,8 @@ private val PointerInputChange.isPen get() = type == PointerType.Stylus || type 
  * - a pen always draws; a finger draws only when [InkBinding.fingerDraws];
  * - a second finger cancels a finger stroke and becomes two-finger scrolling and zooming;
  * - once a pen draws, nothing else in that gesture (a resting palm) moves the page;
- * - the eraser tool, a pen's eraser end, or the held side button erase whole strokes.
+ * - the eraser tool, a pen's eraser end, or the held side button erase whole strokes;
+ * - or, set to undo, pressing the side button while the pen hovers undoes once.
  * [binding] is null when handwriting mode is off; then nothing here touches the events.
  */
 fun Modifier.inkInput(
@@ -141,7 +144,7 @@ fun Modifier.inkInput(
                     if (down != null && hit != null) {
                         val pointerId = motion.getPointerId(motion.actionIndex)
                         val erasing = ink.tool == InkTool.Eraser || down.type == PointerType.Eraser ||
-                            (down.isPen && ink.sideButtonErases && motion.buttonState and STYLUS_SIDE_BUTTONS != 0)
+                            (down.isPen && ink.sideButton == SideButton.Eraser && motion.buttonState and STYLUS_SIDE_BUTTONS != 0)
                         val motionOffset = Offset(motion.getX(motion.actionIndex), motion.getY(motion.actionIndex)) - down.position
                         active = if (erasing) {
                             Active(down.id, pointerId, down.isPen, null, hit, down.position, ++gestures).also {
@@ -195,9 +198,19 @@ fun Modifier.inkInput(
     .pointerInput(Unit) {
         // Pen hovering over the screen: show where and how big the tool is (기획서 5.8.4).
         awaitPointerEventScope {
+            var buttonHeld = false
             while (true) {
                 val event = awaitPointerEvent()
                 val pen = event.changes.firstOrNull { it.isPen }
+                // The side button going down while the pen is in the air: undo once. Held from a
+                // stroke on into the air, it does nothing.
+                val motion = event.motionEvent
+                if (pen != null && motion != null) {
+                    val held = motion.buttonState and STYLUS_SIDE_BUTTONS != 0
+                    val ink = binding()
+                    if (held && !buttonHeld && !pen.pressed && ink?.sideButton == SideButton.Undo) ink.onUndo()
+                    buttonHeld = held
+                }
                 onHover(
                     when {
                         binding() == null || pen == null || event.type == PointerEventType.Exit -> null

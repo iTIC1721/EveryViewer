@@ -10,7 +10,6 @@ import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
@@ -74,6 +73,14 @@ import com.tabpdf.ink.INK_PAGE_WIDTH
 import com.tabpdf.ink.InkTool
 import com.tabpdf.ink.ToolStyle
 import kotlin.math.roundToInt
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Text
+import androidx.compose.ui.text.style.TextAlign
+import com.tabpdf.MAX_INK_PRESETS
+import java.util.Locale
 
 /**
  * Handwriting tools under the top bar while handwriting mode is on (기획서 4.1). No words: each
@@ -85,6 +92,9 @@ fun InkToolbar(
     tool: InkTool,
     styles: Map<InkTool, ToolStyle>,
     recentColors: Map<InkTool, List<Int>>,
+    presets: Map<InkTool, List<ToolStyle>>,
+    onAddPreset: (InkTool, ToolStyle) -> Unit,
+    onRemovePreset: (InkTool, index: Int) -> Unit,
     canUndo: Boolean,
     canRedo: Boolean,
     onTool: (InkTool) -> Unit,
@@ -115,7 +125,10 @@ fun InkToolbar(
                             tool = t,
                             style = styles.getValue(t),
                             recent = recentColors[t].orEmpty(),
+                            presets = presets[t].orEmpty(),
                             onStyle = { onStyle(t, it) },
+                            onAddPreset = { onAddPreset(t, styles.getValue(t)) },
+                            onRemovePreset = { onRemovePreset(t, it) },
                             onCustomColor = { onCustomColor(t, it) },
                         )
                     }
@@ -209,35 +222,82 @@ private fun DrawScope.drawTool(tool: InkTool, ink: Color, body: Color, outline: 
     }
 }
 
-/** Colour swatches and the size, shown live (기획서 5.8.2). */
+/** Swatches in one row: the panel's inner width (288dp) holds this many. */
+private const val SWATCHES_PER_ROW = 10
+
+/** A swatch's touch area; the circle drawn in it is a little smaller (24dp). */
+private val SwatchSize = 28.dp
+
+/**
+ * The tool's presets, colour swatches and the size, shown live (기획서 5.8.2). The swatches fill
+ * one row: the tool's colours, then colours picked by hand for as many places as are left, then
+ * the rainbow.
+ */
 @Composable
 private fun StylePanel(
     tool: InkTool,
     style: ToolStyle,
     recent: List<Int>,
+    presets: List<ToolStyle>,
     onStyle: (ToolStyle) -> Unit,
     onCustomColor: (Int) -> Unit,
+    onAddPreset: () -> Unit,
+    onRemovePreset: (index: Int) -> Unit,
 ) {
     var picking by remember { mutableStateOf(false) }
-    Column(Modifier.width(288.dp).padding(horizontal = 16.dp, vertical = 12.dp)) {
+    Column(Modifier.width(320.dp).padding(horizontal = 16.dp, vertical = 12.dp)) {
         if (tool != InkTool.Eraser) {
-            val presets = if (tool == InkTool.Pen) Brushes.penColors else Brushes.highlighterColors
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                for (c in presets + recent.filter { it !in presets }) {
+            Row {
+                presets.forEachIndexed { index, preset ->
+                    PresetSwatch(
+                        tool, preset, index,
+                        selected = preset == style,
+                        onClick = { onStyle(preset) },
+                        onRemove = { onRemovePreset(index) },
+                    )
+                }
+                val canAdd = style !in presets && presets.size < MAX_INK_PRESETS
+                Box(
+                    Modifier.size(SwatchSize).clip(CircleShape).clickable(enabled = canAdd, onClick = onAddPreset),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        Icons.Default.Add,
+                        contentDescription = "지금 스타일을 프리셋에 추가",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = if (canAdd) 1f else 0.38f),
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
+            }
+            HorizontalDivider(Modifier.padding(vertical = 10.dp))
+            val toolColors = if (tool == InkTool.Pen) Brushes.penColors else Brushes.highlighterColors
+            val picked = recent.filter { it !in toolColors }.take(SWATCHES_PER_ROW - 1 - toolColors.size)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                for (c in toolColors + picked) {
                     Swatch(Color(c), selected = c == style.color) { onStyle(style.copy(color = c)) }
                 }
                 CustomColorSwatch { picking = true }
+                // Fewer than a row: the empty places go at the end, so the swatches stay evenly spaced.
+                repeat(SWATCHES_PER_ROW - 1 - toolColors.size - picked.size) { Spacer(Modifier.size(SwatchSize)) }
             }
             Spacer(Modifier.height(12.dp))
         }
         SizePreview(tool, style, Modifier.fillMaxWidth().height(64.dp))
         val range = Brushes.sizeRange(tool)
-        Slider(
-            value = style.size.coerceIn(range),
-            onValueChange = { onStyle(style.copy(size = (it * 2).roundToInt() / 2f)) },
-            valueRange = range,
-            modifier = Modifier.semantics { contentDescription = "굵기" },
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Slider(
+                value = style.size.coerceIn(range),
+                onValueChange = { onStyle(style.copy(size = (it * 2).roundToInt() / 2f)) },
+                valueRange = range,
+                modifier = Modifier.weight(1f).semantics { contentDescription = "굵기" },
+            )
+            Text(
+                sizeLabel(style.size),
+                Modifier.width(40.dp),
+                style = MaterialTheme.typography.bodyMedium,
+                textAlign = TextAlign.End,
+            )
+        }
     }
     if (picking) {
         ColorPickerDialog(
@@ -253,22 +313,70 @@ private fun StylePanel(
     }
 }
 
+/** A size as the panel shows it: "5", or "2.5" (sizes go in halves). */
+internal fun sizeLabel(size: Float): String =
+    if (size % 1f == 0f) size.toInt().toString() else String.format(Locale.ROOT, "%.1f", size)
+
+/**
+ * A saved colour and size: a dot in that colour on paper white, bigger the bigger the size is
+ * within the tool's range. Holding it offers to delete it.
+ */
+@Composable
+private fun PresetSwatch(
+    tool: InkTool,
+    preset: ToolStyle,
+    index: Int,
+    selected: Boolean,
+    onClick: () -> Unit,
+    onRemove: () -> Unit,
+) {
+    var menu by remember { mutableStateOf(false) }
+    val ring = MaterialTheme.colorScheme.primary
+    val range = Brushes.sizeRange(tool)
+    val share = ((preset.size - range.start) / (range.endInclusive - range.start)).coerceIn(0f, 1f)
+    Box {
+        Box(
+            Modifier
+                .size(SwatchSize)
+                .clip(CircleShape)
+                .combinedClickable(onClick = onClick, onLongClick = { menu = true })
+                .semantics {
+                    contentDescription = "프리셋 ${index + 1}: 굵기 ${sizeLabel(preset.size)}"
+                    this.selected = selected
+                },
+        ) {
+            Canvas(Modifier.size(SwatchSize)) {
+                val r = 12.dp.toPx()
+                if (selected) drawCircle(ring, r, style = Stroke(width = 2.dp.toPx()))
+                val inner = if (selected) r - 4.dp.toPx() else r - 1.dp.toPx()
+                drawCircle(Color.White, inner)
+                drawCircle(Color.Gray.copy(alpha = 0.5f), inner, style = Stroke(width = 1.dp.toPx()))
+                val dot = 2.dp.toPx() + share * (inner - 4.dp.toPx())
+                drawCircle(Color(preset.color), dot)
+            }
+        }
+        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+            DropdownMenuItem(text = { Text("삭제") }, onClick = { menu = false; onRemove() })
+        }
+    }
+}
+
 /** A colour to pick, on white so see-through highlighter colours look as they will on paper. */
 @Composable
 private fun Swatch(color: Color, selected: Boolean, onClick: () -> Unit) {
     val ring = MaterialTheme.colorScheme.primary
     Box(
         Modifier
-            .size(32.dp)
+            .size(SwatchSize)
             .clip(CircleShape)
             .clickable(onClick = onClick)
             .semantics { this.selected = selected },
         contentAlignment = Alignment.Center,
     ) {
-        Canvas(Modifier.size(32.dp)) {
-            val r = size.minDimension / 2
-            if (selected) drawCircle(ring, r, style = Stroke(width = 2.5.dp.toPx()))
-            val inner = if (selected) r - 5.dp.toPx() else r - 1.dp.toPx()
+        Canvas(Modifier.size(SwatchSize)) {
+            val r = 12.dp.toPx()
+            if (selected) drawCircle(ring, r, style = Stroke(width = 2.dp.toPx()))
+            val inner = if (selected) r - 4.dp.toPx() else r - 1.dp.toPx()
             drawCircle(Color.White, inner)
             drawCircle(color, inner)
             drawCircle(Color.Gray.copy(alpha = 0.5f), inner, style = Stroke(width = 1.dp.toPx()))
@@ -281,15 +389,15 @@ private fun Swatch(color: Color, selected: Boolean, onClick: () -> Unit) {
 private fun CustomColorSwatch(onClick: () -> Unit) {
     Box(
         Modifier
-            .size(32.dp)
+            .size(SwatchSize)
             .clip(CircleShape)
             .clickable(onClick = onClick)
             .semantics { contentDescription = "색 직접 고르기" },
     ) {
-        Canvas(Modifier.size(32.dp)) {
-            val r = size.minDimension / 2
+        Canvas(Modifier.size(SwatchSize)) {
+            val r = 12.dp.toPx()
             drawCircle(Brush.sweepGradient(HueColors), r)
-            drawCircle(Color.White, r - 6.dp.toPx())
+            drawCircle(Color.White, r - 5.dp.toPx())
         }
     }
 }

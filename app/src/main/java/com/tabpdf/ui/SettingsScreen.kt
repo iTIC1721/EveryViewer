@@ -37,6 +37,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import com.tabpdf.AppSettings
 import com.tabpdf.FingerDrawing
+import com.tabpdf.SideButton
 import com.tabpdf.ThemeMode
 
 /**
@@ -49,7 +50,8 @@ fun SettingsScreen(settings: AppSettings, onDismiss: () -> Unit) {
     val keepScreenOn by settings.keepScreenOn.collectAsState()
     val crossGroupSwipe by settings.crossGroupSwipe.collectAsState()
     val fingerDrawing by settings.fingerDrawing.collectAsState()
-    val sideButtonErases by settings.sideButtonErases.collectAsState()
+    val sideButton by settings.sideButton.collectAsState()
+    val openManyAsGroup by settings.openManyAsGroup.collectAsState()
     var showAbout by remember { mutableStateOf(false) }
     BackHandler(onBack = onDismiss)
 
@@ -80,6 +82,7 @@ fun SettingsScreen(settings: AppSettings, onDismiss: () -> Unit) {
                     crossGroupSwipe,
                     settings::setCrossGroupSwipe,
                 )
+                Toggle("여러 파일은 새 그룹으로 열기", null, openManyAsGroup, settings::setOpenManyAsGroup)
 
                 Divider()
                 Section("필기")
@@ -89,7 +92,10 @@ fun SettingsScreen(settings: AppSettings, onDismiss: () -> Unit) {
                 Choice(fingerDrawing == FingerDrawing.Auto, "자동") { settings.setFingerDrawing(FingerDrawing.Auto) }
                 Choice(fingerDrawing == FingerDrawing.Never, "항상") { settings.setFingerDrawing(FingerDrawing.Never) }
                 Choice(fingerDrawing == FingerDrawing.Always, "사용 안 함") { settings.setFingerDrawing(FingerDrawing.Always) }
-                Toggle("측면 버튼을 지우개로 사용", null, sideButtonErases, settings::setSideButtonErases)
+                Label("측면 버튼")
+                Choice(sideButton == SideButton.Eraser, "지우개") { settings.setSideButton(SideButton.Eraser) }
+                Choice(sideButton == SideButton.Undo, "실행 취소") { settings.setSideButton(SideButton.Undo) }
+                Choice(sideButton == SideButton.None, "사용 안 함") { settings.setSideButton(SideButton.None) }
 
                 Divider()
                 Section("정보")
