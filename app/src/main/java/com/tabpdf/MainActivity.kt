@@ -1,9 +1,11 @@
 package com.tabpdf
 
+import android.app.UiModeManager
 import android.content.ContentResolver
 import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
 import android.view.ViewGroup
@@ -17,14 +19,14 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.annotation.RequiresApi
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.lightColorScheme
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -35,6 +37,7 @@ import com.tabpdf.tabs.FileAccess
 import com.tabpdf.tabs.OpenedFile
 import com.tabpdf.tabs.TabsViewModel
 import com.tabpdf.ui.TabsScreen
+import com.tabpdf.ui.theme.EveryViewerTheme
 import kotlinx.coroutines.launch
 
 /** Any file: what can be shown is decided after it is picked (기획서 5.1, 5.7). */
@@ -69,7 +72,10 @@ class MainActivity : ComponentActivity() {
                     isAppearanceLightNavigationBars = !dark
                 }
             }
-            MaterialTheme(colorScheme = if (dark) darkColorScheme() else lightColorScheme()) {
+            // Android 12+: the window shown while the app starts, before any of this runs, then has the
+            // chosen theme's colour too instead of the system's.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) LaunchedEffect(theme) { rememberNightMode(theme) }
+            EveryViewerTheme(dark) {
             // Gives text and icons outside any other Surface the theme's colour instead of black.
             Surface(color = MaterialTheme.colorScheme.background) {
                 // Group the picked files go into (null: ungrouped); saved across the picker round trip.
@@ -204,5 +210,17 @@ class MainActivity : ComponentActivity() {
         // --ez debug_ask_to_bundle true: as if picked together, asking whether to bundle them.
         val ask = intent.getBooleanExtra("debug_ask_to_bundle", false)
         prepare(files.map { Uri.fromFile(it) }) { tabsViewModel.open(it, groupId = null, askToBundle = ask) }
+    }
+
+    /** Hands the app's theme choice to the system, which keeps it for this app across launches. */
+    @RequiresApi(Build.VERSION_CODES.S)
+    private fun rememberNightMode(theme: ThemeMode) {
+        val mode = when (theme) {
+            ThemeMode.System -> UiModeManager.MODE_NIGHT_AUTO
+            ThemeMode.Light -> UiModeManager.MODE_NIGHT_NO
+            ThemeMode.Dark -> UiModeManager.MODE_NIGHT_YES
+        }
+        // Changing it restarts the activity, like any configuration change; the screen state is saved.
+        getSystemService(UiModeManager::class.java)?.setApplicationNightMode(mode)
     }
 }

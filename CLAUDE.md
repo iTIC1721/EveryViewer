@@ -94,6 +94,8 @@ app/src/main/java/com/tabpdf/
   tabs/                  탭·그룹 구조(Session.kt), ViewModel, 읽던 위치, 파일 접근 권한·복사본 관리
   ui/                    화면: 뷰어(DocumentViewer)·스와이프 범위별 페이저·상단 바(TabsScreen), 탭 전환 화면·그룹 패널(TabSwitcher),
                          대화상자, 카드 목록 제스처(ItemGestures)
+  ui/theme/              색(종이·책상·잉크)·글꼴(Pretendard, UI만)·모양·움직임 토큰, EveryViewerTheme (기획서 4.4).
+                         화면에서 색·반경을 직접 적지 말고 여기 토큰을 쓴다 (그룹·펜·검색 색과 문서 색은 예외)
 app/schemas/             Room 스키마 (DB 버전마다 커밋)
 ```
 

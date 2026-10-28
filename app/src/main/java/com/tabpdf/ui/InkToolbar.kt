@@ -21,7 +21,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
@@ -80,6 +79,8 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Text
 import androidx.compose.ui.text.style.TextAlign
 import com.tabpdf.MAX_INK_PRESETS
+import com.tabpdf.ui.theme.Paper
+import com.tabpdf.ui.theme.bar
 import java.util.Locale
 
 /**
@@ -107,7 +108,7 @@ fun InkToolbar(
     onFingerDraws: (Boolean) -> Unit,
 ) {
     var panelFor by remember { mutableStateOf<InkTool?>(null) }
-    Surface(color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f), contentColor = MaterialTheme.colorScheme.onSurface, tonalElevation = 2.dp) {
+    Surface(Modifier.barEdge(), color = MaterialTheme.colorScheme.bar, contentColor = MaterialTheme.colorScheme.onSurface) {
         Row(
             Modifier.fillMaxWidth().height(52.dp).padding(horizontal = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -142,8 +143,8 @@ fun InkToolbar(
                     checked = fingerDraws,
                     onCheckedChange = onFingerDraws,
                     colors = IconButtonDefaults.iconToggleButtonColors(
-                        checkedContainerColor = MaterialTheme.colorScheme.secondaryContainer,
-                        checkedContentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                        checkedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                        checkedContentColor = MaterialTheme.colorScheme.onPrimaryContainer,
                     ),
                 ) {
                     Icon(FingerIcon, contentDescription = "손가락으로 그리기")
@@ -345,12 +346,13 @@ private fun PresetSwatch(
                     this.selected = selected
                 },
         ) {
+            val swatchEdge = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
             Canvas(Modifier.size(SwatchSize)) {
                 val r = 12.dp.toPx()
                 if (selected) drawCircle(ring, r, style = Stroke(width = 2.dp.toPx()))
                 val inner = if (selected) r - 4.dp.toPx() else r - 1.dp.toPx()
-                drawCircle(Color.White, inner)
-                drawCircle(Color.Gray.copy(alpha = 0.5f), inner, style = Stroke(width = 1.dp.toPx()))
+                drawCircle(Paper, inner)
+                drawCircle(swatchEdge, inner, style = Stroke(width = 1.dp.toPx()))
                 val dot = 2.dp.toPx() + share * (inner - 4.dp.toPx())
                 drawCircle(Color(preset.color), dot)
             }
@@ -365,6 +367,7 @@ private fun PresetSwatch(
 @Composable
 private fun Swatch(color: Color, selected: Boolean, onClick: () -> Unit) {
     val ring = MaterialTheme.colorScheme.primary
+    val swatchEdge = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
     Box(
         Modifier
             .size(SwatchSize)
@@ -377,9 +380,9 @@ private fun Swatch(color: Color, selected: Boolean, onClick: () -> Unit) {
             val r = 12.dp.toPx()
             if (selected) drawCircle(ring, r, style = Stroke(width = 2.dp.toPx()))
             val inner = if (selected) r - 4.dp.toPx() else r - 1.dp.toPx()
-            drawCircle(Color.White, inner)
+            drawCircle(Paper, inner)
             drawCircle(color, inner)
-            drawCircle(Color.Gray.copy(alpha = 0.5f), inner, style = Stroke(width = 1.dp.toPx()))
+            drawCircle(swatchEdge, inner, style = Stroke(width = 1.dp.toPx()))
         }
     }
 }
@@ -397,7 +400,7 @@ private fun CustomColorSwatch(onClick: () -> Unit) {
         Canvas(Modifier.size(SwatchSize)) {
             val r = 12.dp.toPx()
             drawCircle(Brush.sweepGradient(HueColors), r)
-            drawCircle(Color.White, r - 5.dp.toPx())
+            drawCircle(Paper, r - 5.dp.toPx())
         }
     }
 }
@@ -413,12 +416,13 @@ private fun SizePreview(tool: InkTool, style: ToolStyle, modifier: Modifier) {
     val density = LocalDensity.current
     // Page units to pixels at normal zoom, where a page is as wide as the screen.
     val unit = with(density) { LocalConfiguration.current.screenWidthDp.dp.toPx() } / INK_PAGE_WIDTH
-    val paper = Color.White
     val edge = MaterialTheme.colorScheme.outlineVariant
-    Canvas(modifier.clip(RoundedCornerShape(8.dp)).background(paper).border(1.dp, edge, RoundedCornerShape(8.dp))) {
+    val reach = MaterialTheme.colorScheme.outline
+    val shape = MaterialTheme.shapes.small
+    Canvas(modifier.clip(shape).background(Paper).border(1.dp, edge, shape)) {
         val width = style.size * unit
         if (tool == InkTool.Eraser) {
-            drawCircle(Color.Gray, width / 2, center, style = Stroke(width = 1.5.dp.toPx()))
+            drawCircle(reach, width / 2, center, style = Stroke(width = 1.5.dp.toPx()))
             return@Canvas
         }
         val pad = 24.dp.toPx()
@@ -449,7 +453,7 @@ private fun ColorPickerDialog(initial: Int, onPick: (Int) -> Unit, onDismiss: ()
     var value by remember { mutableFloatStateOf(hsv[2]) }
     val picked = Color(android.graphics.Color.HSVToColor(floatArrayOf(hue, saturation, value)))
     Dialog(onDismissRequest = onDismiss) {
-        Surface(shape = RoundedCornerShape(24.dp), tonalElevation = 6.dp) {
+        Surface(shape = MaterialTheme.shapes.extraLarge, color = MaterialTheme.colorScheme.surfaceContainerHigh) {
             Column(Modifier.width(300.dp).padding(20.dp)) {
                 SaturationValueSquare(hue, saturation, value) { s, v ->
                     saturation = s
@@ -460,7 +464,7 @@ private fun ColorPickerDialog(initial: Int, onPick: (Int) -> Unit, onDismiss: ()
                 Spacer(Modifier.height(20.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     // Before → after
-                    Row(Modifier.height(36.dp).width(96.dp).clip(RoundedCornerShape(18.dp))) {
+                    Row(Modifier.height(36.dp).width(96.dp).clip(CircleShape)) {
                         Box(Modifier.weight(1f).fillMaxHeight().background(Color(initial or 0xFF000000.toInt())))
                         Box(Modifier.weight(1f).fillMaxHeight().background(picked))
                     }

@@ -39,6 +39,8 @@ import com.tabpdf.AppSettings
 import com.tabpdf.FingerDrawing
 import com.tabpdf.SideButton
 import com.tabpdf.ThemeMode
+import androidx.compose.animation.AnimatedVisibility
+import com.tabpdf.ui.theme.Motion
 
 /**
  * App settings from the ⋮ menu (기획서 5.6), laid out like Android's own settings: sections of
@@ -107,7 +109,9 @@ fun SettingsScreen(settings: AppSettings, onDismiss: () -> Unit) {
             }
         }
     }
-    if (showAbout) AboutScreen(onDismiss = { showAbout = false })
+    AnimatedVisibility(showAbout, enter = Motion.screenEnter, exit = Motion.screenExit) {
+        AboutScreen(onDismiss = { showAbout = false })
+    }
 }
 
 @Composable
