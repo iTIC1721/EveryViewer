@@ -109,13 +109,16 @@ class Style private constructor() {
 class StyleResolver(private val author: Stylesheet) {
     private var rootFontSize = 16f
 
+    /** Selector matching done for this page, which has a limit. */
+    private val steps = MatchSteps()
+
     fun compute(e: Element, parent: Style): Style {
         val s = parent.inherit()
         val declarations = ArrayList<Declaration>()
-        declarations += USER_AGENT.declarationsFor(e, emptyList())
+        declarations += USER_AGENT.declarationsFor(e, emptyList(), steps)
         declarations += presentational(e)
         val inline = e.attr("style").takeIf { it.isNotBlank() }?.let { Stylesheet.parseDeclarations(it) } ?: emptyList()
-        declarations += author.declarationsFor(e, inline)
+        declarations += author.declarationsFor(e, inline, steps)
 
         // Later declarations win; shorthands are spread into the properties they set.
         val values = LinkedHashMap<String, String>()

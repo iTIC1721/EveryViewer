@@ -47,6 +47,11 @@ class OfficeLayout private constructor(private val unit: Float) {
     companion object {
         fun layOut(doc: OfficeDocument): SheetDocument {
             val page = doc.page
+            checkPaper(page.width, page.height)
+            // Margins wider or taller than the paper: no room to lay anything out (the pages would never end).
+            if (page.width - page.left - page.right < 1f || page.bodyBottom - page.bodyTop < 1f) {
+                throw java.io.IOException("Margins leave no room")
+            }
             val layout = OfficeLayout(FLOW_WIDTH / page.width)
             val u = layout.unit
             val left = page.left * u

@@ -16,8 +16,16 @@ class DocumentOpenException(val reason: Reason) : IOException(reason.name) {
         WrongPassword,
         /** Locked by DRM or the like (Hangul's certificate encryption, protected e-books). */
         Protected,
+        /** A page too tall for its width to be shown (Documents.MAX_PAGE_ASPECT). */
+        PageTooTall,
     }
 }
+
+/**
+ * Largest bitmap put on screen. Android won't draw one over 100 MB (RecordingCanvas) and throws
+ * while drawing, which nothing can catch: the app would crash, again on every start.
+ */
+const val MAX_DRAWN_BYTES = 90 * 1024 * 1024
 
 /** A4's width in points: the paper width of pages that have none of their own. */
 const val A4_WIDTH = 595f

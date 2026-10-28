@@ -175,6 +175,7 @@ class SlideDocument private constructor(
         private const val MAX_PICTURE_PIXELS = 16_000_000L
 
         fun layOut(presentation: Presentation): SlideDocument {
+            checkPaper(presentation.width, presentation.height)
             val unit = FLOW_WIDTH / presentation.width
             val pages = presentation.slides.map { slide ->
                 SlidePage(slide.background, slide.shapes.mapNotNull { item(it, unit) }, slide.title)

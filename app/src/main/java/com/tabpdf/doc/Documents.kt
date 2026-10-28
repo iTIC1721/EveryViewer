@@ -16,11 +16,34 @@ object Documents {
      * and again on every start as the tab is reopened.
      */
     suspend fun open(context: Context, uri: Uri, name: String, format: FileFormat): Document = try {
-        openAs(context, uri, name, format)
+        openAs(context, uri, name, format).also { it.checkPageSizes() }
     } catch (_: OutOfMemoryError) {
         throw DocumentOpenException(DocumentOpenException.Reason.TooLarge)
     } catch (e: StackOverflowError) {
         throw IOException("Too deeply nested", e)
+    }
+
+    /**
+     * Pages taller than this (height / width) aren't shown: even at the smallest zoom the viewer
+     * couldn't lay them out on a wide screen (DocumentViewer's MAX_PAGE_HEIGHT_PX).
+     */
+    const val MAX_PAGE_ASPECT = 100f
+
+    /**
+     * A page size from the file (an image, a PDF's MediaBox, a docx's paper) can be zero, endless or
+     * absurdly tall: the viewer would crash on it. Documents laid out while shown are left out: they
+     * are laid out at a fixed width, cut into pages of bounded height.
+     */
+    private suspend fun Document.checkPageSizes() {
+        if (progress != null) return
+        val problem = when {
+            pageSizes.any { !(it.width > 0f && it.height > 0f && it.width.isFinite() && it.height.isFinite()) } ->
+                IOException("Bad page size")
+            pageSizes.any { it.aspect > MAX_PAGE_ASPECT } -> DocumentOpenException(DocumentOpenException.Reason.PageTooTall)
+            else -> return
+        }
+        close()
+        throw problem
     }
 
     private suspend fun openAs(context: Context, uri: Uri, name: String, format: FileFormat): Document =

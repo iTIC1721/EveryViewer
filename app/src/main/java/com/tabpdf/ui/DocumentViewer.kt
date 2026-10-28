@@ -91,6 +91,7 @@ import com.tabpdf.doc.isWebLink
 import com.tabpdf.doc.LayoutProgress
 import com.tabpdf.doc.awaitPages
 import com.tabpdf.doc.guarded
+import com.tabpdf.doc.MAX_DRAWN_BYTES
 import com.tabpdf.doc.SearchMatch
 import androidx.compose.ui.graphics.BlendMode
 import com.tabpdf.doc.DocumentOpenException
@@ -136,6 +137,19 @@ private val OTHER_MATCH = Color(0xFFFFEB3B)
 private val CURRENT_MATCH = Color(0xFFFF9632)
 private const val DOUBLE_TAP_ZOOM = 2.5f
 private val PAGE_GAP = 8.dp
+
+/**
+ * Tallest a page may be on screen, in px. Compose can't lay out a child taller than 262 142 px
+ * beside one narrower than 8 191 px (its Constraints), and throws while measuring — a crash that
+ * would come back on every start, as the zoom is saved. Very tall pages zoom less far instead.
+ */
+private const val MAX_PAGE_HEIGHT_PX = 200_000f
+
+/** The largest height / width among the first [measured] pages of a document. */
+private class TallestPage {
+    var aspect = 0f
+    var measured = 0
+}
 
 /** Largest bitmap we render for one page, to keep memory bounded on big zooms (~32 MB). */
 private const val MAX_RENDER_PIXELS = 8_000_000f
@@ -303,9 +317,20 @@ private fun DocumentPages(
     /** Height of page [index] at [zoom], in px — the unit the saved fractional offset is relative to. */
     fun pageHeight(index: Int, zoom: Float) = viewportWidth * zoom * document.pageSizes[index].aspect
 
+    // Very tall pages zoom less far (MAX_PAGE_HEIGHT_PX); Documents.open refuses those that can't even fit at MIN_ZOOM.
+    // Pages are measured once each as they are laid out (a large text file grows to many thousands).
+    val tallest = remember(document) { TallestPage() }
+    val maxZoom = remember(document, progress.pages, viewportWidth) {
+        for (i in tallest.measured until progress.pages) tallest.aspect = maxOf(tallest.aspect, document.pageSizes[i].aspect)
+        tallest.measured = progress.pages
+        if (tallest.aspect <= 0f) MAX_ZOOM else (MAX_PAGE_HEIGHT_PX / (viewportWidth * tallest.aspect)).coerceIn(MIN_ZOOM, MAX_ZOOM)
+    }
+    // Read by the gesture handlers, which keep the first composition's functions.
+    val currentMaxZoom by rememberUpdatedState(maxZoom)
+
     // The file may have fewer pages than when the position was saved.
     val initialPage = initialState.page.coerceIn(0, document.pageCount - 1)
-    val initialZoom = initialState.zoom.coerceIn(MIN_ZOOM, MAX_ZOOM)
+    val initialZoom = initialState.zoom.coerceIn(MIN_ZOOM, maxZoom)
     val listState = rememberLazyListState(
         initialPage,
         (initialState.pageOffset * pageHeight(initialPage, initialZoom)).roundToInt(),
@@ -433,7 +458,7 @@ private fun DocumentPages(
      * visible item's top scales exactly by the zoom ratio.
      */
     fun zoomBy(factor: Float, focus: Offset) {
-        val newZoom = (zoom * factor).coerceIn(MIN_ZOOM, MAX_ZOOM)
+        val newZoom = (zoom * factor).coerceIn(MIN_ZOOM, currentMaxZoom)
         val ratio = newZoom / zoom
         if (ratio == 1f) return
         val index = listState.firstVisibleItemIndex
@@ -450,6 +475,9 @@ private fun DocumentPages(
             animate(zoom, target, animationSpec = tween(200)) { value, _ -> zoomBy(value / zoom, focus) }
         }
     }
+
+    // Pages laid out later may be taller than the first ones: zoom out to what they allow.
+    LaunchedEffect(maxZoom) { if (zoom > maxZoom) zoomBy(maxZoom / zoom, Offset.Zero) }
 
     val gapPx = if (document.pageGaps) with(density) { PAGE_GAP.toPx() } else 0f
 
@@ -752,7 +780,7 @@ private fun PageImage(
         // Keep showing the previous (blurrier) bitmap while a sharper one renders.
         if (bitmap != null) delay(150)
         // A page that can't be drawn stays blank; the rest of the document is still readable.
-        guarded(null) { document.renderPage(index, renderWidth) }?.let { bitmap = it }
+        guarded(null) { document.renderPage(index, renderWidth) }?.takeIf { it.allocationByteCount <= MAX_DRAWN_BYTES }?.let { bitmap = it }
     }
     val image = remember(bitmap) { bitmap?.asImageBitmap() }
     Canvas(Modifier.fillMaxWidth().height(height)) {
@@ -824,6 +852,7 @@ private fun OpenFailure(
         reason == DocumentOpenException.Reason.NoPages -> "빈 PDF입니다" to "페이지가 하나도 없습니다."
         reason == DocumentOpenException.Reason.Unsupported -> "이 형식은 열 수 없습니다" to "아직 지원하지 않는 파일 형식입니다."
         reason == DocumentOpenException.Reason.TooLarge -> "파일이 너무 큽니다" to "이 기기에서 열 수 있는 크기를 넘습니다."
+        reason == DocumentOpenException.Reason.PageTooTall -> "페이지가 너무 깁니다" to "폭에 비해 세로로 아주 긴 페이지는 열 수 없습니다."
         else -> "파일을 열 수 없습니다" to "손상되었거나 지원하지 않는 파일입니다."
     }
     Column(modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {

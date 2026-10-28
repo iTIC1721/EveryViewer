@@ -129,17 +129,28 @@ class MainActivity : ComponentActivity() {
      * URIs are taken: a file: URI from another app could point into this app's own private files.
      */
     private fun openIncomingFiles(intent: Intent) {
-        val uris = when (intent.action) {
-            Intent.ACTION_VIEW -> listOfNotNull(intent.data)
-            Intent.ACTION_SEND -> listOfNotNull(IntentCompat.getParcelableExtra(intent, Intent.EXTRA_STREAM, Uri::class.java))
-            Intent.ACTION_SEND_MULTIPLE ->
-                IntentCompat.getParcelableArrayListExtra(intent, Intent.EXTRA_STREAM, Uri::class.java).orEmpty()
-            else -> emptyList()
-        }.filter { it.scheme == ContentResolver.SCHEME_CONTENT }
+        val uris: List<Uri>
+        val text: String?
+        val subject: String?
+        try {
+            uris = when (intent.action) {
+                Intent.ACTION_VIEW -> listOfNotNull(intent.data)
+                Intent.ACTION_SEND -> listOfNotNull(IntentCompat.getParcelableExtra(intent, Intent.EXTRA_STREAM, Uri::class.java))
+                Intent.ACTION_SEND_MULTIPLE ->
+                    IntentCompat.getParcelableArrayListExtra(intent, Intent.EXTRA_STREAM, Uri::class.java).orEmpty()
+                else -> emptyList()
+            }.filter { it.scheme == ContentResolver.SCHEME_CONTENT }
+            text = if (uris.isEmpty() && intent.action == Intent.ACTION_SEND) intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString() else null
+            subject = text?.let { intent.getStringExtra(Intent.EXTRA_SUBJECT) }
+        } catch (e: RuntimeException) {
+            // Extras another app sent that can't be read (classes this app doesn't have, wrong
+            // types): reading them throws, which would end the app.
+            android.util.Log.w("EveryViewer", "Unreadable intent: ${e.javaClass.simpleName}")
+            return
+        }
         if (uris.isEmpty() && intent.action == Intent.ACTION_SEND) {
             // Shared text with no file behind it (a link, a selection): kept as a text file of its own.
-            val text = intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString() ?: return
-            val subject = intent.getStringExtra(Intent.EXTRA_SUBJECT)
+            if (text == null) return
             lifecycleScope.launch {
                 val file = FileAccess.saveSharedText(applicationContext, text, subject)
                 tabsViewModel.open(listOf(file), groupId = null)
