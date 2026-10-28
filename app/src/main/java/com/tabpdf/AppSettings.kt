@@ -16,6 +16,17 @@ enum class FingerDrawing(val key: String) {
     Never("never"),
 }
 
+/** How many colour-and-size presets each drawing tool keeps. */
+const val MAX_INK_PRESETS = 6
+
+/** What holding or pressing the pen's side button does in handwriting mode (기획서 5.8.4). */
+enum class SideButton(val key: String) {
+    Eraser("eraser"),
+    /** Pressed while the pen hovers: undo once. */
+    Undo("undo"),
+    None("none"),
+}
+
 /** App colours (기획서 5.6): the system's light/dark setting, or always one of them. */
 enum class ThemeMode(val key: String) {
     System("system"),
@@ -52,6 +63,15 @@ class AppSettings(context: Context) {
     fun setCrossGroupSwipe(on: Boolean) {
         _crossGroupSwipe.value = on
         prefs.edit().putBoolean(CROSS_GROUP_SWIPE, on).apply()
+    }
+
+    /** Several files opened at once outside any group go into a new group of their own (기획서 5.1). */
+    private val _openManyAsGroup = MutableStateFlow(prefs.getBoolean(OPEN_MANY_AS_GROUP, true))
+    val openManyAsGroup: StateFlow<Boolean> = _openManyAsGroup.asStateFlow()
+
+    fun setOpenManyAsGroup(on: Boolean) {
+        _openManyAsGroup.value = on
+        prefs.edit().putBoolean(OPEN_MANY_AS_GROUP, on).apply()
     }
 
     // ---- Handwriting (기획서 5.8) ----
@@ -98,6 +118,34 @@ class AppSettings(context: Context) {
     private fun loadRecent(tool: InkTool): List<Int> =
         prefs.getString("ink_${tool.key}_recent", null)?.split(',')?.mapNotNull { it.toIntOrNull() }.orEmpty()
 
+    /** Saved colour-and-size pairs for each drawing tool, in the order they were added (기획서 5.8.2). */
+    private val _presets = MutableStateFlow(InkTool.entries.associateWith { loadPresets(it) })
+    val presets: StateFlow<Map<InkTool, List<ToolStyle>>> = _presets.asStateFlow()
+
+    fun addPreset(tool: InkTool, style: ToolStyle) {
+        val list = _presets.value[tool].orEmpty()
+        if (style in list || list.size >= MAX_INK_PRESETS) return
+        savePresets(tool, list + style)
+    }
+
+    fun removePreset(tool: InkTool, index: Int) {
+        val list = _presets.value[tool].orEmpty()
+        if (index !in list.indices) return
+        savePresets(tool, list.filterIndexed { i, _ -> i != index })
+    }
+
+    private fun savePresets(tool: InkTool, list: List<ToolStyle>) {
+        _presets.value = _presets.value + (tool to list)
+        prefs.edit().putString("ink_${tool.key}_presets", list.joinToString(",") { "${it.color}:${it.size}" }).apply()
+    }
+
+    private fun loadPresets(tool: InkTool): List<ToolStyle> =
+        prefs.getString("ink_${tool.key}_presets", null)?.split(',')?.mapNotNull { item ->
+            val color = item.substringBefore(':').toIntOrNull()
+            val size = item.substringAfter(':', "").toFloatOrNull()
+            if (color != null && size != null) ToolStyle(color, size) else null
+        }.orEmpty().take(MAX_INK_PRESETS)
+
     private val _fingerDrawing = MutableStateFlow(
         FingerDrawing.entries.firstOrNull { it.key == prefs.getString(FINGER_DRAWING, null) } ?: FingerDrawing.Auto
     )
@@ -131,13 +179,16 @@ class AppSettings(context: Context) {
         prefs.edit().putBoolean(FINGERS_TOO, on).apply()
     }
 
-    /** Holding the pen's side button erases (기획서 5.8.4). */
-    private val _sideButtonErases = MutableStateFlow(prefs.getBoolean(SIDE_BUTTON_ERASES, true))
-    val sideButtonErases: StateFlow<Boolean> = _sideButtonErases.asStateFlow()
+    /** The pen's side button (기획서 5.8.4); before it was a choice, an on/off "erases" switch. */
+    private val _sideButton = MutableStateFlow(
+        SideButton.entries.firstOrNull { it.key == prefs.getString(SIDE_BUTTON, null) }
+            ?: if (prefs.getBoolean(SIDE_BUTTON_ERASES, true)) SideButton.Eraser else SideButton.None
+    )
+    val sideButton: StateFlow<SideButton> = _sideButton.asStateFlow()
 
-    fun setSideButtonErases(on: Boolean) {
-        _sideButtonErases.value = on
-        prefs.edit().putBoolean(SIDE_BUTTON_ERASES, on).apply()
+    fun setSideButton(action: SideButton) {
+        _sideButton.value = action
+        prefs.edit().putString(SIDE_BUTTON, action.key).apply()
     }
 
     private companion object {
@@ -148,7 +199,9 @@ class AppSettings(context: Context) {
         const val FINGER_DRAWING = "ink_finger_drawing"
         const val STYLUS_SEEN = "ink_stylus_seen"
         const val FINGERS_TOO = "ink_fingers_too"
-        const val SIDE_BUTTON_ERASES = "ink_side_button_erases"
+        const val SIDE_BUTTON_ERASES = "ink_side_button_erases" // read once to carry over the old switch
+        const val SIDE_BUTTON = "ink_side_button"
+        const val OPEN_MANY_AS_GROUP = "open_many_as_group"
         const val MAX_RECENT_COLORS = 4
     }
 }

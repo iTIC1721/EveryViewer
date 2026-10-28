@@ -11,6 +11,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.tabpdf.FingerDrawing
 import com.tabpdf.MainActivity
+import com.tabpdf.SideButton
 import com.tabpdf.tabs.TabsViewModel
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -50,7 +51,7 @@ class InkInputTest {
         instrumentation.runOnMainSync {
             app.settings.setFingerDrawing(FingerDrawing.Auto)
             app.settings.setInkTool(InkTool.Pen)
-            app.settings.setSideButtonErases(true)
+            app.settings.setSideButton(SideButton.Eraser)
         }
         File(context.filesDir, "ink.txt").writeText((1..400).joinToString("\n") { "line $it of a text to write on" })
 
@@ -149,6 +150,52 @@ class InkInputTest {
         drag(0.5f, 0.75f, 0.5f, 0.35f, MotionEvent.TOOL_TYPE_FINGER)
         assertStrokes("a finger doesn't draw once a pen is used", 1)
         assertNotEquals("the finger scrolled instead", before, onMain { vm.viewerState(tabId) })
+    }
+
+    /** The pen in the air at ([x], [y]), one hover event per entry of [buttons] (its button state). */
+    private fun hover(x: Float, y: Float, vararg buttons: Int) {
+        val start = SystemClock.uptimeMillis()
+        var step = 0
+        fun send(action: Int, state: Int) {
+            val properties = MotionEvent.PointerProperties().apply { id = 0; toolType = MotionEvent.TOOL_TYPE_STYLUS }
+            // A pen in the air never holds quite still.
+            val coords = MotionEvent.PointerCoords().apply { this.x = x * width + step++; this.y = y * height }
+            val event = MotionEvent.obtain(
+                start, SystemClock.uptimeMillis(), action, 1, arrayOf(properties), arrayOf(coords),
+                0, state, 1f, 1f, 0, 0, InputDevice.SOURCE_STYLUS or InputDevice.SOURCE_TOUCHSCREEN, 0,
+            )
+            instrumentation.uiAutomation.injectInputEvent(event, true)
+            event.recycle()
+        }
+        send(MotionEvent.ACTION_HOVER_ENTER, 0)
+        for (state in buttons) {
+            Thread.sleep(12)
+            send(MotionEvent.ACTION_HOVER_MOVE, state)
+        }
+        send(MotionEvent.ACTION_HOVER_EXIT, buttons.lastOrNull() ?: 0)
+        instrumentation.waitForIdleSync()
+        Thread.sleep(200)
+    }
+
+    @Test
+    fun sideButtonCanUndoOrDoNothing() {
+        drag(0.2f, 0.4f, 0.8f, 0.4f, MotionEvent.TOOL_TYPE_STYLUS)
+        drag(0.2f, 0.5f, 0.8f, 0.5f, MotionEvent.TOOL_TYPE_STYLUS)
+        assertStrokes("two strokes", 2)
+
+        onMain { vm.settings.setSideButton(SideButton.Undo) }
+        settle()
+        val side = MotionEvent.BUTTON_STYLUS_PRIMARY
+        hover(0.5f, 0.6f, 0, side, side, 0)
+        assertStrokes("pressed in the air: undone once", 1)
+        drag(0.2f, 0.6f, 0.8f, 0.6f, MotionEvent.TOOL_TYPE_STYLUS, side)
+        assertStrokes("held while touching: it just draws", 2)
+
+        onMain { vm.settings.setSideButton(SideButton.None) }
+        settle()
+        hover(0.5f, 0.7f, 0, side, 0)
+        drag(0.2f, 0.5f, 0.8f, 0.5f, MotionEvent.TOOL_TYPE_STYLUS, side)
+        assertStrokes("off: the button changes nothing", 3)
     }
 
     /** One finger moves, then a second lands and both move up together. */

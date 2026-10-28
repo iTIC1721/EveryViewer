@@ -23,6 +23,11 @@ internal fun SessionState.appendTab(tab: DocTab): SessionState =
     if (tab.groupId == null) copy(top = top + tab)
     else copy(groupTabs = groupTabs + (tab.groupId to tabsOf(tab.groupId) + tab))
 
+/** Adds [group] holding [tabs] (in order) at the end of the top-level list. */
+internal fun SessionState.appendGroup(group: TabGroup, tabs: List<DocTab>): SessionState =
+    if (tabs.isEmpty()) this
+    else copy(top = top + group, groupTabs = groupTabs + (group.id to tabs.map { it.copy(groupId = group.id) }))
+
 internal fun SessionState.insertTop(index: Int, item: TopItem): SessionState =
     copy(top = top.toMutableList().apply { add(index.coerceIn(0, size), item) })
 
