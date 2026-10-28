@@ -21,7 +21,6 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
@@ -38,7 +37,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.background
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -46,6 +44,9 @@ import com.tabpdf.doc.BundleItem
 import com.tabpdf.tabs.BundleEdit
 import com.tabpdf.tabs.DocTab
 import com.tabpdf.tabs.TabsViewModel
+import com.tabpdf.ui.theme.Paper
+import com.tabpdf.ui.theme.card
+import com.tabpdf.ui.theme.desk
 
 /**
  * Editing a bundle (기획서 5.1: 파일 묶음), laid out like the tab switcher: a card per file with its
@@ -60,7 +61,7 @@ fun BundleEditor(edit: BundleEdit, viewModel: TabsViewModel, onAddFiles: () -> U
     var renaming by remember { mutableStateOf(false) }
     BackHandler { viewModel.finishBundleEdit() }
 
-    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
+    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.desk, contentColor = MaterialTheme.colorScheme.onSurface) {
         Column(Modifier.fillMaxSize()) {
             Row(
                 Modifier.fillMaxWidth().statusBarsPadding().height(56.dp).padding(horizontal = 4.dp),
@@ -73,7 +74,7 @@ fun BundleEditor(edit: BundleEdit, viewModel: TabsViewModel, onAddFiles: () -> U
                     edit.name,
                     Modifier
                         .weight(1f)
-                        .clip(RoundedCornerShape(8.dp))
+                        .clip(MaterialTheme.shapes.small)
                         .clickable { renaming = true }
                         .padding(vertical = 8.dp),
                     style = MaterialTheme.typography.titleMedium,
@@ -134,9 +135,9 @@ fun BundleEditor(edit: BundleEdit, viewModel: TabsViewModel, onAddFiles: () -> U
 private fun ItemCard(item: BundleItem, position: Int, onRemove: (() -> Unit)?) {
     // The thumbnail cache is keyed by tab; each file of a bundle gets a key of its own.
     val asTab = remember(item) { DocTab("bundle-${item.id}", null, item.uri, item.name, item.isInternalCopy, item.format) }
-    Surface(shape = CardShape, tonalElevation = 2.dp) {
+    Surface(shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.card) {
         Column {
-            Box(Modifier.fillMaxWidth().aspectRatio(0.75f).background(Color.White)) {
+            Box(Modifier.fillMaxWidth().aspectRatio(0.75f).background(Paper)) {
                 Thumbnail(asTab, 0, Modifier.fillMaxSize())
                 if (onRemove != null) CloseBadge("묶음에서 빼기", onRemove, Modifier.align(Alignment.TopEnd))
             }

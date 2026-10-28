@@ -4,10 +4,7 @@ import android.graphics.Bitmap
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -39,7 +36,6 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ExitToApp
@@ -94,6 +90,13 @@ import com.tabpdf.tabs.TabGroup
 import com.tabpdf.tabs.TabsViewModel
 import com.tabpdf.tabs.TopItem
 import com.tabpdf.tabs.displayName
+import com.tabpdf.ui.theme.Motion
+import com.tabpdf.ui.theme.Paper
+import com.tabpdf.ui.theme.card
+import com.tabpdf.ui.theme.desk
+import com.tabpdf.ui.theme.dimmed
+import com.tabpdf.ui.theme.floating
+import com.tabpdf.ui.theme.onFloating
 import kotlin.math.abs
 
 /**
@@ -151,7 +154,8 @@ fun TabSwitcher(
     val latestCarryMove = rememberUpdatedState<(Offset) -> Unit> { carryMove(it) }
     val latestDrop = rememberUpdatedState<(String) -> Unit> { drop(it) }
 
-    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
+    // The cards lie on the desk, like the pages in the viewer.
+    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.desk, contentColor = MaterialTheme.colorScheme.onSurface) {
         Column(Modifier.fillMaxSize()) {
             Row(
                 Modifier.fillMaxWidth().statusBarsPadding().height(56.dp).padding(horizontal = 4.dp),
@@ -257,8 +261,8 @@ fun TabSwitcher(
     if (openGroup != null) lastGroup[0] = openGroup
     AnimatedVisibility(
         openGroup != null || carried != null,
-        enter = fadeIn() + scaleIn(initialScale = 0.95f),
-        exit = fadeOut() + scaleOut(targetScale = 0.95f),
+        enter = Motion.panelEnter,
+        exit = Motion.panelExit,
     ) {
         val group = lastGroup[0] ?: return@AnimatedVisibility
         val panelAlpha by animateFloatAsState(if (carried != null) 0f else 1f, label = "panel")
@@ -335,7 +339,7 @@ private fun GroupPanel(
     Box(
         modifier
             .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.4f))
+            .background(MaterialTheme.colorScheme.dimmed)
             .clickable(onClick = onDismiss, indication = null, interactionSource = null),
     ) {
         Surface(
@@ -346,8 +350,8 @@ private fun GroupPanel(
                 .padding(12.dp)
                 // Swallow taps so they don't reach the scrim behind the panel.
                 .clickable(onClick = {}, indication = null, interactionSource = null),
-            shape = RoundedCornerShape(24.dp),
-            tonalElevation = 3.dp,
+            shape = MaterialTheme.shapes.extraLarge,
+            color = MaterialTheme.colorScheme.surfaceContainer,
         ) {
             Column {
                 if (gestures.draggingKey != null) {
@@ -363,7 +367,7 @@ private fun GroupPanel(
                         group.displayName(tabs.size),
                         Modifier
                             .weight(1f)
-                            .clip(RoundedCornerShape(8.dp))
+                            .clip(MaterialTheme.shapes.small)
                             .clickable { dialog = SwitcherDialog.Rename(group) }
                             .padding(vertical = 8.dp),
                         style = MaterialTheme.typography.titleMedium,
@@ -461,9 +465,9 @@ private fun DragOutZone(color: Color) {
             .fillMaxWidth()
             .height(60.dp)
             .padding(horizontal = 12.dp, vertical = 6.dp)
-            .clip(RoundedCornerShape(12.dp))
+            .clip(MaterialTheme.shapes.medium)
             .background(color.copy(alpha = 0.2f))
-            .border(2.dp, color, RoundedCornerShape(12.dp)),
+            .border(2.dp, color, MaterialTheme.shapes.medium),
         contentAlignment = Alignment.Center,
     ) {
         Icon(
@@ -555,6 +559,16 @@ fun LazyGridItemScope.DraggableCard(
     content: @Composable () -> Unit,
 ) {
     val dragging = gestures.draggingKey == key
+    // Picked up, it grows a little; a card it would be merged into sinks back.
+    val scale by animateFloatAsState(
+        when {
+            dragging -> 1.05f
+            isMergeTarget -> 0.92f
+            else -> 1f
+        },
+        Motion.lift(),
+        label = "card",
+    )
     Box(
         (if (dragging) Modifier.zIndex(1f) else Modifier.animateItem())
             .graphicsLayer {
@@ -564,11 +578,6 @@ fun LazyGridItemScope.DraggableCard(
                 translationY = drag.y
                 // The dragged card is see-through so the merge highlight under it shows.
                 alpha = if (dragging) 0.75f else 1f - (abs(swipe) / size.width).coerceIn(0f, 0.7f)
-                val scale = when {
-                    dragging -> 1.05f
-                    isMergeTarget -> 0.92f
-                    else -> 1f
-                }
                 scaleX = scale
                 scaleY = scale
             }
@@ -578,7 +587,7 @@ fun LazyGridItemScope.DraggableCard(
             Box(
                 Modifier
                     .matchParentSize()
-                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.18f), RoundedCornerShape(12.dp))
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.18f), MaterialTheme.shapes.medium)
             )
         }
     }
@@ -605,17 +614,15 @@ fun LazyGridState.rectOf(key: Any): Rect? =
 
 // ---- Cards ----
 
-val CardShape = RoundedCornerShape(12.dp)
-
 @Composable
 private fun TabCard(tab: DocTab, page: Int, isCurrent: Boolean, onClose: () -> Unit) {
     Surface(
-        shape = CardShape,
-        tonalElevation = 2.dp,
+        shape = MaterialTheme.shapes.medium,
+        color = MaterialTheme.colorScheme.card,
         border = if (isCurrent) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null,
     ) {
         Column {
-            Box(Modifier.fillMaxWidth().aspectRatio(0.75f).background(Color.White)) {
+            Box(Modifier.fillMaxWidth().aspectRatio(0.75f).background(Paper)) {
                 Thumbnail(tab, page, Modifier.fillMaxSize())
                 CloseBadge("탭 닫기", onClose, Modifier.align(Alignment.TopEnd))
             }
@@ -642,8 +649,8 @@ private fun GroupCard(
 ) {
     val color = groupColor(group.color)
     Surface(
-        shape = CardShape,
-        tonalElevation = 2.dp,
+        shape = MaterialTheme.shapes.medium,
+        color = MaterialTheme.colorScheme.card,
         border = if (containsCurrent) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null,
     ) {
         Column {
@@ -657,8 +664,8 @@ private fun GroupCard(
                                     Modifier
                                         .weight(1f)
                                         .fillMaxSize()
-                                        .clip(RoundedCornerShape(6.dp))
-                                        .background(if (tab != null) Color.White else Color.Transparent)
+                                        .clip(MaterialTheme.shapes.small)
+                                        .background(if (tab != null) Paper else Color.Transparent)
                                 ) {
                                     if (tab != null) Thumbnail(tab, pageOf(tab.id), Modifier.fillMaxSize())
                                 }
@@ -700,11 +707,11 @@ fun CloseBadge(description: String, onClick: () -> Unit, modifier: Modifier) {
             .padding(6.dp)
             .size(28.dp)
             .clip(CircleShape)
-            .background(Color.Black.copy(alpha = 0.45f))
+            .background(MaterialTheme.colorScheme.floating)
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        Icon(Icons.Default.Close, contentDescription = description, tint = Color.White, modifier = Modifier.size(16.dp))
+        Icon(Icons.Default.Close, contentDescription = description, tint = MaterialTheme.colorScheme.onFloating, modifier = Modifier.size(16.dp))
     }
 }
 
@@ -719,16 +726,17 @@ fun Thumbnail(tab: DocTab, page: Int, modifier: Modifier) {
         value = if (bitmap != null) Result.success(bitmap) else Result.failure(IllegalStateException())
     }
     val image = remember(result) { result?.getOrNull()?.asImageBitmap() }
+    val appear by animateFloatAsState(if (image != null) 1f else 0f, tween(Motion.APPEAR_MS), label = "thumbnail")
     when {
         // Text is read from the top at full width, however short its page; other pages fill the card.
         image != null && (tab.format == FileFormat.Text || tab.format == FileFormat.Markdown) -> Image(
-            image, contentDescription = null, modifier.background(Color.White),
+            image, contentDescription = null, modifier.background(Paper).graphicsLayer { alpha = appear },
             contentScale = ContentScale.FillWidth, alignment = Alignment.TopCenter,
         )
         image != null ->
-            Image(image, contentDescription = null, modifier, contentScale = ContentScale.Crop, alignment = Alignment.TopCenter)
+            Image(image, contentDescription = null, modifier.graphicsLayer { alpha = appear }, contentScale = ContentScale.Crop, alignment = Alignment.TopCenter)
         result?.isFailure == true -> Box(modifier, contentAlignment = Alignment.Center) {
-            Text("열 수 없음", style = MaterialTheme.typography.labelMedium, color = Color.Gray)
+            Text("열 수 없음", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }

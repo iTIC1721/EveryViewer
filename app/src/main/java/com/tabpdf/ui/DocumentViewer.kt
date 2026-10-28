@@ -18,6 +18,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.core.animate
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -47,7 +48,7 @@ import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.OutlinedButton
@@ -75,6 +76,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
@@ -112,6 +114,12 @@ import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
 import com.tabpdf.tabs.PageJump
 import com.tabpdf.tabs.ViewerState
+import com.tabpdf.ui.theme.Motion
+import com.tabpdf.ui.theme.Paper
+import com.tabpdf.ui.theme.desk
+import com.tabpdf.ui.theme.floating
+import com.tabpdf.ui.theme.onFloating
+import com.tabpdf.ui.theme.tabularNumbers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
@@ -247,7 +255,7 @@ fun DocumentViewer(
             .fillMaxSize()
             // Zoomed pages are drawn wider than the viewport; keep them off the neighbouring tab.
             .clipToBounds()
-            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .background(MaterialTheme.colorScheme.desk)
     ) {
         val doc = document
         val failure = error
@@ -650,6 +658,8 @@ private fun DocumentPages(
             }
     ) {
         val pageWidth = viewportWidth * zoom
+        // On the light desk a page needs an edge; on the dark one a white page already stands out.
+        val pageEdge = MaterialTheme.colorScheme.let { if (it.desk.luminance() > 0.5f) it.onSurface else null }
         LazyColumn(
             state = listState,
             modifier = Modifier.fillMaxSize(),
@@ -670,6 +680,7 @@ private fun DocumentPages(
                     selected = selection.firstOrNull { it.first == index }?.second?.rects.orEmpty(),
                     selectionColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f),
                     currentMatch = searchIndex,
+                    edge = pageEdge,
                 )
             }
         }
@@ -774,6 +785,8 @@ private fun PageImage(
     /** Selected text on this page. */
     selected: List<RectF>,
     selectionColor: Color,
+    /** Colour of the page's edge and the shade under it; null draws neither. */
+    edge: Color?,
 ) {
     var bitmap by remember { mutableStateOf<Bitmap?>(null) }
     LaunchedEffect(renderWidth) {
@@ -783,14 +796,25 @@ private fun PageImage(
         guarded(null) { document.renderPage(index, renderWidth) }?.takeIf { it.allocationByteCount <= MAX_DRAWN_BYTES }?.let { bitmap = it }
     }
     val image = remember(bitmap) { bitmap?.asImageBitmap() }
+    // The first drawing fades in over the blank page; sharper redraws replace it at once.
+    val appear by animateFloatAsState(if (image != null) 1f else 0f, tween(Motion.APPEAR_MS), label = "page")
     Canvas(Modifier.fillMaxWidth().height(height)) {
         val left = -panX()
         val dstSize = IntSize(pageWidth.roundToInt(), size.height.roundToInt())
-        if (image == null) {
-            drawRect(Color.White, topLeft = Offset(left, 0f), size = dstSize.toSize())
-        } else {
-            drawImage(image, dstOffset = IntOffset(left.roundToInt(), 0), dstSize = dstSize)
+        if (edge != null) {
+            // A sheet lying on the desk: a hairline around it and a soft shade under its bottom edge,
+            // drawn in the gap between pages.
+            val dp = 1.dp.toPx()
+            drawRect(edge.copy(alpha = 0.04f), Offset(left, size.height), androidx.compose.ui.geometry.Size(pageWidth, 4 * dp))
+            drawRect(edge.copy(alpha = 0.04f), Offset(left, size.height), androidx.compose.ui.geometry.Size(pageWidth, 1.5f * dp))
+            // One device pixel, just outside the page.
+            drawRect(
+                edge.copy(alpha = 0.14f), Offset(left - 0.5f, -0.5f),
+                androidx.compose.ui.geometry.Size(pageWidth + 1f, size.height + 1f), style = Stroke(width = 1f),
+            )
         }
+        if (image == null || appear < 1f) drawRect(Paper, topLeft = Offset(left, 0f), size = dstSize.toSize())
+        if (image != null) drawImage(image, dstOffset = IntOffset(left.roundToInt(), 0), dstSize = dstSize, alpha = appear)
         for (r in selected) {
             drawRect(
                 selectionColor,
@@ -963,8 +987,9 @@ private fun FastScroller(
                     .padding(end = 4.dp)
                     .size(width = if (dragging) 8.dp else 6.dp, height = 48.dp)
                     .background(
-                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = if (dragging) 0.9f else 0.6f),
-                        RoundedCornerShape(4.dp),
+                        // Held: the accent, so it reads as picked up.
+                        if (dragging) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                        MaterialTheme.shapes.extraSmall,
                     )
             )
         }
@@ -997,10 +1022,10 @@ private fun PageIndicator(listState: LazyListState, pageCount: Int, complete: Bo
         Text(
             "$currentPage / $pageCount" + if (complete) "" else "+",
             Modifier
-                .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(12.dp))
+                .background(MaterialTheme.colorScheme.floating, CircleShape)
                 .padding(horizontal = 10.dp, vertical = 4.dp),
-            color = Color.White,
-            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onFloating,
+            style = MaterialTheme.typography.labelMedium.tabularNumbers(),
         )
     }
 }

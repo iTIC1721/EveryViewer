@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -136,7 +135,7 @@ fun SelectionHandle(tip: Offset, isStart: Boolean, onBounds: (Rect) -> Unit, onM
 @Composable
 fun SelectionToolbar(text: () -> String, onDone: () -> Unit, modifier: Modifier) {
     val context = LocalContext.current
-    Surface(modifier, shape = RoundedCornerShape(8.dp), shadowElevation = 4.dp, tonalElevation = 2.dp) {
+    Surface(modifier, shape = MaterialTheme.shapes.small, color = MaterialTheme.colorScheme.surfaceContainer, shadowElevation = 4.dp) {
         Row {
             TextButton(onClick = {
                 val clipboard = context.getSystemService(ClipboardManager::class.java)

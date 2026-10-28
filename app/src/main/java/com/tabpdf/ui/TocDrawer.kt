@@ -48,6 +48,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.tabpdf.doc.TocEntry
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.shape.RoundedCornerShape
+import com.tabpdf.ui.theme.Motion
+import com.tabpdf.ui.theme.dimmed
 
 /**
  * The table of contents (기획서 5.5) in a panel from the left, as e-book readers show it: entries
@@ -70,11 +74,15 @@ fun TocDrawer(
         Box(
             Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.32f))
+                .background(MaterialTheme.colorScheme.dimmed)
                 .clickable(remember { MutableInteractionSource() }, indication = null, onClick = onClose)
         )
     }
-    AnimatedVisibility(open, enter = slideInHorizontally { -it }, exit = slideOutHorizontally { -it }) {
+    AnimatedVisibility(
+        open,
+        enter = slideInHorizontally(tween(300, easing = Motion.EmphasizedDecelerate)) { -it },
+        exit = slideOutHorizontally(tween(200, easing = Motion.EmphasizedAccelerate)) { -it },
+    ) {
         BoxWithConstraints {
             Surface(
                 Modifier
@@ -83,7 +91,8 @@ fun TocDrawer(
                     // Taps inside don't reach the scrim.
                     .clickable(remember { MutableInteractionSource() }, indication = null) {},
                 color = MaterialTheme.colorScheme.surfaceContainerLow,
-                tonalElevation = 1.dp,
+                // Rounded where it ends, as Material's navigation drawer.
+                shape = DrawerShape,
             ) {
                 Column(Modifier.windowInsetsPadding(WindowInsets.systemBars)) {
                     Text("목차", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(start = 24.dp, top = 20.dp, bottom = 12.dp))
@@ -186,3 +195,5 @@ private fun TocList(entries: List<TocEntry>, page: Int, pageOffset: Float, onJum
         }
     }
 }
+
+private val DrawerShape = RoundedCornerShape(topEnd = 20.dp, bottomEnd = 20.dp)

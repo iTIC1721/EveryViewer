@@ -17,7 +17,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -54,6 +53,7 @@ private val LIBRARIES = listOf(
     Library("hwplib", "Apache License 2.0", "licenses/apache-2.0.txt"),
     Library("jsoup", "MIT License", "licenses/jsoup-mit.txt"),
     Library("commonmark-java", "BSD 2-Clause License", "licenses/commonmark-bsd-2.txt"),
+    Library("Pretendard", "SIL Open Font License 1.1", "licenses/pretendard-ofl.txt"),
     Library(
         "juniversalchardet",
         "Mozilla Public License 1.1",
@@ -177,7 +177,7 @@ private fun AppIcon() {
     Box(
         Modifier
             .size(88.dp)
-            .clip(RoundedCornerShape(24.dp))
+            .clip(MaterialTheme.shapes.extraLarge)
             .background(colorResource(R.color.ic_launcher_background)),
     ) {
         Image(

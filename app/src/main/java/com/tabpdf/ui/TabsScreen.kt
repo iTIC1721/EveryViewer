@@ -11,8 +11,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
@@ -88,6 +86,8 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.contentDescription
@@ -100,10 +100,26 @@ import com.tabpdf.doc.TocEntry
 import com.tabpdf.tabs.SessionState
 import com.tabpdf.tabs.TabGroup
 import com.tabpdf.tabs.TabsViewModel
+import com.tabpdf.ui.theme.Motion
+import com.tabpdf.ui.theme.bar
+import com.tabpdf.ui.theme.desk
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
 private val TOP_BAR_HEIGHT = 56.dp
+
+/** The tab count's frame: a page corner, a little rounder than a sharp box. */
+private val TabCountShape = RoundedCornerShape(6.dp)
+
+/** A hairline under a bar over the document, where the paper of the bar meets the pages. */
+@Composable
+fun Modifier.barEdge(): Modifier {
+    val edge = MaterialTheme.colorScheme.outlineVariant
+    return drawWithContent {
+        drawContent()
+        drawLine(edge, Offset(0f, size.height - 0.5f), Offset(size.width, size.height - 0.5f), strokeWidth = 1f)
+    }
+}
 
 /**
  * Main screen: the viewer pager with its top bar, and the tab switcher over it.
@@ -120,7 +136,7 @@ fun TabsScreen(
     // Loading the saved session takes a few ms; show just the background until then, so the pager
     // can start on the saved tab instead of jumping to it.
     val session = viewModel.state.collectAsState().value ?: run {
-        Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant))
+        Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.desk))
         return
     }
     val undoOffer by viewModel.undoOffer.collectAsState()
@@ -140,7 +156,7 @@ fun TabsScreen(
     }
 
     CompositionLocalProvider(LocalInkStore provides viewModel.ink) {
-    Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant)) {
+    Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.desk)) {
         // Swiping stays within the current tab's group, or among ungrouped tabs (기획서 5.2) —
         // unless set to go on across groups, through every tab in the switcher's order.
         // A fresh pager per context, starting on the current tab.
@@ -166,8 +182,8 @@ fun TabsScreen(
 
         AnimatedVisibility(
             visible = showSwitcher,
-            enter = fadeIn() + slideInVertically { it / 8 },
-            exit = fadeOut() + slideOutVertically { it / 8 },
+            enter = Motion.screenEnter,
+            exit = Motion.screenExit,
         ) {
             TabSwitcher(
                 state = session,
@@ -188,13 +204,18 @@ fun TabsScreen(
 
         AnimatedVisibility(
             visible = showSettings,
-            enter = fadeIn() + slideInVertically { it / 8 },
-            exit = fadeOut() + slideOutVertically { it / 8 },
+            enter = Motion.screenEnter,
+            exit = Motion.screenExit,
         ) {
             SettingsScreen(viewModel.settings, onDismiss = { showSettings = false })
         }
 
-        bundleEdit?.let { edit -> BundleEditor(edit, viewModel, onAddFiles = onAddToBundle) }
+        // The last bundle stays shown while the editor leaves.
+        var shownEdit by remember { mutableStateOf(bundleEdit) }
+        if (bundleEdit != null) shownEdit = bundleEdit
+        AnimatedVisibility(visible = bundleEdit != null, enter = Motion.screenEnter, exit = Motion.screenExit) {
+            shownEdit?.let { edit -> BundleEditor(edit, viewModel, onAddFiles = onAddToBundle) }
+        }
 
         SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).navigationBarsPadding())
     }
@@ -511,7 +532,7 @@ private fun TopBar(
     menu: @Composable (dismiss: () -> Unit) -> Unit,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
-    Surface(color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f), contentColor = MaterialTheme.colorScheme.onSurface, tonalElevation = 2.dp) {
+    Surface(Modifier.barEdge(), color = MaterialTheme.colorScheme.bar, contentColor = MaterialTheme.colorScheme.onSurface) {
         Row(
             Modifier
                 .fillMaxWidth()
@@ -526,7 +547,10 @@ private fun TopBar(
                     onClick = onInkMode,
                     modifier = Modifier.semantics { contentDescription = if (inkMode) "필기 끄기" else "필기" },
                     colors = if (inkMode) {
-                        IconButtonDefaults.iconButtonColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
+                        IconButtonDefaults.iconButtonColors(
+                            containerColor = MaterialTheme.colorScheme.primaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                        )
                     } else {
                         IconButtonDefaults.iconButtonColors()
                     },
@@ -570,7 +594,7 @@ private fun SearchBar(
     val focus = remember { FocusRequester() }
     LaunchedEffect(Unit) { focus.requestFocus() }
     val colors = MaterialTheme.colorScheme
-    Surface(color = colors.surface.copy(alpha = 0.95f), contentColor = colors.onSurface, tonalElevation = 2.dp) {
+    Surface(Modifier.barEdge(), color = colors.bar, contentColor = colors.onSurface) {
         Row(
             Modifier
                 .fillMaxWidth()
@@ -698,8 +722,8 @@ private fun TabCountButton(count: Int, group: TabGroup?, onClick: () -> Unit) {
         Box(
             Modifier
                 .size(24.dp)
-                .then(if (color != null) Modifier.background(color.copy(alpha = 0.25f), RoundedCornerShape(5.dp)) else Modifier)
-                .border(2.dp, color ?: MaterialTheme.colorScheme.onSurface, RoundedCornerShape(5.dp)),
+                .then(if (color != null) Modifier.background(color.copy(alpha = 0.25f), TabCountShape) else Modifier)
+                .border(2.dp, color ?: MaterialTheme.colorScheme.onSurface, TabCountShape),
             contentAlignment = Alignment.Center,
         ) {
             Text(if (count > 99) "99+" else count.toString(), style = MaterialTheme.typography.labelMedium)

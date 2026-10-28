@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.EveryViewer" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/desk</item>
+        <item name="android:windowSplashScreenBackground">@color/desk</item>
+    </style>
+</resources>
