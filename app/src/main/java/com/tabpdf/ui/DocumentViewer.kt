@@ -489,6 +489,12 @@ private fun DocumentPages(
     LaunchedEffect(maxZoom) { if (zoom > maxZoom) zoomBy(maxZoom / zoom, Offset.Zero) }
 
     val gapPx = if (document.pageGaps) with(density) { PAGE_GAP.toPx() } else 0f
+    // Where each page starts down the list (the last entry: where the last one ends), for the fast scroller.
+    val pageTops = remember(document, progress.pages, zoom, viewportWidth, gapPx) {
+        val tops = FloatArray(progress.pages + 1)
+        for (i in 0 until progress.pages) tops[i + 1] = tops[i] + pageHeight(i, zoom) + if (i < progress.pages - 1) gapPx * zoom else 0f
+        tops
+    }
     // How the pages stack in page units, for a line or the eraser going on from one page to the
     // next; made again as pages are laid out.
     val inkPagesCache = remember(document, gapPx, viewportWidth) { arrayOfNulls<PageLayout>(1) }
@@ -698,6 +704,7 @@ private fun DocumentPages(
         FastScroller(
             listState = listState,
             pageCount = progress.pages,
+            pageTops = pageTops,
             contentPadding = contentPadding,
             onDraggingChange = { fastScrolling = it },
             modifier = Modifier.align(Alignment.TopEnd),
@@ -931,13 +938,12 @@ private fun OpenFailure(
 private fun FastScroller(
     listState: LazyListState,
     pageCount: Int,
+    pageTops: FloatArray,
     contentPadding: PaddingValues,
     onDraggingChange: (Boolean) -> Unit,
     modifier: Modifier,
 ) {
     if (pageCount < FAST_SCROLL_MIN_PAGES) return
-    // Read live by the position and the drag handler: a document laid out in the background grows.
-    val pages by rememberUpdatedState(pageCount)
     val scope = rememberCoroutineScope()
     var dragging by remember { mutableStateOf(false) }
     var visible by remember { mutableStateOf(false) }
@@ -949,13 +955,18 @@ private fun FastScroller(
             visible = false
         }
     }
-    // How far through the document, 0..1, from the first visible page and how much of it is scrolled.
+    // Read live by the position and the drag handler: a document laid out in the background grows.
+    val tops by rememberUpdatedState(pageTops)
+    // How far the list can scroll: every page, the gaps and the padding, less the screen.
+    fun scrollRange(): Float {
+        val info = listState.layoutInfo
+        return (tops.last() + info.beforeContentPadding + info.afterContentPadding - info.viewportSize.height).coerceAtLeast(1f)
+    }
+    // How far through the document, 0..1: how far the list is scrolled, in pixels, of how far it can.
     val progress by remember {
         derivedStateOf {
-            if (!listState.canScrollForward) return@derivedStateOf 1f
-            val first = listState.layoutInfo.visibleItemsInfo.firstOrNull() ?: return@derivedStateOf 0f
-            val within = listState.firstVisibleItemScrollOffset.toFloat() / first.size.coerceAtLeast(1)
-            ((first.index + within) / (pages - 1)).coerceIn(0f, 1f)
+            val first = listState.firstVisibleItemIndex.coerceIn(0, tops.size - 1)
+            ((tops[first] + listState.firstVisibleItemScrollOffset) / scrollRange()).coerceIn(0f, 1f)
         }
     }
     AnimatedVisibility(
@@ -969,9 +980,19 @@ private fun FastScroller(
         BoxWithConstraints(Modifier.fillMaxHeight().width(36.dp)) {
             val trackHeight = constraints.maxHeight.toFloat()
             val thumbHeight = with(LocalDensity.current) { 48.dp.toPx() }
+            // Where on the handle it was picked up, so it moves with the finger instead of jumping under it.
+            var grab by remember { mutableFloatStateOf(0f) }
+            // The same sum as [progress], backwards: the page and the place in it that far down.
             fun jumpTo(y: Float) {
-                val fraction = ((y - thumbHeight / 2) / (trackHeight - thumbHeight)).coerceIn(0f, 1f)
-                scope.launch { listState.scrollToItem((fraction * (pages - 1)).roundToInt()) }
+                val fraction = ((y - grab) / (trackHeight - thumbHeight)).coerceIn(0f, 1f)
+                val target = fraction * scrollRange()
+                var page = 0
+                var last = tops.size - 2
+                while (page < last) {
+                    val mid = (page + last + 1) / 2
+                    if (tops[mid] <= target) page = mid else last = mid - 1
+                }
+                scope.launch { listState.scrollToItem(page, (target - tops[page]).roundToInt()) }
             }
             fun setDragging(value: Boolean) {
                 dragging = value
@@ -982,7 +1003,12 @@ private fun FastScroller(
                     .fillMaxSize()
                     .pointerInput(Unit) {
                         detectVerticalDragGestures(
-                            onDragStart = { setDragging(true); jumpTo(it.y) },
+                            onDragStart = {
+                                val thumbTop = progress * (trackHeight - thumbHeight)
+                                grab = if (it.y in thumbTop..thumbTop + thumbHeight) it.y - thumbTop else thumbHeight / 2
+                                setDragging(true)
+                                jumpTo(it.y)
+                            },
                             onDragEnd = { setDragging(false) },
                             onDragCancel = { setDragging(false) },
                         ) { change, _ ->
