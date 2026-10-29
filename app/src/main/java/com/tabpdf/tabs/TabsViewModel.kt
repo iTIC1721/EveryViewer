@@ -499,9 +499,10 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
         _inkMode.value = on
     }
 
-    fun addStroke(tabId: String, page: Int, tool: InkTool, stroke: Stroke) {
-        if (current().tab(tabId) == null) return
-        ink.add(tabId, InkStroke(UUID.randomUUID().toString(), page, ink.nextSeq(), tool, stroke))
+    /** A line drawn, as its [parts] on each page it crossed: one undo takes them all back. */
+    fun addStroke(tabId: String, parts: List<Pair<Int, Stroke>>, tool: InkTool) {
+        if (current().tab(tabId) == null || parts.isEmpty()) return
+        ink.add(tabId, parts.map { (page, stroke) -> InkStroke(UUID.randomUUID().toString(), page, ink.nextSeq(), tool, stroke) })
     }
 
     fun eraseStrokes(tabId: String, ids: Set<String>, gesture: Long) = ink.erase(tabId, ids, gesture)

@@ -109,6 +109,7 @@ import com.tabpdf.ink.InkTool
 import com.tabpdf.ink.LocalInkSurface
 import com.tabpdf.ink.PageHit
 import com.tabpdf.ink.inkInput
+import com.tabpdf.ink.PageLayout
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
@@ -488,6 +489,16 @@ private fun DocumentPages(
     LaunchedEffect(maxZoom) { if (zoom > maxZoom) zoomBy(maxZoom / zoom, Offset.Zero) }
 
     val gapPx = if (document.pageGaps) with(density) { PAGE_GAP.toPx() } else 0f
+    // How the pages stack in page units, for a line or the eraser going on from one page to the
+    // next; made again as pages are laid out.
+    val inkPagesCache = remember(document, gapPx, viewportWidth) { arrayOfNulls<PageLayout>(1) }
+    val inkPages by rememberUpdatedState {
+        inkPagesCache[0]?.takeIf { it.heights.size == document.pageCount }
+            ?: PageLayout(
+                FloatArray(document.pageCount) { INK_PAGE_WIDTH * document.pageSizes[it].aspect },
+                gapPx * INK_PAGE_WIDTH / viewportWidth,
+            ).also { inkPagesCache[0] = it }
+    }
 
     // Text search (기획서 5.5): find as the query changes, mark every match, bring the current one into view.
     var matches by remember(document) { mutableStateOf<List<SearchMatch>>(emptyList()) }
@@ -534,7 +545,7 @@ private fun DocumentPages(
         Modifier
             .fillMaxSize()
             // Handwriting first: a pointer that draws is consumed before anything below sees it.
-            .inkInput(LocalInkSurface.current, { currentInk }, ::pageAt, onClaim = { inkClaimed[0] = it }) { hover = it }
+            .inkInput(LocalInkSurface.current, { currentInk }, ::pageAt, { inkPages() }, onClaim = { inkClaimed[0] = it }) { hover = it }
             // Pinch: watched on the Initial pass so two-finger moves never reach the list or pager.
             .pointerInput(Unit) {
                 awaitEachGesture {

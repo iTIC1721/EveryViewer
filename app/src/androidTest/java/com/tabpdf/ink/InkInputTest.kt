@@ -153,6 +153,23 @@ class InkInputTest {
     }
 
     /** The pen in the air at ([x], [y]), one hover event per entry of [buttons] (its button state). */
+    @Test
+    fun aLineAcrossPagesStaysOnEachPage() {
+        // The end of the first page about a quarter of the way down the screen.
+        onMain { vm.jumpToPage(tabId, 0, 0.75f) }
+        settle()
+        drag(0.3f, 0.19f, 0.3f, 0.9f, MotionEvent.TOOL_TYPE_STYLUS)
+        assertStrokes("one part on each page", 2)
+        assertEquals(listOf(0, 1), onMain { vm.ink.strokes(tabId).value.map { it.page }.sorted() })
+        onMain { vm.undoInk() }
+        assertStrokes("undo takes the whole line back", 0)
+
+        onMain { vm.redoInk() }
+        assertStrokes("redo brings both parts", 2)
+        drag(0.3f, 0.19f, 0.3f, 0.9f, MotionEvent.TOOL_TYPE_STYLUS, MotionEvent.BUTTON_STYLUS_PRIMARY)
+        assertStrokes("the eraser goes on to the next page too", 0)
+    }
+
     private fun hover(x: Float, y: Float, vararg buttons: Int) {
         val start = SystemClock.uptimeMillis()
         var step = 0

@@ -354,7 +354,7 @@ private fun ContextPager(
                     onUndo = { viewModel.undoInk() },
                     strokes = strokes,
                     onStylusSeen = viewModel.settings::markStylusSeen,
-                    onStroke = { p, tool, stroke -> viewModel.addStroke(tab.id, p, tool, stroke) },
+                    onStroke = { parts, tool -> viewModel.addStroke(tab.id, parts, tool) },
                     onErase = { ids, gesture -> viewModel.eraseStrokes(tab.id, ids, gesture) },
                 )
                 DocumentViewer(
