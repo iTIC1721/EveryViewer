@@ -60,11 +60,12 @@ class InkStore(private val app: TabPdfApp, private val scope: CoroutineScope) {
         return lastSeq
     }
 
-    fun add(tabId: String, stroke: InkStroke) {
+    /** One line, as one or more strokes (its parts on the pages it crossed): undone as one. */
+    fun add(tabId: String, strokes: List<InkStroke>) {
         val ink = tab(tabId)
-        ink.strokes.value = ink.strokes.value + stroke
-        record(ink, Edit.Added(listOf(stroke)))
-        save(tabId, listOf(stroke))
+        ink.strokes.value = ink.strokes.value + strokes
+        record(ink, Edit.Added(strokes))
+        save(tabId, strokes)
     }
 
     fun erase(tabId: String, ids: Set<String>, gesture: Long) {

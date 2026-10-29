@@ -75,7 +75,8 @@ class InkBinding(
     val onUndo: () -> Unit,
     val strokes: List<InkStroke>,
     val onStylusSeen: () -> Unit,
-    val onStroke: (page: Int, tool: InkTool, stroke: Stroke) -> Unit,
+    /** A finished line: its parts on the pages it crossed (one, unless it went on to other pages). */
+    val onStroke: (parts: List<Pair<Int, Stroke>>, tool: InkTool) -> Unit,
     val onErase: (ids: Set<String>, gesture: Long) -> Unit,
 )
 
@@ -108,6 +109,8 @@ fun Modifier.inkInput(
     surface: InkSurface?,
     binding: () -> InkBinding?,
     pageAt: (Offset) -> PageHit?,
+    /** How the pages stack, for a line or an eraser that goes on from one page to the next. */
+    pages: () -> PageLayout,
     /** Told whether handwriting has the current gesture, so other handlers can stay out of it. */
     onClaim: (Boolean) -> Unit,
     onHover: (Offset?) -> Unit,
@@ -148,14 +151,14 @@ fun Modifier.inkInput(
                         val motionOffset = Offset(motion.getX(motion.actionIndex), motion.getY(motion.actionIndex)) - down.position
                         active = if (erasing) {
                             Active(down.id, pointerId, down.isPen, null, hit, down.position, ++gestures).also {
-                                erase(ink, hit, down.position, down.position, gestures)
+                                erase(ink, pages(), hit, down.position, down.position, gestures)
                             }
                         } else {
                             val brush = Brushes.forTool(ink.tool, ink.style)
                             val tool = ink.tool
                             val page = hit.index
                             val id = surface.start(motion, pointerId, brush, hit.motionToPage(motionOffset)) { stroke ->
-                                ink.onStroke(page, tool, stroke)
+                                ink.onStroke(splitAcrossPages(stroke, page, pages()), tool)
                             }
                             Active(down.id, pointerId, down.isPen, id, hit, down.position, 0)
                         }
@@ -185,7 +188,7 @@ fun Modifier.inkInput(
                         }
                         a.strokeId != null -> surface.add(motion, a.pointerId, a.strokeId)
                         else -> {
-                            erase(ink, a.hit, a.last, change.position, a.gesture)
+                            erase(ink, pages(), a.hit, a.last, change.position, a.gesture)
                             a.last = change.position
                         }
                     }
@@ -233,21 +236,32 @@ private class Active(
     val gesture: Long,
 )
 
-/** Erases every stroke on [hit]'s page that the eraser touched moving from [from] to [to]. */
-private fun erase(ink: InkBinding, hit: PageHit, from: Offset, to: Offset, gesture: Long) {
+/**
+ * Erases every stroke that the eraser touched moving from [from] to [to]: on [hit]'s page, and on
+ * the pages next to it that the eraser went on to.
+ */
+private fun erase(ink: InkBinding, pages: PageLayout, hit: PageHit, from: Offset, to: Offset, gesture: Long) {
     val a = hit.toPage(from)
     val b = hit.toPage(to)
     val radius = ink.eraserSize / 2
     val length = hypot(b.x - a.x, b.y - a.y)
-    val area = ImmutableParallelogram.fromCenterDimensionsAndRotationInDegrees(
-        ImmutableVec((a.x + b.x) / 2, (a.y + b.y) / 2),
-        length + 2 * radius,
-        2 * radius,
-        Math.toDegrees(atan2(b.y - a.y, b.x - a.x).toDouble()).toFloat(),
-    )
-    val hits = ink.strokes
-        .filter { it.page == hit.index && with(Intersection) { it.stroke.shape.intersects(area, AffineTransform.IDENTITY) } }
-        .map { it.id }
-        .toSet()
+    val origin = if (hit.index in pages.heights.indices) pages.top(hit.index) else 0f
+    val touched = if (hit.index in pages.heights.indices) {
+        pages.pagesBetween(origin + minOf(a.y, b.y) - radius, origin + maxOf(a.y, b.y) + radius)
+    } else hit.index..hit.index
+    val hits = mutableSetOf<String>()
+    for (page in touched) {
+        val pa = pages.move(a, hit.index, page)
+        val pb = pages.move(b, hit.index, page)
+        val area = ImmutableParallelogram.fromCenterDimensionsAndRotationInDegrees(
+            ImmutableVec((pa.x + pb.x) / 2, (pa.y + pb.y) / 2),
+            length + 2 * radius,
+            2 * radius,
+            Math.toDegrees(atan2(pb.y - pa.y, pb.x - pa.x).toDouble()).toFloat(),
+        )
+        ink.strokes
+            .filter { it.page == page && with(Intersection) { it.stroke.shape.intersects(area, AffineTransform.IDENTITY) } }
+            .mapTo(hits) { it.id }
+    }
     if (hits.isNotEmpty()) ink.onErase(hits, gesture)
 }
