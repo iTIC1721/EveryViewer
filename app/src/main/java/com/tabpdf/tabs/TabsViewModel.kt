@@ -366,13 +366,18 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
         if (document != null) openDocuments[tabId] = document else openDocuments -= tabId
     }
 
+    /** Edits tab [tabId]'s bundle; a tab of one file starts as a bundle of just that file. */
     fun startBundleEdit(tabId: String) {
-        val tab = current().tab(tabId)?.takeIf { it.format == FileFormat.Bundle } ?: return
+        val tab = current().tab(tabId) ?: return
         viewModelScope.launch {
-            val items = try {
-                withContext(Dispatchers.IO) { Bundles.read(tab.uri) }
-            } catch (_: Exception) {
-                return@launch
+            val items = if (tab.format == FileFormat.Bundle) {
+                try {
+                    withContext(Dispatchers.IO) { Bundles.read(tab.uri) }
+                } catch (_: Exception) {
+                    return@launch
+                }
+            } else {
+                listOf(BundleItem(UUID.randomUUID().toString(), tab.uri, tab.name, tab.format, tab.isInternalCopy))
             }
             _bundleEdit.value = BundleEdit(tabId, tab.name, items, items, tab.name)
         }
@@ -408,7 +413,8 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
     /**
      * Closes the editor and applies what changed: the list is saved, handwriting and the reading
      * position move with their files' pages (strokes on a file taken out go with it), and files no
-     * longer used anywhere are freed. The viewer then opens the bundle as it now is.
+     * longer used anywhere are freed. The viewer then opens the bundle as it now is. A tab of one
+     * file whose list changed becomes a bundle tab, its file the bundle's first (기획서 5.1).
      */
     fun finishBundleEdit() {
         val edit = _bundleEdit.value ?: return
@@ -416,18 +422,26 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
         if (edit.items == edit.original && edit.name == edit.originalName) return
         viewModelScope.launch {
             val tab = current().tab(edit.tabId) ?: return@launch
+            val becomesBundle = tab.format != FileFormat.Bundle && edit.items != edit.original
+            var bundleUri = tab.uri
             if (edit.items != edit.original) {
                 val counts = pageCounts(tab, edit)
                 val move = BundlePages.mover(edit.original.map { it.id to (counts[it.id] ?: 1) }, edit.items.map { it.id to (counts[it.id] ?: 1) })
-                withContext(Dispatchers.IO) { Bundles.write(tab.uri, edit.items) }
+                if (becomesBundle) bundleUri = withContext(Dispatchers.IO) { Bundles.create(app, edit.items) }
+                else withContext(Dispatchers.IO) { Bundles.write(tab.uri, edit.items) }
                 ink.movePages(tab.id, move)
                 viewerStates[tab.id]?.let { state ->
                     viewerStates[tab.id] = move(state.page)?.let { state.copy(page = it) } ?: ViewerState()
                 }
             }
             val now = current().tab(edit.tabId) ?: return@launch
+            val name = if (becomesBundle && edit.name == edit.originalName) bundleName(edit.items.first().name, edit.items.size) else edit.name
+            val changed = if (becomesBundle) {
+                // The file itself now belongs to the bundle's list.
+                now.copy(uri = bundleUri, format = FileFormat.Bundle, isInternalCopy = true)
+            } else now
             // A new revision makes the viewer open the bundle again as it now is.
-            commit(current().replaceTab(now.copy(name = edit.name, revision = now.revision + 1)))
+            commit(current().replaceTab(changed.copy(name = name, revision = now.revision + 1)))
             val gone = edit.original.filter { old -> edit.items.none { it.id == old.id } }
             if (gone.isNotEmpty()) app.enqueueWrite {
                 val used = FileAccess.filesInUse(repository.tabFiles())
@@ -436,11 +450,11 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** Pages of every file before and after [edit]: from the open bundle, and by opening files added. */
+    /** Pages of every file before and after [edit]: from the open bundle, and by opening the others. */
     private suspend fun pageCounts(tab: DocTab, edit: BundleEdit): Map<String, Int> {
         val counts = mutableMapOf<String, Int>()
-        val open = openDocuments[tab.id] as? BundleDocument
-        counts += open?.pageCounts()
+        // A tab of one file isn't a bundle yet: its file is opened below like one added.
+        if (tab.format == FileFormat.Bundle) counts += (openDocuments[tab.id] as? BundleDocument)?.pageCounts()
             ?: try {
                 val reopened = BundleDocument.open(app, tab.uri)
                 try { reopened.pageCounts() } finally { reopened.close() }

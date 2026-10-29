@@ -51,7 +51,6 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.input.ImeAction
-import com.tabpdf.doc.FileFormat
 import com.tabpdf.doc.TextSearch
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
@@ -409,10 +408,10 @@ private fun ContextPager(
                 onInkMode = { viewModel.setInkMode(!inkMode) },
                 menu = { dismiss ->
                     val canJump = session.currentTab?.let { viewModel.pageCount(it.id) } != null
-                    val bundle = session.currentTab?.takeIf { it.format == FileFormat.Bundle }
                     ViewerMenu(
                         canJump, open = { dialog = it }, onSearch = { searchOpen = true }, onSettings = onShowSettings,
-                        onEditBundle = bundle?.let { { viewModel.startBundleEdit(it.id) } },
+                        // A tab of one file too: adding files makes it a bundle.
+                        onEditBundle = session.currentTab?.let { { viewModel.startBundleEdit(it.id) } },
                         canExport = session.currentTabId?.let(viewModel::canExport) == true,
                         onContents = { tocOpen = true },
                         dismiss = dismiss,
@@ -645,7 +644,7 @@ private fun SearchBar(
     }
 }
 
-/** ⋮ menu items: find, go to page, editing a bundle (when one is shown), settings (기획서 4.1, 5.1, 5.6). */
+/** ⋮ menu items: find, go to page, editing the tab's bundle (or making one), settings (기획서 4.1, 5.1, 5.6). */
 @Composable
 private fun ViewerMenu(
     canJump: Boolean,

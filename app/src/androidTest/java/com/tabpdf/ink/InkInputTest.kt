@@ -170,6 +170,28 @@ class InkInputTest {
         assertStrokes("the eraser goes on to the next page too", 0)
     }
 
+    @Test
+    fun aTabOfOneFileBecomesABundleKeepingItsInk() {
+        drag(0.2f, 0.5f, 0.8f, 0.5f, MotionEvent.TOOL_TYPE_STYLUS)
+        assertStrokes("drawn on the file", 1)
+        val original = onMain { vm.state.value!!.currentTab!! }
+        val second = File(context.filesDir, "added.txt").apply { writeText("added") }
+
+        onMain { vm.startBundleEdit(original.id) }
+        waitUntil("the editor is open") { onMain { vm.bundleEdit.value != null } }
+        onMain {
+            vm.addBundleItems(listOf(com.tabpdf.tabs.OpenedFile(android.net.Uri.fromFile(second), "added.txt", false, com.tabpdf.doc.FileFormat.Text)))
+            vm.finishBundleEdit()
+        }
+        waitUntil("the tab is a bundle") { onMain { vm.state.value!!.currentTab!!.format == com.tabpdf.doc.FileFormat.Bundle } }
+
+        val tab = onMain { vm.state.value!!.currentTab!! }
+        assertEquals("the same tab", original.id, tab.id)
+        assertEquals("ink 외 1개", tab.name)
+        assertEquals(listOf(original.uri, android.net.Uri.fromFile(second)), com.tabpdf.doc.Bundles.read(tab.uri).map { it.uri })
+        assertEquals("the line stays on the file's page", listOf(0), onMain { vm.ink.strokes(tabId).value.map { it.page } })
+    }
+
     private fun hover(x: Float, y: Float, vararg buttons: Int) {
         val start = SystemClock.uptimeMillis()
         var step = 0
