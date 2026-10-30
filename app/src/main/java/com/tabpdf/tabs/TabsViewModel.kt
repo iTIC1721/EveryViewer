@@ -111,6 +111,8 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
         // Groups are never empty (as in Chrome), and something should be on screen if any tab is open.
         val cleaned = saved.copy(top = saved.top.filter { it !is TabGroup || saved.tabsOf(it.id).isNotEmpty() })
             .withValidCurrent(null, 0)
+        // Before any tab is shown (and so opened): which ones ended the app last time.
+        withContext(Dispatchers.IO) { OpenGuard.load(app) }
         _state.value = cleaned
         if (cleaned != saved) commit(cleaned)
         app.enqueueWrite {
@@ -128,6 +130,15 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
         }
         ink.deleteOrphans()
     }
+
+    /** Tabs whose file was being opened when the app last ended: opened only when asked ([OpenGuard]). */
+    val heldBack: StateFlow<Set<String>> = OpenGuard.held
+
+    fun reopen(tabId: String) = OpenGuard.release(tabId)
+
+    /** Tab [tabId]'s file is about to be opened, or is open and drawn ([OpenGuard]). */
+    suspend fun opening(tabId: String) = OpenGuard.begin(app, tabId)
+    suspend fun opened(tabId: String) = OpenGuard.end(app, tabId)
 
     private fun current(): SessionState = _state.value!!
 

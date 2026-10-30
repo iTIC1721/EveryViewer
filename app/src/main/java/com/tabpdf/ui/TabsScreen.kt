@@ -335,6 +335,7 @@ private fun ContextPager(
                 top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + TOP_BAR_HEIGHT + 8.dp,
                 bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + 8.dp,
             )
+            val heldBack by viewModel.heldBack.collectAsState()
             HorizontalPager(
                 state = pagerState,
                 key = { tabs[it].id },
@@ -378,6 +379,10 @@ private fun ContextPager(
                     searchIndex = searchIndex,
                     onSearchResults = { searchCount = it },
                     active = tab.id == session.currentTabId,
+                    heldBack = tab.id in heldBack,
+                    onReopen = { viewModel.reopen(tab.id) },
+                    onOpening = { viewModel.opening(tab.id) },
+                    onOpened = { viewModel.opened(tab.id) },
                 )
             }
         }

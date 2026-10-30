@@ -129,6 +129,7 @@ import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.MutableStateFlow
 import androidx.compose.runtime.collectAsState
 import kotlinx.coroutines.launch
@@ -165,6 +166,9 @@ private const val MAX_RENDER_PIXELS = 8_000_000f
 
 /** Shorter documents scroll fine by hand; no fast-scroll handle for them. */
 private const val FAST_SCROLL_MIN_PAGES = 8
+
+/** How long after its first page is drawn a file still counts as being opened (OpenGuard). */
+private const val DRAWN_SETTLE_MS = 1_000L
 
 /**
  * Vertically scrolling, zoomable view of one file, whatever its format (기획서 5.7).
@@ -205,6 +209,12 @@ fun DocumentViewer(
     onSearchResults: (Int?) -> Unit = {},
     /** This is the tab being looked at (not a neighbour kept ready for swiping). */
     active: Boolean = true,
+    /** The app ended while opening this file last time: it waits for [onReopen] ([com.tabpdf.tabs.OpenGuard]). */
+    heldBack: Boolean = false,
+    onReopen: () -> Unit = {},
+    /** Told before the file is opened, and once its first page is drawn or it failed to open ([com.tabpdf.tabs.OpenGuard]). */
+    onOpening: suspend () -> Unit = {},
+    onOpened: suspend () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -212,32 +222,61 @@ fun DocumentViewer(
     var error by remember { mutableStateOf<Exception?>(null) }
     val currentOnDocumentOpened by rememberUpdatedState(onDocumentOpened)
     val currentOnDocument by rememberUpdatedState(onDocument)
+    val currentOnOpening by rememberUpdatedState(onOpening)
+    val currentOnOpened by rememberUpdatedState(onOpened)
 
     // Raised when a password is typed for a locked PDF: open it again with that.
     var attempt by remember { mutableStateOf(0) }
+    // Set when a page of the open document has been drawn.
+    val drawn = remember { MutableStateFlow(false) }
 
-    LaunchedEffect(uri, revision, format, attempt) {
+    LaunchedEffect(uri, revision, format, attempt, heldBack) {
         error = null
-        val doc = try {
-            // Not cancellable, so a document opened just as the page leaves is still closed below.
-            withContext(NonCancellable) { Documents.open(context, uri, name, format) }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            error = e
+        if (heldBack) {
+            error = DocumentOpenException(DocumentOpenException.Reason.Interrupted)
             return@LaunchedEffect
         }
+        drawn.value = false
+        // Marked until the page read last is drawn: if the app ends before that (a crash in the
+        // system's code, nothing here can catch), the next start doesn't open it by itself again.
+        currentOnOpening()
+        var marked = true
+        suspend fun unmark() {
+            if (!marked) return
+            marked = false
+            withContext(NonCancellable) { currentOnOpened() }
+        }
         try {
-            // A document still being laid out is shown once it reaches the page last read.
-            doc.awaitPages(initialState.page + 1)
-            document = doc
-            currentOnDocument(doc)
-            currentOnDocumentOpened(doc.pageCount)
-            doc.progress?.collect { currentOnDocumentOpened(it.pages) } ?: awaitCancellation()
+            val doc = try {
+                // Not cancellable, so a document opened just as the page leaves is still closed below.
+                withContext(NonCancellable) { Documents.open(context, uri, name, format) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                error = e
+                return@LaunchedEffect
+            }
+            try {
+                // A document still being laid out is shown once it reaches the page last read.
+                doc.awaitPages(initialState.page + 1)
+                document = doc
+                currentOnDocument(doc)
+                currentOnDocumentOpened(doc.pageCount)
+                launch {
+                    drawn.first { it }
+                    // The pages beside it are drawn just after.
+                    delay(DRAWN_SETTLE_MS)
+                    unmark()
+                }
+                doc.progress?.collect { currentOnDocumentOpened(it.pages) } ?: awaitCancellation()
+            } finally {
+                document = null
+                currentOnDocument(null)
+                doc.close()
+            }
         } finally {
-            document = null
-            currentOnDocument(null)
-            doc.close()
+            // Opened and drawn, failed without ending the app, or let go of: no longer a risk.
+            unmark()
         }
     }
 
@@ -262,7 +301,7 @@ fun DocumentViewer(
         val failure = error
         when {
             failure != null -> OpenFailure(
-                failure, onRelocate, onClose,
+                failure, onRelocate, onClose, onReopen,
                 pdf = format == FileFormat.Pdf,
                 onPassword = if (format == FileFormat.Pdf && PdfDocument.takesPasswords) {
                     { password ->
@@ -288,6 +327,7 @@ fun DocumentViewer(
                 searchQuery = searchQuery,
                 searchIndex = searchIndex,
                 onSearchResults = onSearchResults,
+                onPageDrawn = { drawn.value = true },
             )
         }
     }
@@ -309,6 +349,7 @@ private fun DocumentPages(
     searchQuery: String?,
     searchIndex: Int,
     onSearchResults: (Int?) -> Unit,
+    onPageDrawn: () -> Unit,
 ) {
     val density = LocalDensity.current
     // Pages laid out so far: a document laid out in the background grows (기획서 5.7).
@@ -698,6 +739,7 @@ private fun DocumentPages(
                     selectionColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f),
                     currentMatch = searchIndex,
                     edge = pageEdge,
+                    onDrawn = onPageDrawn,
                 )
             }
         }
@@ -805,6 +847,8 @@ private fun PageImage(
     selectionColor: Color,
     /** Colour of the page's edge and the shade under it; null draws neither. */
     edge: Color?,
+    /** Told each time the page has been drawn (or found not drawable). */
+    onDrawn: () -> Unit,
 ) {
     var bitmap by remember { mutableStateOf<Bitmap?>(null) }
     LaunchedEffect(renderWidth) {
@@ -812,6 +856,7 @@ private fun PageImage(
         if (bitmap != null) delay(150)
         // A page that can't be drawn stays blank; the rest of the document is still readable.
         guarded(null) { document.renderPage(index, renderWidth) }?.takeIf { it.allocationByteCount <= MAX_DRAWN_BYTES }?.let { bitmap = it }
+        onDrawn()
     }
     val image = remember(bitmap) { bitmap?.asImageBitmap() }
     // The first drawing fades in over the blank page; sharper redraws replace it at once.
@@ -868,13 +913,15 @@ private fun IntSize.toSize() = androidx.compose.ui.geometry.Size(width.toFloat()
 
 /**
  * Missing or unreadable file: say so and offer to find it again or close the tab (기획서 5.3).
- * A locked PDF asks for its password where the device can take one ([onPassword]).
+ * A locked PDF asks for its password where the device can take one ([onPassword]); one that ended
+ * the app while opening last time can be opened again ([onReopen]).
  */
 @Composable
 private fun OpenFailure(
     error: Exception,
     onRelocate: () -> Unit,
     onClose: () -> Unit,
+    onReopen: () -> Unit,
     pdf: Boolean,
     onPassword: ((String) -> Unit)?,
     modifier: Modifier,
@@ -895,6 +942,7 @@ private fun OpenFailure(
         reason == DocumentOpenException.Reason.Unsupported -> "이 형식은 열 수 없습니다" to "아직 지원하지 않는 파일 형식입니다."
         reason == DocumentOpenException.Reason.TooLarge -> "파일이 너무 큽니다" to "이 기기에서 열 수 있는 크기를 넘습니다."
         reason == DocumentOpenException.Reason.PageTooTall -> "페이지가 너무 깁니다" to "폭에 비해 세로로 아주 긴 페이지는 열 수 없습니다."
+        reason == DocumentOpenException.Reason.Interrupted -> "이 파일을 열다가 앱이 종료되었습니다" to "다시 열면 또 종료될 수 있습니다."
         else -> "파일을 열 수 없습니다" to "손상되었거나 지원하지 않는 파일입니다."
     }
     Column(modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -926,6 +974,7 @@ private fun OpenFailure(
             // Finding the file again only helps when it went missing.
             if (missing) Button(onClick = onRelocate) { Text("다시 찾기") }
             if (asksPassword) Button(onClick = submit, enabled = password.isNotEmpty()) { Text("열기") }
+            if (reason == DocumentOpenException.Reason.Interrupted) Button(onClick = onReopen) { Text("다시 열기") }
         }
     }
 }
