@@ -53,6 +53,7 @@ adb shell am start -n io.github.itic1721.everyviewer/com.tabpdf.MainActivity --e
 - 파일 없이 글만 공유하는 경우: `adb shell am start -a android.intent.action.SEND -t text/plain --es android.intent.extra.TEXT "'공유할 글'" -n io.github.itic1721.everyviewer/com.tabpdf.MainActivity`
 - 테스트 파일은 경로가 짧은 곳(예: `%TEMP%\evtest`)에서 만든다. 세션 임시 폴더는 경로가 길어 Windows 프로그램(python 등)이 실행되지 않는다.
 - 필기: `adb shell input stylus ...`는 펜(TOOL_TYPE_STYLUS)으로 인식되지 않는다. 펜·측면 버튼·여러 손가락 규칙은 계측 테스트 `InkInputTest`(UiAutomation으로 이벤트 주입)로 확인한다. 이 테스트는 에뮬레이터의 탭·필기·files/·설정을 지운다. 화면이 꺼진 에뮬레이터(막 부팅했거나 잠든 것)에서는 획이 하나도 들어가지 않아 모두 실패하므로 먼저 `adb shell input keyevent KEYCODE_WAKEUP; adb shell svc power stayon true`. 펜 지연·손바닥 무시·S펜 버튼은 실기기로 확인.
+- docx 쪽 맞춤: 계측 테스트 `WordFitTest`가 `androidTest/assets/word-fit/`의 문서(Word로 만든 표)를 Word의 PDF 위치(`word.txt`)와 비교한다. 문서를 새로 만들려면 `powershell -File tools/word-fit.ps1` 후 `python tools/word-fit.py <출력 폴더>` (작성자 이름을 지워 자산으로 복사). 글꼴 치수를 바꾸면 `python tools/office-font-metrics.py`로 다시 만든다(이 PC에 설치된 글꼴 기준).
 - hwp: 한글로 같은 문서를 hwpx로도 저장해 두 파일을 RenderDump로 뽑으면 쪽마다 같아야 한다 (같은 모델로 옮기므로).
 - docx·hwpx 조판 비교: 원본을 Word·한글로 PDF로 만든 뒤(이 PC의 Office·한글 COM 자동화), 같은 파일을 `files/render-in/`에 복사하고 `adb shell am instrument -w -e class com.tabpdf.doc.RenderDump io.github.itic1721.everyviewer.test/androidx.test.runner.AndroidJUnitRunner`(앱이 지워지지 않게 단독 실행)로 `files/render-out/`에 쪽 PNG를 뽑아 나란히 본다. 한글의 PDF 내보내기는 전체가 약 16pt 어긋나므로 위치는 hwpx 안의 `Preview/PrvImage.png`로 확인한다. pptx는 PowerPoint COM의 `Slide.Export(경로, "PNG", 폭, 높이)`로 슬라이드마다 그림을 뽑아 비교한다. 사용자 견본 파일은 저장소에 넣지 않는다.
 - 에뮬레이터는 두 개다: C 드라이브 SDK의 `Pixel_4_XL_API_30`(Android 11)과, C 드라이브 용량 때문에 D 드라이브에 둔 `Pixel_6_API_35`(Android 15; SDK `D:\Android\sdk`, AVD `D:\Android\avd`, `platform-tools`는 C SDK로 연결). Android 15 실행:
@@ -77,6 +78,8 @@ app/src/main/java/com/tabpdf/
                          파일 묶음(BundleDocument): 여러 문서의 쪽을 이어 붙임, 목록은 files/bundles/*.json(Bundles)
   doc/office/            docx·hwpx·pptx: 안전한 zip·XML 읽기, 형식별 해석기(DocxReader, HwpxReader, hwp는 hwplib → HwpReader) → 공통 모델(OfficeModel)
                          → 용지 단위 조판(OfficeLayout: 문단·줄 간격·표 병합·테두리·쪽 넘김) → SheetDocument.
+                         docx는 Word의 글꼴 치수(OfficeFonts: 폭·줄 높이·커닝, resources/…/office-fonts.bin)로 자간을 맞춰
+                         Word와 같은 자리에서 줄·쪽이 끝나게 한다. 표는 tools/office-font-metrics.py가 Windows 글꼴에서 만든다
                          pptx: PptxReader(레이아웃·마스터 상속, 테마 색) → 슬라이드 모델(SlideModel) → SlideDocument
                          (도형·연결선·그림을 슬라이드 위치에 그림, 글상자·표는 OfficeLayout.box로 조판, TableStyles: 기본 표 스타일)
                          xlsx: XlsxReader(시트는 XmlPullParser로 흘려 읽음, 스타일·테마 색) → Workbook → WorkbookDocument

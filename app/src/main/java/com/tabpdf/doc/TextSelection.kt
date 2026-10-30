@@ -124,7 +124,7 @@ fun collectLayoutText(layout: Layout, sink: TextSink, dx: Float, dy: Float) {
         for (i in start until end) {
             val x2 = if (i + 1 < end) layout.getPrimaryHorizontal(i + 1) else layout.getLineRight(line)
             val c = when (val raw = text[i]) {
-                '⁠', '­', '￼' -> null
+                '⁠', '­', '​', '￼' -> null
                 ' ', ' ' -> ' '
                 else -> raw
             }

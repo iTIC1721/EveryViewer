@@ -47,6 +47,12 @@ abstract class FlowBlock {
     /** Gives [sink] the block's characters in reading order, with boxes in block coordinates. */
     open fun collectText(sink: TextSink) = Unit
 
+    /** Where the program that saved the document last ended its pages, in block coordinates, ascending. */
+    open val pageEnds: FloatArray get() = NO_BREAKS
+
+    /** How much of its top is drawn again at the top of each page it goes on to (a table's heading rows). */
+    open val repeatedTop: Float get() = 0f
+
     private companion object {
         val NO_BREAKS = FloatArray(0)
     }
@@ -59,7 +65,7 @@ class SpaceBlock(override val height: Float) : FlowBlock() {
 
 /** A [StaticLayout]; pages may end between any two of its lines. */
 open class TextBlock(val layout: StaticLayout) : FlowBlock() {
-    override val height: Float = layout.height.toFloat()
+    override open val height: Float get() = layout.height.toFloat()
 
     override val breaks: FloatArray = FloatArray((layout.lineCount - 1).coerceAtLeast(0)) { layout.getLineTop(it + 1).toFloat() }
 
@@ -148,6 +154,25 @@ class FlowBuilder {
 
     fun pageBreaks(): FloatArray = forced.toFloatArray()
 
+    /** Where the saving program ended its pages ([FlowBlock.pageEnds]), in flow positions. */
+    fun pageEnds(): FloatArray = placed.flatMap { p -> p.block.pageEnds.map { p.y + it } }.distinct().sorted().toFloatArray()
+
+    /** The block whose top repeats on a page starting at [y] inside it, if any. */
+    fun repeatAt(y: Float): Placed? = placed.firstOrNull { it.block.repeatedTop > 0f && y > it.y + it.block.repeatedTop - 0.5f && y < it.bottom - 0.5f }
+
+    /** Where the last block ends: below it there is only space. */
+    val contentEnd: Float get() = placed.maxOfOrNull { it.bottom } ?: 0f
+
+    /**
+     * Where a page starting at [y] has its first content: [y] itself when a block is cut there,
+     * else the next block's top. Space left at the bottom of a page (a paragraph's space after)
+     * isn't carried over to the next (Word, Hangul).
+     */
+    fun nextContent(y: Float): Float {
+        if (placed.any { y > it.y + 0.5f && y < it.bottom - 0.5f }) return y
+        return placed.filter { it.y >= y - 0.5f }.minOfOrNull { it.y } ?: y
+    }
+
     /**
      * The finished document, cut into pages of at most [maxPageHeight] at the nearest place a
      * page may end: between blocks or between lines.
@@ -166,19 +191,36 @@ class FlowBuilder {
  * allowed break no lower than [maxPage] below its top, preferring one that keeps it at least half
  * full; content with no break in reach is cut at [maxPage].
  */
-fun paginate(total: Float, breaks: FloatArray, maxPage: Float, forced: FloatArray = FloatArray(0)): FloatArray {
+fun paginate(
+    total: Float,
+    breaks: FloatArray,
+    maxPage: Float,
+    forced: FloatArray = FloatArray(0),
+    /** Where a page that follows a break at a position starts (space skipped); null to start right there. */
+    nextStart: ((Float) -> Float)? = null,
+    /** How much room a page starting at a position loses to repeated heading rows. */
+    lead: ((Float) -> Float)? = null,
+    /** Where the program that saved the document ended its pages; followed when near where these would end. */
+    savedEnds: FloatArray = FloatArray(0),
+    /** How far a page may run past [maxPage] to end where the saving program ended it. */
+    overrun: Float = 0f,
+): FloatArray {
     val result = mutableListOf(0f)
     var top = 0f
     while (true) {
-        val limit = top + maxPage
+        val limit = top + (maxPage - (lead?.invoke(top) ?: 0f)).coerceAtLeast(maxPage / 2)
         val pageBreak = forced.firstOrNull { it > top + 0.5f && it <= limit && it < total }
-        if (pageBreak == null && total - top <= maxPage) break
-        val end = pageBreak
+        // The saving program's page end, unless it is far from this layout's (an old or foreign mark).
+        val saved = savedEnds.firstOrNull { it > top + 0.5f }
+            ?.takeIf { it < total && it <= limit + overrun && it >= top + (limit - top) / 2 && (pageBreak == null || it <= pageBreak) }
+        if (pageBreak == null && saved == null && total <= limit) break
+        val end = saved ?: pageBreak
             ?: lastBreakIn(breaks, top + maxPage / 2, limit)
             ?: lastBreakIn(breaks, top, limit)
             ?: limit
-        result += end
-        top = end
+        // The space skipped belongs to the page before (drawn blank, past its bottom margin).
+        top = nextStart?.invoke(end)?.coerceIn(end, total) ?: end
+        result += top
     }
     result += total.coerceAtLeast(top + 1f) // even empty content is one (short) page
     return result.toFloatArray()
@@ -366,8 +408,11 @@ fun pageOf(boundaries: FloatArray, y: Float): Int {
 }
 
 /** Paint for flow text. Linear (unhinted) metrics, since every page is drawn scaled. */
+/** Text is laid out at a small size (a sheet is [FLOW_WIDTH] wide), so its widths must not be rounded. */
+const val FLOW_PAINT_FLAGS = Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG or Paint.LINEAR_TEXT_FLAG
+
 fun flowPaint(size: Float, typeface: Typeface = Typeface.DEFAULT, color: Int = Color.BLACK) =
-    TextPaint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG or Paint.LINEAR_TEXT_FLAG).apply {
+    TextPaint(FLOW_PAINT_FLAGS).apply {
         textSize = size
         this.typeface = typeface
         this.color = color

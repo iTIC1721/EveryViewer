@@ -20,21 +20,6 @@ private const val EMU = 1f / 12700f // points per EMU
 /** Word's built-in heading style names ("heading 1" … "heading 9"). */
 private val HEADING_STYLE = Regex("heading ([1-9])")
 
-/**
- * Word's "single" line pitch relative to the font size. It comes from the font's own metrics, so
- * it differs a lot between fonts: Malgun Gothic (Korean Word's default) is measured at 1.73.
- */
-private fun singleLine(font: String?): Float {
-    val n = font?.lowercase() ?: return 1.2f
-    return when {
-        "malgun" in n || "맑은" in n -> 1.73f
-        listOf("굴림", "gulim", "돋움", "dotum", "바탕", "batang", "궁서", "gungsuh").any { it in n } -> 1.15f
-        // Other Korean fonts are usually missing on the reader's PC and replaced with Malgun Gothic.
-        n.any { it.code > 0x2E80 } -> 1.73f
-        else -> 1.2f
-    }
-}
-
 /** Paragraph properties; null means "not set here", so layers can be merged. */
 private data class PProps(
     val align: Align? = null,
@@ -49,11 +34,13 @@ private data class PProps(
     val ilvl: Int? = null,
     val pageBreakBefore: Boolean? = null,
     val keepWords: Boolean? = null,
+    val contextual: Boolean? = null,
 ) {
     infix fun over(base: PProps) = PProps(
         align ?: base.align, left ?: base.left, right ?: base.right, firstLine ?: base.firstLine,
         before ?: base.before, after ?: base.after, line ?: base.line, lineRule ?: base.lineRule,
         numId ?: base.numId, ilvl ?: base.ilvl, pageBreakBefore ?: base.pageBreakBefore, keepWords ?: base.keepWords,
+        contextual ?: base.contextual,
     )
 }
 
@@ -71,13 +58,20 @@ private data class RProps(
     val spacing: Float? = null,
     val vertAlign: String? = null,
     val hidden: Boolean? = null,
-    val fontName: String? = null,
+    /** Typeface of Latin letters (w:ascii) and of Hangul and Han (w:eastAsia). */
+    val latinFont: String? = null,
+    val eastAsiaFont: String? = null,
+    /** w:hint="eastAsia": letters both scripts share (quotes, dashes) take the East Asian typeface. */
+    val eastAsiaHint: Boolean? = null,
+    /** Kern text from this size up (points). */
+    val kern: Float? = null,
 ) {
     infix fun over(base: RProps) = RProps(
         size ?: base.size, bold ?: base.bold, italic ?: base.italic, underline ?: base.underline,
         strike ?: base.strike, color ?: base.color, background ?: base.background, font ?: base.font,
         scaleX ?: base.scaleX, spacing ?: base.spacing, vertAlign ?: base.vertAlign, hidden ?: base.hidden,
-        fontName ?: base.fontName,
+        latinFont ?: base.latinFont, eastAsiaFont ?: base.eastAsiaFont, eastAsiaHint ?: base.eastAsiaHint,
+        kern ?: base.kern,
     )
 
     fun toStyle(): TextStyle {
@@ -95,6 +89,10 @@ private data class RProps(
             letterSpacing = (spacing ?: 0f) / size,
             superscript = vertAlign == "superscript",
             subscript = vertAlign == "subscript",
+            latinFont = latinFont,
+            eastAsiaFont = eastAsiaFont,
+            eastAsiaHint = eastAsiaHint == true,
+            kerning = kern != null && kern > 0f && size >= kern,
         )
     }
 }
@@ -157,16 +155,21 @@ private class Docx(private val parts: ZipParts) {
         val docRels = rels
         val blocks = blocks(body)
 
-        fun headerFooter(kind: String): List<OfficeBlock> {
+        fun headerFooter(kind: String, type: String = "default"): List<OfficeBlock>? {
             val refs = section?.all("w:${kind}Reference").orEmpty()
-            val ref = refs.firstOrNull { it.attr("w:type") == "default" } ?: refs.firstOrNull() ?: return emptyList()
-            val path = docRels[ref.attr("r:id")]?.first ?: return emptyList()
-            val xml = parts.xml(path) ?: return emptyList()
+            val ref = refs.firstOrNull { it.attr("w:type") == type }
+                ?: (if (type == "default") refs.firstOrNull { it.attr("w:type") == null } else null) ?: return null
+            val path = docRels[ref.attr("r:id")]?.first ?: return null
+            val xml = parts.xml(path) ?: return null
             rels = relsOf(path)
             return blocks(xml).also { rels = docRels }
         }
-        val header = headerFooter("header")
-        val footer = headerFooter("footer")
+        val header = headerFooter("header").orEmpty()
+        val footer = headerFooter("footer").orEmpty()
+        // "Different first page": the first page has its own, or none if the file gives none.
+        val firstPage = toggle(section?.child("w:titlePg")) == true
+        val firstHeader = if (firstPage) headerFooter("header", "first").orEmpty() else null
+        val firstFooter = if (firstPage) headerFooter("footer", "first").orEmpty() else null
 
         val size = section?.child("w:pgSz")
         val margin = section?.child("w:pgMar")
@@ -186,7 +189,7 @@ private class Docx(private val parts: ZipParts) {
             headerTop = twips(margin, "w:header", 36f),
             footerBottom = height - twips(margin, "w:footer", 36f),
         )
-        return OfficeDocument(page, blocks, header, footer)
+        return OfficeDocument(page, blocks, header, footer, firstHeader, firstFooter)
     }
 
     // ---- Blocks ----
@@ -225,8 +228,9 @@ private class Docx(private val parts: ZipParts) {
         val ilvl = direct.ilvl ?: styleProps.ilvl ?: 0
         val level = numId?.let { level(it, ilvl) }
         val levelP = level?.child("w:pPr")?.let(::pProps) ?: PProps()
-        val props = direct over levelP over styleProps over defaultP
-        val paragraphR = styleR(styleId) over defaultR
+        // A table's style comes between the document's defaults and the paragraph's style.
+        val props = direct over levelP over styleProps over styleP(tableStyle) over defaultP
+        val paragraphR = styleR(styleId) over styleR(tableStyle) over defaultR
         val markR = (pPr?.child("w:rPr")?.let(::rProps) ?: RProps()) over paragraphR
 
         val segments = mutableListOf(mutableListOf<Run>())
@@ -235,19 +239,10 @@ private class Docx(private val parts: ZipParts) {
 
         val label = level?.let { label(numId, ilvl, it, (level.child("w:rPr")?.let(::rProps) ?: RProps()) over markR) }
         val line = props.line
-        // The line pitch follows the font of the paragraph's first run.
-        val firstRun = p.findAll("w:r").firstOrNull { it.child("w:t") != null }
-        val font = (firstRun?.child("w:rPr")?.let { rPr -> rProps(rPr) over styleR(rPr.child("w:rStyle")?.attr("w:val")) } ?: RProps())
-            .over(markR).fontName
         val spacing = when (props.lineRule) {
             "exact" -> LineSpacing.Exactly((line ?: 240f) * TWIP)
             "atLeast" -> LineSpacing.AtLeast((line ?: 240f) * TWIP)
-            else -> singleLine(font).let { single ->
-                // Measured on Word's own output: the baseline sits about 0.72 of a single line down,
-                // and unlike Hangul, the space under the last line of a cell counts.
-                val pitch = (line ?: 240f) / 240f * single
-                LineSpacing.Multiple(pitch, baseline = 0.72f * single, textHeight = pitch)
-            }
+            else -> LineSpacing.Single((line ?: 240f) / 240f)
         }
         return segments.mapIndexed { i, runs ->
             Paragraph(
@@ -261,6 +256,8 @@ private class Docx(private val parts: ZipParts) {
                 lineSpacing = spacing,
                 pageBreakBefore = if (i == 0) props.pageBreakBefore == true else true,
                 keepWords = props.keepWords ?: true,
+                styleKey = styleId,
+                contextualSpacing = props.contextual == true,
                 label = if (i == 0) label else null,
                 markStyle = markR.toStyle(),
                 outlineLevel = if (i == 0) outlineLevel(pPr, styleId) else null,
@@ -315,6 +312,10 @@ private class Docx(private val parts: ZipParts) {
                 text.append('\n')
             }
             "w:cr" -> text.append('\n')
+            "w:lastRenderedPageBreak" -> {
+                flush()
+                add(Run.PageEnd)
+            }
             "w:noBreakHyphen" -> text.append('‑')
             "w:sym" -> text.append(symbol(c.attr("w:char")))
             "w:drawing" -> {
@@ -341,7 +342,26 @@ private class Docx(private val parts: ZipParts) {
         val blip = d.find("a:blip")?.attr("r:embed")
         if (blip == null || width <= 0f || height <= 0f) return Run.Unsupported(width.coerceAtLeast(40f), height.coerceAtLeast(20f))
         val bytes = rels[blip]?.takeIf { !it.second }?.first?.let { parts[it] }
-        return Run.Picture(bytes, width, height)
+        return Run.Picture(bytes, width, height, frame?.takeIf { it.name == "wp:anchor" }?.let(::floating))
+    }
+
+    /** An anchored picture that text doesn't wrap around; others are kept in the line. */
+    private fun floating(anchor: Element): Floating? {
+        if (anchor.child("wp:wrapNone") == null) return null
+        val h = anchor.child("wp:positionH")
+        val v = anchor.child("wp:positionV")
+        return Floating(
+            x = (h?.child("wp:posOffset")?.text?.trim()?.toFloatOrNull() ?: 0f) * EMU,
+            fromPage = h?.attr("relativeFrom") in setOf("page", "leftMargin", "insideMargin", "outsideMargin", "rightMargin"),
+            align = when (h?.child("wp:align")?.text?.trim()) {
+                "left", "inside" -> Align.Left
+                "center" -> Align.Center
+                "right", "outside" -> Align.Right
+                else -> null
+            },
+            y = (v?.child("wp:posOffset")?.text?.trim()?.toFloatOrNull() ?: 0f) * EMU,
+            behind = anchor.attr("behindDoc") == "1",
+        )
     }
 
     private fun symbol(code: String?): String {
@@ -397,9 +417,15 @@ private class Docx(private val parts: ZipParts) {
 
     // ---- Tables ----
 
+    /** The style of the table whose cell is being read, if any. */
+    private var tableStyle: String? = null
+
+    private val defaultTableStyle = styles.values.firstOrNull { it.attr("w:type") == "table" && it.attr("w:default") == "1" }?.attr("w:styleId")
+
     private fun table(t: Element): Table {
         val tblPr = t.child("w:tblPr")
-        val styleBorders = style(tblPr?.child("w:tblStyle")?.attr("w:val"))?.child("w:tblPr")?.child("w:tblBorders")
+        val styleId = tblPr?.child("w:tblStyle")?.attr("w:val") ?: defaultTableStyle
+        val styleBorders = style(styleId)?.child("w:tblPr")?.child("w:tblBorders")
         val borders = tblPr?.child("w:tblBorders")
         fun tableBorder(vararg names: String): Border? {
             for (n in names) {
@@ -434,6 +460,7 @@ private class Docx(private val parts: ZipParts) {
             rows += TableRow(
                 minHeight = (h?.attr("w:val")?.toFloatOrNull() ?: 0f) * TWIP,
                 exactHeight = h?.attr("w:hRule") == "exact",
+                repeats = toggle(trPr?.child("w:tblHeader")) == true,
             )
             var column = trPr?.child("w:gridBefore")?.attr("w:val")?.toIntOrNull() ?: 0
             for (tc in tr.all("w:tc") + tr.all("w:sdt").flatMap { it.child("w:sdtContent")?.all("w:tc").orEmpty() }) {
@@ -464,7 +491,11 @@ private class Docx(private val parts: ZipParts) {
                 column = b.column,
                 rowSpan = b.rowSpan,
                 columnSpan = b.span,
-                blocks = blocks(b.tc),
+                blocks = run {
+                    val outside = tableStyle
+                    tableStyle = styleId
+                    try { blocks(b.tc) } finally { tableStyle = outside }
+                },
                 fill = parseColor(tcPr?.child("w:shd")?.attr("w:fill")) ?: 0,
                 borders = Borders(
                     left = side(listOf("w:left", "w:start"), if (b.column == 0) outer.left else insideV),
@@ -495,6 +526,7 @@ private class Docx(private val parts: ZipParts) {
                 "right", "end" -> Align.Right
                 else -> Align.Left
             },
+            bordersInRows = true,
         )
     }
 
@@ -537,14 +569,15 @@ private class Docx(private val parts: ZipParts) {
             ilvl = num?.child("w:ilvl")?.attr("w:val")?.toIntOrNull(),
             pageBreakBefore = toggle(pPr.child("w:pageBreakBefore")),
             keepWords = pPr.child("w:wordWrap")?.let { toggle(it) },
+            contextual = toggle(pPr.child("w:contextualSpacing")),
         )
     }
 
     private fun rProps(rPr: Element): RProps {
         val fonts = rPr.child("w:rFonts")
         fun theme(attr: String) = fonts?.attr(attr)?.let { themeFonts[it] }?.takeIf { it.isNotEmpty() }
-        val fontName = fonts?.attr("w:eastAsia") ?: theme("w:eastAsiaTheme")
-            ?: fonts?.attr("w:ascii") ?: theme("w:asciiTheme") ?: fonts?.attr("w:hAnsi")
+        val latin = fonts?.attr("w:ascii") ?: theme("w:asciiTheme") ?: fonts?.attr("w:hAnsi") ?: theme("w:hAnsiTheme")
+        val eastAsia = fonts?.attr("w:eastAsia") ?: theme("w:eastAsiaTheme")
         val highlight = rPr.child("w:highlight")?.attr("w:val")?.let(::highlightColor)
         val shade = parseColor(rPr.child("w:shd")?.attr("w:fill"))?.takeIf { it != 0xFFFFFFFF.toInt() }
         return RProps(
@@ -555,12 +588,15 @@ private class Docx(private val parts: ZipParts) {
             strike = toggle(rPr.child("w:strike")) ?: toggle(rPr.child("w:dstrike")),
             color = rPr.child("w:color")?.attr("w:val")?.let { parseColor(it) ?: if (it == "auto") 0xFF000000.toInt() else null },
             background = highlight ?: shade,
-            font = fontName?.let(::fontKind),
+            font = (eastAsia ?: latin)?.let(::fontKind),
             scaleX = rPr.child("w:w")?.attr("w:val")?.toFloatOrNull()?.div(100f),
             spacing = rPr.child("w:spacing")?.attr("w:val")?.toFloatOrNull()?.times(TWIP),
             vertAlign = rPr.child("w:vertAlign")?.attr("w:val"),
             hidden = toggle(rPr.child("w:vanish")),
-            fontName = fontName,
+            latinFont = latin,
+            eastAsiaFont = eastAsia,
+            eastAsiaHint = fonts?.attr("w:hint")?.let { it == "eastAsia" },
+            kern = rPr.child("w:kern")?.attr("w:val")?.toFloatOrNull()?.div(2f),
         )
     }
 

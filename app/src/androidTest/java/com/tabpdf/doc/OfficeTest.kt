@@ -66,6 +66,29 @@ class OfficeTest {
         assertEquals(4, table.cells.size) // the continued merge is not a cell of its own
     }
 
+    /**
+     * A table's style sets its paragraphs between the document's defaults and their own style:
+     * Word's "Table Grid" takes away the defaults' space after each paragraph (a reader's form
+     * whose table ran onto the next page because every row was 8 pt too tall).
+     */
+    @Test
+    fun docxTableStyleSetsItsParagraphs() {
+        val doc = DocxReader.read(
+            zip(
+                "word/document.xml" to "<w:document $w><w:body>" +
+                    "<w:tbl><w:tblPr><w:tblStyle w:val=\"grid\"/></w:tblPr><w:tblGrid><w:gridCol w:w=\"4000\"/></w:tblGrid>" +
+                    "<w:tr><w:tc><w:p><w:r><w:t>in a cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>" +
+                    "<w:p><w:r><w:t>outside</w:t></w:r></w:p></w:body></w:document>",
+                "word/styles.xml" to "<w:styles $w><w:docDefaults><w:pPrDefault><w:pPr><w:spacing w:after=\"160\"/></w:pPr></w:pPrDefault></w:docDefaults>" +
+                    "<w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"normal\"><w:name w:val=\"Normal\"/></w:style>" +
+                    "<w:style w:type=\"table\" w:styleId=\"grid\"><w:pPr><w:spacing w:after=\"0\"/></w:pPr></w:style></w:styles>",
+            )
+        )
+        val cell = (doc.body[0] as Table).cells.single().blocks.single() as Paragraph
+        assertEquals(0f, cell.spaceAfter)
+        assertEquals(8f, (doc.body[1] as Paragraph).spaceAfter)
+    }
+
     @Test
     fun docxRunsStylesListsAndPageBreaks() {
         val doc = DocxReader.read(
@@ -160,6 +183,60 @@ class OfficeTest {
         assertTrue("one row of 120 lines goes over several pages", sheets.pageCount >= 3)
         for (page in 0 until sheets.pageCount) assertNotNull(sheets.renderPage(page, 300))
         sheets.close()
+    }
+
+    /** "Different first page" headers, and a logo floating at the header's right (Word's "behind text"). */
+    @Test
+    fun docxFirstPageHeaderAndFloatingPicture() {
+        val r = "xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\""
+        val wp = "xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing\""
+        val a = "xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\""
+        val logo = "<w:p><w:r><w:drawing><wp:anchor behindDoc=\"1\"><wp:positionH relativeFrom=\"column\"><wp:posOffset>4572000</wp:posOffset></wp:positionH>" +
+            "<wp:positionV relativeFrom=\"paragraph\"><wp:posOffset>-127000</wp:posOffset></wp:positionV><wp:extent cx=\"1270000\" cy=\"254000\"/><wp:wrapNone/>" +
+            "<a:graphic><a:blip r:embed=\"img\"/></a:graphic></wp:anchor></w:drawing></w:r></w:p>"
+        val doc = DocxReader.read(
+            zip(
+                "word/document.xml" to "<w:document $w $r><w:body><w:p><w:r><w:t>body</w:t></w:r></w:p><w:sectPr>" +
+                    "<w:headerReference w:type=\"default\" r:id=\"h1\"/><w:headerReference w:type=\"first\" r:id=\"h2\"/><w:titlePg/></w:sectPr></w:body></w:document>",
+                "word/_rels/document.xml.rels" to "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">" +
+                    "<Relationship Id=\"h1\" Target=\"header1.xml\"/><Relationship Id=\"h2\" Target=\"header2.xml\"/></Relationships>",
+                "word/header1.xml" to "<w:hdr $w $r $wp $a>$logo</w:hdr>",
+                "word/header2.xml" to "<w:hdr $w><w:p><w:r><w:t>first page</w:t></w:r></w:p></w:hdr>",
+            )
+        )
+        val picture = (doc.header.single() as Paragraph).runs.single() as Run.Picture
+        assertNotNull(picture.floating)
+        val floating = picture.floating!!
+        assertEquals(360f, floating.x, 0.01f) // 4572000 EMU
+        assertEquals(-10f, floating.y, 0.01f)
+        assertTrue(floating.behind)
+        assertEquals("first page", ((doc.firstHeader!!.single() as Paragraph).runs.single() as Run.Text).text)
+    }
+
+    /**
+     * Word's list paragraphs leave no space between themselves ("contextual spacing"), and a line
+     * break that ends a paragraph leaves an empty line under it.
+     */
+    @Test
+    fun docxContextualSpacingAndTrailingLineBreak() {
+        fun secondTop(first: String, contextual: Boolean): Float {
+            val style = "<w:style w:type=\"paragraph\" w:styleId=\"list\"><w:pPr><w:spacing w:after=\"400\"/>" +
+                (if (contextual) "<w:contextualSpacing/>" else "") + "</w:pPr></w:style>"
+            val doc = DocxReader.read(
+                zip(
+                    "word/document.xml" to "<w:document $w><w:body>" +
+                        "<w:p><w:pPr><w:pStyle w:val=\"list\"/></w:pPr>$first</w:p>" +
+                        "<w:p><w:pPr><w:pStyle w:val=\"list\"/></w:pPr><w:r><w:t>second</w:t></w:r></w:p></w:body></w:document>",
+                    "word/styles.xml" to "<w:styles $w>$style</w:styles>",
+                )
+            )
+            val sheets = OfficeLayout.layOut(doc)
+            return runBlocking { sheets.search("second").single().rects.first().top * 841.9f }
+        }
+        val plain = "<w:r><w:t>first</w:t></w:r>"
+        assertEquals(20f, secondTop(plain, contextual = false) - secondTop(plain, contextual = true), 0.5f)
+        val broken = "<w:r><w:t>first</w:t><w:br/></w:r>"
+        assertTrue("an empty line under the break", secondTop(broken, contextual = true) - secondTop(plain, contextual = true) > 10f)
     }
 
     @Test

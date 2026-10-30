@@ -20,6 +20,7 @@ import android.text.style.MetricAffectingSpan
 import android.text.style.ReplacementSpan
 import android.text.style.StrikethroughSpan
 import android.text.style.UnderlineSpan
+import com.tabpdf.doc.FLOW_PAINT_FLAGS
 import com.tabpdf.doc.FLOW_WIDTH
 import com.tabpdf.doc.FlowBlock
 import com.tabpdf.doc.FlowBuilder
@@ -35,7 +36,9 @@ import com.tabpdf.doc.TextBlock
 import com.tabpdf.doc.flowPaint
 import com.tabpdf.doc.offset
 import com.tabpdf.doc.paginate
+import kotlin.math.abs
 import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.roundToInt
 
 /**
@@ -43,6 +46,9 @@ import kotlin.math.roundToInt
  * point is FLOW_WIDTH / page width units; text keeps its size relative to the sheet, as in print.
  */
 class OfficeLayout private constructor(private val unit: Float) {
+    /** The page's left margin and width in flow units, for pictures placed from the page's edge. */
+    private var pageLeft = 0f
+    private var pageWidth = 0f
 
     companion object {
         fun layOut(doc: OfficeDocument): SheetDocument {
@@ -56,21 +62,37 @@ class OfficeLayout private constructor(private val unit: Float) {
             val u = layout.unit
             val left = page.left * u
             val width = (page.width - page.left - page.right) * u
+            layout.pageLeft = left
+            layout.pageWidth = FLOW_WIDTH
 
             val body = FlowBuilder()
             layout.blocks(doc.body, width, left, body)
 
-            val header = layout.stack(doc.header, width)
-            val footer = layout.stack(doc.footer, width)
+            fun header(blocks: List<OfficeBlock>) =
+                if (blocks.isEmpty()) emptyList() else listOf(Placed(layout.stack(blocks, width), left, page.headerTop * u))
+            fun footer(blocks: List<OfficeBlock>) = if (blocks.isEmpty()) emptyList() else {
+                val footer = layout.stack(blocks, width)
+                listOf(Placed(footer, left, page.footerBottom * u - footer.height))
+            }
             val frame = SheetFrame(
                 height = page.height * u,
                 bodyTop = page.bodyTop * u,
                 bodyHeight = (page.bodyBottom - page.bodyTop) * u,
-                header = if (doc.header.isEmpty()) emptyList() else listOf(Placed(header, left, page.headerTop * u)),
-                footer = if (doc.footer.isEmpty()) emptyList() else listOf(Placed(footer, left, page.footerBottom * u - footer.height)),
+                header = header(doc.header),
+                footer = footer(doc.footer),
+                firstHeader = doc.firstHeader?.let(::header),
+                firstFooter = doc.firstFooter?.let(::footer),
             )
-            val boundaries = paginate(body.y, body.breaks(), frame.bodyHeight, body.pageBreaks())
-            return SheetDocument(body.blocks.toList(), boundaries, frame, page.width, body.headings.toList())
+            val boundaries = paginate(
+                body.contentEnd, body.breaks(), frame.bodyHeight, body.pageBreaks(), body::nextContent,
+                lead = { y -> body.repeatAt(y)?.block?.repeatedTop ?: 0f },
+                // Word's own page ends, saved in the file, win over small differences in the layout,
+                // the page then running a little into its bottom margin.
+                savedEnds = body.pageEnds(),
+                overrun = min(frame.bodyHeight * 0.05f, (frame.height - frame.bodyTop - frame.bodyHeight) / 2),
+            )
+            val repeated = List(boundaries.size - 1) { i -> if (i == 0) null else body.repeatAt(boundaries[i]) }
+            return SheetDocument(body.blocks.toList(), boundaries, frame, page.width, body.headings.toList(), repeated)
         }
 
         /**
@@ -106,19 +128,28 @@ class OfficeLayout private constructor(private val unit: Float) {
         }
 
         private const val WORD_JOINER = '⁠'
+        private const val ZERO_WIDTH_SPACE = '​'
+
+        /** Marks Unicode won't put at the start of a line even after a space (UAX #14 LB13). */
+        private const val NO_BREAK_BEFORE = ")]}!?;:/,.、。」』〉》】〕），．：；！？"
     }
 
     /** Lays [list] out top to bottom into [out], [width] wide starting at [x]. */
     private fun blocks(list: List<OfficeBlock>, width: Float, x: Float, out: FlowBuilder) {
-        for (block in list) {
+        for ((i, block) in list.withIndex()) {
             when (block) {
-                is Paragraph -> paragraph(block, width, x, out)
+                is Paragraph -> {
+                    fun sameStyle(other: OfficeBlock?) = block.contextualSpacing && other is Paragraph && other.styleKey == block.styleKey
+                    paragraph(block, width, x, out, spaceBefore = !sameStyle(list.getOrNull(i - 1)), spaceAfter = !sameStyle(list.getOrNull(i + 1)))
+                }
                 is Table -> {
                     if (block.pageBreakBefore) out.pageBreak()
                     out.space(block.spaceBefore * unit)
                     // Content-sized (HTML) tables fit beside their indent; Word and Hangul tables keep their widths.
                     val contentSized = block.columns.any { it <= 0f }
-                    val table = TableBlock(block, if (contentSized) width - (block.indent.coerceAtLeast(0f) + block.indentRight) * unit else width)
+                    // A Word table wider than the text runs on into the right margin (to the paper's edge) rather than shrinking.
+                    val room = if (block.bordersInRows && pageWidth > 0f && x == pageLeft) pageWidth - x else width
+                    val table = TableBlock(block, if (contentSized) width - (block.indent.coerceAtLeast(0f) + block.indentRight) * unit else room)
                     val offset = when (block.align) {
                         Align.Center -> (width - table.width) / 2
                         Align.Right -> width - table.width
@@ -158,9 +189,9 @@ class OfficeLayout private constructor(private val unit: Float) {
 
     // ---- Paragraphs ----
 
-    private fun paragraph(p: Paragraph, width: Float, x: Float, out: FlowBuilder) {
+    private fun paragraph(p: Paragraph, width: Float, x: Float, out: FlowBuilder, spaceBefore: Boolean = true, spaceAfter: Boolean = true) {
         if (p.pageBreakBefore) out.pageBreak()
-        out.space(p.spaceBefore * unit)
+        if (spaceBefore) out.space(p.spaceBefore * unit)
         marks(p, out)
         val hanging = (-p.firstLine).coerceAtLeast(0f) * unit
         val left = (p.indentLeft * unit - hanging).coerceAtLeast(0f)
@@ -176,8 +207,8 @@ class OfficeLayout private constructor(private val unit: Float) {
         } else {
             0f
         }
-        out.add(ParagraphBlock(layout, trailing), x + left)
-        out.space(p.spaceAfter * unit)
+        out.add(ParagraphBlock(layout, trailing, floating(layout, width, left)), x + left)
+        if (spaceAfter) out.space(p.spaceAfter * unit)
     }
 
     /** [p]'s heading and named places, at the flow's current position. */
@@ -257,26 +288,31 @@ class OfficeLayout private constructor(private val unit: Float) {
         val text = SpannableStringBuilder()
         var hasObjects = false
         val sizes = mutableListOf<Float>()
-        fun appendRun(run: Run) {
+        val pageEnds = mutableListOf<Int>()
+        val floats = mutableListOf<Run.Picture>()
+        fun appendRun(run: Run, nextLetter: Char? = null) {
             val start = text.length
             when (run) {
                 is Run.Text -> {
-                    for (c in run.text) {
-                        val last = text.lastOrNull()
-                        if (p.keepWords && last != null && isCjk(last) && isCjk(c)) text.append(WORD_JOINER)
-                        text.append(c)
-                    }
-                    if (text.length == start) return
                     val s = run.style
+                    if (s.latinFont == null && s.eastAsiaFont == null) {
+                        appendLetters(text, run.text, p.keepWords)
+                        if (text.length == start) return
+                        text.setSpan(RunStyleSpan(s, unit), start, text.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    } else {
+                        appendInWordFonts(text, run.text, s, p.keepWords, after = nextLetter)
+                        if (text.length == start) return
+                    }
                     sizes += s.size
-                    text.setSpan(RunStyleSpan(s, unit), start, text.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
                     text.setSpan(ForegroundColorSpan(s.color), start, text.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
                     if (s.background != 0) text.setSpan(BackgroundColorSpan(s.background), start, text.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
                     if (s.underline) text.setSpan(UnderlineSpan(), start, text.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
                     if (s.strike) text.setSpan(StrikethroughSpan(), start, text.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
                     run.link?.let { text.setSpan(LinkSpan(it), start, text.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE) }
                 }
-                is Run.Picture -> {
+                is Run.Picture -> if (run.floating != null) {
+                    floats += run
+                } else {
                     hasObjects = true
                     text.append('￼')
                     val scale = minOf(1f, width / (run.width * unit))
@@ -285,6 +321,7 @@ class OfficeLayout private constructor(private val unit: Float) {
                         start, text.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
                     )
                 }
+                Run.PageEnd -> pageEnds += text.length
                 is Run.Unsupported -> {
                     hasObjects = true
                     text.append('￼')
@@ -303,17 +340,36 @@ class OfficeLayout private constructor(private val unit: Float) {
                 text.append(' ')
             }
         }
-        p.runs.forEach(::appendRun)
+        p.runs.forEachIndexed { i, run ->
+            appendRun(run, p.runs.getOrNull(i + 1).let { (it as? Run.Text)?.text?.firstOrNull() })
+        }
         val baseSize = sizes.maxOrNull() ?: p.markStyle?.size ?: (p.label as? Run.Text)?.style?.size ?: 10f
         val paint = flowPaint(baseSize * unit)
         if (text.isEmpty()) {
             // An empty paragraph still takes a line, in the size of its paragraph mark.
             text.append(' ')
-            text.setSpan(RunStyleSpan(p.markStyle ?: TextStyle(size = baseSize), unit), 0, 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            val mark = p.markStyle ?: TextStyle(size = baseSize)
+            text.setSpan(RunStyleSpan(mark, unit, line = OfficeFonts.find(OfficeFonts.fontFor(' ', mark))), 0, 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        } else if (text.last() == '\n') {
+            // A line break that ends the paragraph leaves an empty line in Word; StaticLayout makes none.
+            text.append(ZERO_WIDTH_SPACE)
         }
-        if (hanging > 0f) text.setSpan(LeadingMarginSpan.Standard(0, hanging.roundToInt()), 0, text.length, Spanned.SPAN_INCLUSIVE_INCLUSIVE)
-        else if (p.firstLine > 0f) text.setSpan(LeadingMarginSpan.Standard((p.firstLine * unit).roundToInt(), 0), 0, text.length, Spanned.SPAN_INCLUSIVE_INCLUSIVE)
-        text.setSpan(LineHeightRule(p.lineSpacing, unit, hasObjects), 0, text.length, Spanned.SPAN_INCLUSIVE_INCLUSIVE)
+        // Only the paragraph's first line takes the first-line indent: lines after a line break
+        // ('\n', which starts a new paragraph for StaticLayout) stay at the left indent.
+        val firstBreak = text.indexOf('\n').let { if (it < 0) text.length else it + 1 }
+        if (hanging > 0f) {
+            text.setSpan(LeadingMarginSpan.Standard(0, hanging.roundToInt()), 0, firstBreak, Spanned.SPAN_INCLUSIVE_EXCLUSIVE)
+            if (firstBreak < text.length) {
+                text.setSpan(LeadingMarginSpan.Standard(hanging.roundToInt()), firstBreak, text.length, Spanned.SPAN_INCLUSIVE_INCLUSIVE)
+            }
+        } else if (p.firstLine > 0f) {
+            text.setSpan(LeadingMarginSpan.Standard((p.firstLine * unit).roundToInt(), 0), 0, firstBreak, Spanned.SPAN_INCLUSIVE_EXCLUSIVE)
+        }
+        if (floats.isNotEmpty()) text.setSpan(FloatsSpan(floats), 0, text.length, Spanned.SPAN_INCLUSIVE_INCLUSIVE)
+        if (pageEnds.isNotEmpty()) text.setSpan(PageEndsSpan(pageEnds.toIntArray()), 0, text.length, Spanned.SPAN_INCLUSIVE_INCLUSIVE)
+        // A line with no text (after a line break that ends the paragraph) takes the paragraph mark's font.
+        val mark = p.markStyle?.let { RunStyleSpan(it, unit, line = OfficeFonts.find(OfficeFonts.fontFor(' ', it))) }
+        text.setSpan(LineHeightRule(p.lineSpacing, unit, hasObjects, mark), 0, text.length, Spanned.SPAN_INCLUSIVE_INCLUSIVE)
 
         return StaticLayout.Builder.obtain(text, 0, text.length, paint, width.roundToInt().coerceAtLeast(1))
             .setAlignment(
@@ -329,6 +385,87 @@ class OfficeLayout private constructor(private val unit: Float) {
             .build()
     }
 
+    private fun appendLetters(text: SpannableStringBuilder, letters: CharSequence, keepWords: Boolean, breakAfterSpaces: Boolean = false) {
+        for (c in letters) {
+            val last = text.lastOrNull()
+            if (keepWords && last != null && isCjk(last) && isCjk(c)) text.append(WORD_JOINER)
+            // Word may end a line at any space; Unicode keeps a space with a closing mark after it.
+            if (breakAfterSpaces && last == ' ' && c in NO_BREAK_BEFORE) text.append(ZERO_WIDTH_SPACE)
+            text.append(c)
+        }
+    }
+
+    /**
+     * [letters] in [style], in pieces of one Word font each (Latin and Hangul may differ) and cut
+     * at spaces, each piece spaced out or in to the width it has in Word. Lines then break where
+     * Word breaks them though the system font draws them.
+     */
+    private fun appendInWordFonts(text: SpannableStringBuilder, letters: String, style: TextStyle, keepWords: Boolean, after: Char?) {
+        val before = text.lastOrNull { it != WORD_JOINER && it != ZERO_WIDTH_SPACE }
+        var i = 0
+        while (i < letters.length) {
+            val name = OfficeFonts.fontFor(letters[i], style)
+            var j = i + 1
+            if (letters[i] != ' ') while (j < letters.length && letters[j] != ' ' && OfficeFonts.fontFor(letters[j], style) == name) j++
+            val halfSpace = if (letters[i] == ' ' && OfficeFonts.isHalfSpace(letters.getOrNull(i - 1) ?: before, letters.getOrNull(i + 1) ?: after)) {
+                OfficeFonts.halfSpace(style)
+            } else {
+                null
+            }
+            val start = text.length
+            appendLetters(text, letters.subSequence(i, j), keepWords, breakAfterSpaces = true)
+            val font = OfficeFonts.find(name)
+            val pieceStyle = if (name != null) style.copy(font = fontKind(name)) else style
+            val fit = when {
+                halfSpace != null -> widthFit(text, start, pieceStyle, halfSpace)
+                font != null -> font.width(letters.substring(i, j), style.bold, style.kerning, style.textSize)
+                    ?.let { widthFit(text, start, pieceStyle, it) } ?: 0f
+                else -> 0f
+            }
+            text.setSpan(RunStyleSpan(pieceStyle, unit, fit, font), start, text.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            i = j
+        }
+    }
+
+    private val measurePaint = TextPaint()
+
+    /** Letter spacing (ems) that makes text[start…] [ems] wide. */
+    private fun widthFit(text: CharSequence, start: Int, style: TextStyle, ems: Float): Float {
+        val paint = measurePaint
+        paint.reset()
+        paint.flags = FLOW_PAINT_FLAGS
+        RunStyleSpan(style, unit).updateMeasureState(paint)
+        // Advances as laid out (measureText rounds up, a lot at these sizes).
+        fun width() = paint.getRunAdvance(text, start, text.length, start, text.length, false, text.length)
+        paint.letterSpacing = 0f
+        val natural = width()
+        paint.letterSpacing = 0.1f
+        // Measured, not computed: how the system spaces letters (joiners, clusters) is its own business.
+        val perEm = (width() - natural) / 0.1f
+        if (perEm <= 0f) return 0f
+        return ((ems * paint.textSize * paint.textScaleX - natural) / perEm).coerceIn(-0.5f, 1f)
+    }
+
+    /** [layout]'s floating pictures, placed in its block: its text column is [width] wide and starts [left] before it. */
+    private fun floating(layout: StaticLayout, width: Float, left: Float): List<FloatingPicture> {
+        val pictures = (layout.text as? Spanned)?.let { t -> t.getSpans(0, t.length, FloatsSpan::class.java).firstOrNull()?.pictures }
+        return pictures.orEmpty().map { picture ->
+            val f = picture.floating!!
+            val w = picture.width * unit
+            val h = picture.height * unit
+            // From the page's edge: the column is taken to start at the left margin.
+            val frameLeft = if (f.fromPage) -pageLeft else 0f
+            val frameWidth = if (f.fromPage && pageWidth > 0f) pageWidth else width
+            val x = frameLeft + when (f.align) {
+                Align.Center -> (frameWidth - w) / 2
+                Align.Right -> frameWidth - w
+                Align.Left, Align.Justify -> 0f
+                null -> f.x * unit
+            }
+            FloatingPicture(PictureSpan(picture.bytes, w, h), RectF(x - left, f.y * unit, x - left + w, f.y * unit + h), f.behind)
+        }
+    }
+
     // ---- Tables ----
 
     /** A table; pages may end between rows that no merged cell spans. */
@@ -340,6 +477,9 @@ class OfficeLayout private constructor(private val unit: Float) {
         val width: Float
         override val height: Float
         override val breaks: FloatArray
+        override val repeatedTop: Float
+        override val pageEnds: FloatArray
+        private val bordersInRows = table.bordersInRows
 
         init {
             val natural = if (table.columns.any { it <= 0f }) fittedColumns(table, available).toList() else table.columns.map { it * unit }
@@ -354,7 +494,7 @@ class OfficeLayout private constructor(private val unit: Float) {
                 return columnLefts[to] - columnLefts[from]
             }
             cells = table.cells.map { c ->
-                val inner = (spanWidth(c) - (c.padding.left + c.padding.right) * unit).coerceAtLeast(unit)
+                val inner = (spanWidth(c) - (c.padding.left + c.padding.right) * unit + borderGain(c)).coerceAtLeast(unit)
                 c to stack(c.blocks, inner)
             }
             val rowCount = max(table.rows.size, (table.cells.maxOfOrNull { it.row + it.rowSpan } ?: 0))
@@ -375,10 +515,36 @@ class OfficeLayout private constructor(private val unit: Float) {
                     if (lack > 0f) rowHeights[last] += lack
                 }
             }
+            if (table.bordersInRows) {
+                for (r in 0 until rowCount) {
+                    if (exact[r]) continue
+                    rowHeights[r] += (cells.maxOfOrNull { (c, _) -> if (c.row == r) c.borders.top?.width ?: 0f else 0f } ?: 0f) * unit
+                    if (r == rowCount - 1) {
+                        rowHeights[r] += (cells.maxOfOrNull { (c, _) -> if (c.row + c.rowSpan == rowCount) c.borders.bottom?.width ?: 0f else 0f } ?: 0f) * unit
+                    }
+                }
+            }
             rowTops = FloatArray(rowCount + 1).also { for (i in 0 until rowCount) it[i + 1] = it[i] + rowHeights[i] }
             height = rowTops[rowCount]
             breaks = splitPoints()
+            val headingRows = table.rows.takeWhile { it.repeats }.size.coerceAtMost(rowCount - 1)
+            repeatedTop = rowTops[headingRows.coerceAtLeast(0)].takeIf { headingRows > 0 } ?: 0f
+            // A page Word ended before a cell's first line ended at the top of its row.
+            pageEnds = cells.flatMap { (c, content) ->
+                content.pageEnds.map { if (it <= 0.5f) rect(c).top else contentTop(c, content) + it }
+            }.distinct().sorted().toFloatArray()
         }
+
+        /**
+         * Word measures a cell's margins from the inside of its side lines, not their middle
+         * (measured: the text starts and may end half a line further out).
+         */
+        private fun borderGain(c: TableCell): Float =
+            if (bordersInRows) ((c.borders.left?.width ?: 0f) + (c.borders.right?.width ?: 0f)) / 2 * unit else 0f
+
+        /** Where a cell's text starts across it. */
+        private fun textLeft(c: TableCell): Float =
+            c.padding.left * unit - if (bordersInRows) (c.borders.left?.width ?: 0f) / 2 * unit else 0f
 
         /** Where a cell's content starts (after padding and vertical alignment). */
         private fun contentTop(c: TableCell, content: StackBlock): Float {
@@ -406,7 +572,7 @@ class OfficeLayout private constructor(private val unit: Float) {
                 val noLineCut = covering.all { (c, content) ->
                     val top = contentTop(c, content)
                     y <= top + 0.5f || y >= top + content.height - 0.5f ||
-                        content.breaks.any { kotlin.math.abs(top + it - y) < 0.5f }
+                        content.breaks.any { abs(top + it - y) < 0.5f }
                 }
                 // Splitting a row before any of its text would leave just an empty strip of it behind.
                 val textAbove = covering.isEmpty() || covering.any { (c, content) -> content.height > 0f && y > contentTop(c, content) + 0.5f }
@@ -438,7 +604,7 @@ class OfficeLayout private constructor(private val unit: Float) {
                 }.coerceAtLeast(0f)
                 canvas.save()
                 canvas.clipRect(r)
-                canvas.translate(r.left + c.padding.left * unit, innerTop + offset)
+                canvas.translate(r.left + textLeft(c), innerTop + offset)
                 content.draw(canvas)
                 canvas.restore()
             }
@@ -452,17 +618,17 @@ class OfficeLayout private constructor(private val unit: Float) {
         }
 
         override fun collectText(sink: TextSink) {
-            for ((c, content) in cells) content.collectText(sink.offset(rect(c).left + c.padding.left * unit, contentTop(c, content)))
+            for ((c, content) in cells) content.collectText(sink.offset(rect(c).left + textLeft(c), contentTop(c, content)))
         }
 
         override fun find(query: String): List<Found> = cells.flatMap { (c, content) ->
-            content.find(query).map { it.offset(rect(c).left + c.padding.left * unit, contentTop(c, content)) }
+            content.find(query).map { it.offset(rect(c).left + textLeft(c), contentTop(c, content)) }
         }
 
         override fun linkAt(x: Float, y: Float): String? {
             for ((c, content) in cells) {
                 val r = rect(c)
-                if (r.contains(x, y)) return content.linkAt(x - r.left - c.padding.left * unit, y - r.top - c.padding.top * unit)
+                if (r.contains(x, y)) return content.linkAt(x - r.left - textLeft(c), y - r.top - c.padding.top * unit)
             }
             return null
         }
@@ -478,6 +644,7 @@ class OfficeLayout private constructor(private val unit: Float) {
         override val height = top + content.height + (box.padding.bottom + (box.borders.bottom?.width ?: 0f)) * unit
         override val breaks: FloatArray = (listOf(top) + content.breaks.map { top + it } + listOf(top + content.height))
             .filter { it > 0f && it < height }.distinct().toFloatArray()
+        override val pageEnds: FloatArray = content.pageEnds.map { top + it }.toFloatArray()
 
         override fun draw(canvas: Canvas) {
             if (box.fill != 0) canvas.drawRect(0f, 0f, width, height, fillPaint.apply { color = box.fill })
@@ -510,10 +677,41 @@ class OfficeLayout private constructor(private val unit: Float) {
 }
 
 /** A paragraph; [trailingSpace] is the line spacing under its last line (Hangul puts it below the text). */
-private class ParagraphBlock(layout: StaticLayout, val trailingSpace: Float) : TextBlock(layout)
+private class ParagraphBlock(layout: StaticLayout, val trailingSpace: Float, private val floating: List<FloatingPicture> = emptyList()) : TextBlock(layout) {
+    override fun draw(canvas: Canvas) {
+        for (f in floating) if (f.behind) f.picture.drawIn(canvas, f.rect)
+        super.draw(canvas)
+        for (f in floating) if (!f.behind) f.picture.drawIn(canvas, f.rect)
+    }
+
+    /** The height before rounding the lines to whole units, which would add up over a page. */
+    override val height: Float = layout.height + ((layout.text as? Spanned)?.let { t ->
+        t.getSpans(0, t.length, LineHeightRule::class.java).firstOrNull()?.unrounded(layout.height)
+    } ?: 0f)
+
+    override val pageEnds: FloatArray = (layout.text as? Spanned)?.let { t ->
+        t.getSpans(0, t.length, PageEndsSpan::class.java).firstOrNull()?.offsets?.map { layout.getLineTop(layout.getLineForOffset(it)).toFloat() }
+    }?.distinct()?.toFloatArray() ?: FloatArray(0)
+}
+
+/** A paragraph's pictures that float over the text ([Floating]). */
+private class FloatsSpan(val pictures: List<Run.Picture>)
+
+/** A floating picture placed at [rect] in its paragraph's block, under the text when [behind]. */
+private class FloatingPicture(val picture: PictureSpan, val rect: RectF, val behind: Boolean)
+
+/** Text offsets of a paragraph where Word last ended a page ([Run.PageEnd]). */
+private class PageEndsSpan(val offsets: IntArray)
 
 /** Size, weight, slant, typeface, width and spacing of one run, in flow units. */
-class RunStyleSpan(val style: TextStyle, private val unit: Float) : MetricAffectingSpan() {
+class RunStyleSpan internal constructor(
+    val style: TextStyle,
+    private val unit: Float,
+    /** Extra letter spacing (ems) to take a Word font's width. */
+    private val fit: Float = 0f,
+    /** The Word font whose line height the text takes ([LineSpacing.Single]). */
+    internal val line: OfficeFont? = null,
+) : MetricAffectingSpan() {
     val size get() = style.size * unit
 
     override fun updateMeasureState(paint: TextPaint) = apply(paint)
@@ -528,11 +726,11 @@ class RunStyleSpan(val style: TextStyle, private val unit: Float) : MetricAffect
         val styleBits = (if (style.bold) Typeface.BOLD else 0) or (if (style.italic) Typeface.ITALIC else 0)
         paint.typeface = Typeface.create(family, styleBits)
         val small = style.superscript || style.subscript
-        paint.textSize = size * if (small) 0.7f else 1f
+        paint.textSize = size * if (small) SMALL_SCRIPT else 1f
         if (style.superscript) paint.baselineShift -= (size * 0.35f).roundToInt()
         if (style.subscript) paint.baselineShift += (size * 0.15f).roundToInt()
         paint.textScaleX = style.scaleX
-        paint.letterSpacing = style.letterSpacing
+        paint.letterSpacing = style.letterSpacing + fit
     }
 }
 
@@ -540,20 +738,45 @@ class RunStyleSpan(val style: TextStyle, private val unit: Float) : MetricAffect
  * Line pitch as the document asks: a multiple of the line's largest text size, or a fixed height.
  * Lines holding a picture keep their natural height so the picture fits.
  */
-private class LineHeightRule(private val spacing: LineSpacing, private val unit: Float, private val hasObjects: Boolean) : LineHeightSpan {
+private class LineHeightRule(
+    private val spacing: LineSpacing,
+    private val unit: Float,
+    private val hasObjects: Boolean,
+    /** The paragraph mark's style, for a line with no text. */
+    private val mark: RunStyleSpan? = null,
+) : LineHeightSpan {
+    /** Where the last line ends before rounding (Word's single lines only). */
+    private var exactBottom = Float.NaN
+
+    /** What the lines lost or gained to rounding, given the laid-out [height]; 0 unless known. */
+    fun unrounded(height: Int): Float = (exactBottom - height).takeIf { abs(it) < 1f } ?: 0f
+
     override fun chooseHeight(text: CharSequence, start: Int, end: Int, spanstartv: Int, lineHeight: Int, fm: Paint.FontMetricsInt) {
         if (hasObjects && text is Spanned && text.getSpans(start, end, ReplacementSpan::class.java).isNotEmpty()) return
-        val size = (text as? Spanned)?.getSpans(start, end, RunStyleSpan::class.java)?.maxOfOrNull { it.size } ?: return
+        val spans = (text as? Spanned)?.getSpans(start, end, RunStyleSpan::class.java)?.takeIf { it.isNotEmpty() }
+            ?: mark?.let { arrayOf(it) } ?: return
+        val size = spans.maxOf { it.size }
         val natural = fm.descent - fm.ascent
+        // Single: as tall as the tallest font makes the line, its baseline below the highest ascent.
+        val ascent = if (spacing is LineSpacing.Single) spans.maxOf { it.size * (it.line?.ascent ?: UNKNOWN_ASCENT) / 1000f } else 0f
         val target = when (spacing) {
             is LineSpacing.Multiple -> spacing.factor * size
             is LineSpacing.AtLeast -> max(spacing.points * unit, natural.toFloat())
             is LineSpacing.Exactly -> spacing.points * unit
+            is LineSpacing.Single -> spacing.factor * (ascent + spans.maxOf { it.size * (it.line?.descent ?: UNKNOWN_DESCENT) / 1000f })
         }
-        val pitch = target.roundToInt().coerceAtLeast(1)
+        val pitch = if (spacing is LineSpacing.Single) {
+            // Rounded where the lines end, not each line: the error doesn't add up line by line.
+            if (exactBottom.isNaN() || abs(exactBottom - lineHeight) >= 1f) exactBottom = lineHeight.toFloat()
+            exactBottom += target
+            (exactBottom.roundToInt() - lineHeight).coerceAtLeast(1)
+        } else {
+            target.roundToInt().coerceAtLeast(1)
+        }
         // The text sits at the top of the line, the extra space below it.
         val baseline = when (spacing) {
             is LineSpacing.Multiple -> (spacing.baseline * size).roundToInt()
+            is LineSpacing.Single -> ascent.roundToInt()
             else -> (pitch - size * 0.25f).roundToInt()
         }
         fm.ascent = -baseline.coerceIn(1, pitch)
@@ -562,6 +785,10 @@ private class LineHeightRule(private val spacing: LineSpacing, private val unit:
         fm.bottom = fm.descent
     }
 }
+
+/** A single line of a font the table doesn't know, in thousandths of an em: 1.2, as most Latin fonts. */
+private const val UNKNOWN_ASCENT = 864
+private const val UNKNOWN_DESCENT = 336
 
 /**
  * An embedded picture, decoded no larger than it is drawn at a 3× zoom. Decoded when drawn and
@@ -604,8 +831,10 @@ private class PictureSpan(private val bytes: ByteArray?, private val width: Floa
         return width.roundToInt()
     }
 
-    override fun draw(canvas: Canvas, text: CharSequence?, start: Int, end: Int, x: Float, top: Int, y: Int, bottom: Int, paint: Paint) {
-        val dst = RectF(x, y - height, x + width, y.toFloat())
+    override fun draw(canvas: Canvas, text: CharSequence?, start: Int, end: Int, x: Float, top: Int, y: Int, bottom: Int, paint: Paint) =
+        drawIn(canvas, RectF(x, y - height, x + width, y.toFloat()))
+
+    fun drawIn(canvas: Canvas, dst: RectF) {
         val b = bitmap()
         if (b != null) canvas.drawBitmap(b, null, dst, Paint(Paint.FILTER_BITMAP_FLAG))
         else EmptyBoxSpan.drawBox(canvas, dst)
