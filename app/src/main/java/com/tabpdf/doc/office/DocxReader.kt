@@ -34,11 +34,13 @@ private data class PProps(
     val ilvl: Int? = null,
     val pageBreakBefore: Boolean? = null,
     val keepWords: Boolean? = null,
+    val contextual: Boolean? = null,
 ) {
     infix fun over(base: PProps) = PProps(
         align ?: base.align, left ?: base.left, right ?: base.right, firstLine ?: base.firstLine,
         before ?: base.before, after ?: base.after, line ?: base.line, lineRule ?: base.lineRule,
         numId ?: base.numId, ilvl ?: base.ilvl, pageBreakBefore ?: base.pageBreakBefore, keepWords ?: base.keepWords,
+        contextual ?: base.contextual,
     )
 }
 
@@ -153,16 +155,21 @@ private class Docx(private val parts: ZipParts) {
         val docRels = rels
         val blocks = blocks(body)
 
-        fun headerFooter(kind: String): List<OfficeBlock> {
+        fun headerFooter(kind: String, type: String = "default"): List<OfficeBlock>? {
             val refs = section?.all("w:${kind}Reference").orEmpty()
-            val ref = refs.firstOrNull { it.attr("w:type") == "default" } ?: refs.firstOrNull() ?: return emptyList()
-            val path = docRels[ref.attr("r:id")]?.first ?: return emptyList()
-            val xml = parts.xml(path) ?: return emptyList()
+            val ref = refs.firstOrNull { it.attr("w:type") == type }
+                ?: (if (type == "default") refs.firstOrNull { it.attr("w:type") == null } else null) ?: return null
+            val path = docRels[ref.attr("r:id")]?.first ?: return null
+            val xml = parts.xml(path) ?: return null
             rels = relsOf(path)
             return blocks(xml).also { rels = docRels }
         }
-        val header = headerFooter("header")
-        val footer = headerFooter("footer")
+        val header = headerFooter("header").orEmpty()
+        val footer = headerFooter("footer").orEmpty()
+        // "Different first page": the first page has its own, or none if the file gives none.
+        val firstPage = toggle(section?.child("w:titlePg")) == true
+        val firstHeader = if (firstPage) headerFooter("header", "first").orEmpty() else null
+        val firstFooter = if (firstPage) headerFooter("footer", "first").orEmpty() else null
 
         val size = section?.child("w:pgSz")
         val margin = section?.child("w:pgMar")
@@ -182,7 +189,7 @@ private class Docx(private val parts: ZipParts) {
             headerTop = twips(margin, "w:header", 36f),
             footerBottom = height - twips(margin, "w:footer", 36f),
         )
-        return OfficeDocument(page, blocks, header, footer)
+        return OfficeDocument(page, blocks, header, footer, firstHeader, firstFooter)
     }
 
     // ---- Blocks ----
@@ -249,6 +256,8 @@ private class Docx(private val parts: ZipParts) {
                 lineSpacing = spacing,
                 pageBreakBefore = if (i == 0) props.pageBreakBefore == true else true,
                 keepWords = props.keepWords ?: true,
+                styleKey = styleId,
+                contextualSpacing = props.contextual == true,
                 label = if (i == 0) label else null,
                 markStyle = markR.toStyle(),
                 outlineLevel = if (i == 0) outlineLevel(pPr, styleId) else null,
@@ -333,7 +342,26 @@ private class Docx(private val parts: ZipParts) {
         val blip = d.find("a:blip")?.attr("r:embed")
         if (blip == null || width <= 0f || height <= 0f) return Run.Unsupported(width.coerceAtLeast(40f), height.coerceAtLeast(20f))
         val bytes = rels[blip]?.takeIf { !it.second }?.first?.let { parts[it] }
-        return Run.Picture(bytes, width, height)
+        return Run.Picture(bytes, width, height, frame?.takeIf { it.name == "wp:anchor" }?.let(::floating))
+    }
+
+    /** An anchored picture that text doesn't wrap around; others are kept in the line. */
+    private fun floating(anchor: Element): Floating? {
+        if (anchor.child("wp:wrapNone") == null) return null
+        val h = anchor.child("wp:positionH")
+        val v = anchor.child("wp:positionV")
+        return Floating(
+            x = (h?.child("wp:posOffset")?.text?.trim()?.toFloatOrNull() ?: 0f) * EMU,
+            fromPage = h?.attr("relativeFrom") in setOf("page", "leftMargin", "insideMargin", "outsideMargin", "rightMargin"),
+            align = when (h?.child("wp:align")?.text?.trim()) {
+                "left", "inside" -> Align.Left
+                "center" -> Align.Center
+                "right", "outside" -> Align.Right
+                else -> null
+            },
+            y = (v?.child("wp:posOffset")?.text?.trim()?.toFloatOrNull() ?: 0f) * EMU,
+            behind = anchor.attr("behindDoc") == "1",
+        )
     }
 
     private fun symbol(code: String?): String {
@@ -541,6 +569,7 @@ private class Docx(private val parts: ZipParts) {
             ilvl = num?.child("w:ilvl")?.attr("w:val")?.toIntOrNull(),
             pageBreakBefore = toggle(pPr.child("w:pageBreakBefore")),
             keepWords = pPr.child("w:wordWrap")?.let { toggle(it) },
+            contextual = toggle(pPr.child("w:contextualSpacing")),
         )
     }
 

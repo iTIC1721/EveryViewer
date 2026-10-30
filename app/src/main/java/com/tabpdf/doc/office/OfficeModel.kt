@@ -23,6 +23,9 @@ class OfficeDocument(
     val body: List<OfficeBlock>,
     val header: List<OfficeBlock> = emptyList(),
     val footer: List<OfficeBlock> = emptyList(),
+    /** The first page's own header and footer (Word's "different first page"), null if it has none. */
+    val firstHeader: List<OfficeBlock>? = null,
+    val firstFooter: List<OfficeBlock>? = null,
 )
 
 /** Sheet size and margins. The body runs from [bodyTop] to [bodyBottom] (from the sheet's top). */
@@ -70,6 +73,10 @@ class Paragraph(
     val outlineLevel: Int? = null,
     /** Names of places that start here (HTML ids), for links into the document. */
     val anchors: List<String> = emptyList(),
+    /** The paragraph's style, when [contextualSpacing] needs it. */
+    val styleKey: String? = null,
+    /** No space before or after it next to a paragraph of the same [styleKey] (Word's "contextual spacing"). */
+    val contextualSpacing: Boolean = false,
 ) : OfficeBlock {
     /** The text, for the table of contents. */
     val plainText: String get() = runs.joinToString("") { (it as? Run.Text)?.text ?: "" }
@@ -133,7 +140,7 @@ const val SMALL_SCRIPT = 0.7f
 sealed interface Run {
     data class Text(val text: String, val style: TextStyle, val link: String? = null) : Run
     /** A picture in the text, [width] × [height] points; null bytes if it couldn't be read. */
-    class Picture(val bytes: ByteArray?, val width: Float, val height: Float) : Run
+    class Picture(val bytes: ByteArray?, val width: Float, val height: Float, val floating: Floating? = null) : Run
     /** Something this viewer doesn't draw (chart, equation, drawing): an empty box of its size. */
     class Unsupported(val width: Float, val height: Float) : Run
     /** Where Word last ended a page before this, when it saved the file (w:lastRenderedPageBreak). */
@@ -188,6 +195,14 @@ class TableCell(
 )
 
 enum class VerticalAlign { Top, Center, Bottom }
+
+/**
+ * Where a picture floats over the text instead of sitting in a line (Word's "in front of text" or
+ * "behind text"; it takes no room): [x] points across from the text column's left edge, or the
+ * page's when [fromPage], unless [align] puts it at that frame's left, centre or right; [y] points
+ * down from its paragraph's top.
+ */
+class Floating(val x: Float, val fromPage: Boolean, val align: Align?, val y: Float, val behind: Boolean)
 
 /** A line: [width] in points and colour; null sides are not drawn. */
 data class Border(val width: Float, val color: Int)

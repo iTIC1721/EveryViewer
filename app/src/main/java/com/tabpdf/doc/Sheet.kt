@@ -59,7 +59,13 @@ class SheetFrame(
     val bodyHeight: Float,
     val header: List<Placed>,
     val footer: List<Placed>,
-)
+    /** The first sheet's own header and footer, if it has them. */
+    val firstHeader: List<Placed>? = null,
+    val firstFooter: List<Placed>? = null,
+) {
+    fun header(index: Int) = (if (index == 0) firstHeader else null) ?: header
+    fun footer(index: Int) = (if (index == 0) firstFooter else null) ?: footer
+}
 
 /**
  * A document of real sheets of paper (docx, hwpx; 기획서 5.7): the body flow is cut into
@@ -121,8 +127,8 @@ class SheetDocument(
     override fun paperWidth(index: Int): Float = paperWidth
 
     private fun draw(index: Int, canvas: Canvas) {
-        drawAll(canvas, frame.header)
-        drawAll(canvas, frame.footer)
+        drawAll(canvas, frame.header(index))
+        drawAll(canvas, frame.footer(index))
         val top = boundaries[index]
         val bottom = boundaries[index + 1]
         val lead = lead(index)
@@ -176,7 +182,7 @@ class SheetDocument(
     /** A sheet's text: header, the body's slice, footer. */
     private fun pageText(index: Int): PageText = pageTexts[index] ?: run {
         val builder = PageText.Builder { RectF(it.left / FLOW_WIDTH, it.top / frame.height, it.right / FLOW_WIDTH, it.bottom / frame.height) }
-        for (p in frame.header) p.block.collectText(builder.offset(p.x, p.y))
+        for (p in frame.header(index)) p.block.collectText(builder.offset(p.x, p.y))
         val top = boundaries[index]
         val bottom = boundaries[index + 1]
         repeated.getOrNull(index)?.let { table ->
@@ -186,7 +192,7 @@ class SheetDocument(
         // Body characters in flow coordinates, kept to this sheet's slice, then moved onto the sheet.
         val body = builder.offset(0f, frame.bodyTop + lead(index) - top).clipped(top, bottom)
         for (p in placed.filter { it.bottom > top && it.y < bottom }) p.block.collectText(body.offset(p.x, p.y))
-        for (p in frame.footer) p.block.collectText(builder.offset(p.x, p.y))
+        for (p in frame.footer(index)) p.block.collectText(builder.offset(p.x, p.y))
         builder.build().also { pageTexts.put(index, it) }
     }
 
