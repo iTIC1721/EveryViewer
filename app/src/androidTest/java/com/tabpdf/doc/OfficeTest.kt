@@ -66,6 +66,29 @@ class OfficeTest {
         assertEquals(4, table.cells.size) // the continued merge is not a cell of its own
     }
 
+    /**
+     * A table's style sets its paragraphs between the document's defaults and their own style:
+     * Word's "Table Grid" takes away the defaults' space after each paragraph (a reader's form
+     * whose table ran onto the next page because every row was 8 pt too tall).
+     */
+    @Test
+    fun docxTableStyleSetsItsParagraphs() {
+        val doc = DocxReader.read(
+            zip(
+                "word/document.xml" to "<w:document $w><w:body>" +
+                    "<w:tbl><w:tblPr><w:tblStyle w:val=\"grid\"/></w:tblPr><w:tblGrid><w:gridCol w:w=\"4000\"/></w:tblGrid>" +
+                    "<w:tr><w:tc><w:p><w:r><w:t>in a cell</w:t></w:r></w:p></w:tc></w:tr></w:tbl>" +
+                    "<w:p><w:r><w:t>outside</w:t></w:r></w:p></w:body></w:document>",
+                "word/styles.xml" to "<w:styles $w><w:docDefaults><w:pPrDefault><w:pPr><w:spacing w:after=\"160\"/></w:pPr></w:pPrDefault></w:docDefaults>" +
+                    "<w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"normal\"><w:name w:val=\"Normal\"/></w:style>" +
+                    "<w:style w:type=\"table\" w:styleId=\"grid\"><w:pPr><w:spacing w:after=\"0\"/></w:pPr></w:style></w:styles>",
+            )
+        )
+        val cell = (doc.body[0] as Table).cells.single().blocks.single() as Paragraph
+        assertEquals(0f, cell.spaceAfter)
+        assertEquals(8f, (doc.body[1] as Paragraph).spaceAfter)
+    }
+
     @Test
     fun docxRunsStylesListsAndPageBreaks() {
         val doc = DocxReader.read(

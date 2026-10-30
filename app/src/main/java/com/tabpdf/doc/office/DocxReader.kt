@@ -221,8 +221,9 @@ private class Docx(private val parts: ZipParts) {
         val ilvl = direct.ilvl ?: styleProps.ilvl ?: 0
         val level = numId?.let { level(it, ilvl) }
         val levelP = level?.child("w:pPr")?.let(::pProps) ?: PProps()
-        val props = direct over levelP over styleProps over defaultP
-        val paragraphR = styleR(styleId) over defaultR
+        // A table's style comes between the document's defaults and the paragraph's style.
+        val props = direct over levelP over styleProps over styleP(tableStyle) over defaultP
+        val paragraphR = styleR(styleId) over styleR(tableStyle) over defaultR
         val markR = (pPr?.child("w:rPr")?.let(::rProps) ?: RProps()) over paragraphR
 
         val segments = mutableListOf(mutableListOf<Run>())
@@ -388,9 +389,15 @@ private class Docx(private val parts: ZipParts) {
 
     // ---- Tables ----
 
+    /** The style of the table whose cell is being read, if any. */
+    private var tableStyle: String? = null
+
+    private val defaultTableStyle = styles.values.firstOrNull { it.attr("w:type") == "table" && it.attr("w:default") == "1" }?.attr("w:styleId")
+
     private fun table(t: Element): Table {
         val tblPr = t.child("w:tblPr")
-        val styleBorders = style(tblPr?.child("w:tblStyle")?.attr("w:val"))?.child("w:tblPr")?.child("w:tblBorders")
+        val styleId = tblPr?.child("w:tblStyle")?.attr("w:val") ?: defaultTableStyle
+        val styleBorders = style(styleId)?.child("w:tblPr")?.child("w:tblBorders")
         val borders = tblPr?.child("w:tblBorders")
         fun tableBorder(vararg names: String): Border? {
             for (n in names) {
@@ -456,7 +463,11 @@ private class Docx(private val parts: ZipParts) {
                 column = b.column,
                 rowSpan = b.rowSpan,
                 columnSpan = b.span,
-                blocks = blocks(b.tc),
+                blocks = run {
+                    val outside = tableStyle
+                    tableStyle = styleId
+                    try { blocks(b.tc) } finally { tableStyle = outside }
+                },
                 fill = parseColor(tcPr?.child("w:shd")?.attr("w:fill")) ?: 0,
                 borders = Borders(
                     left = side(listOf("w:left", "w:start"), if (b.column == 0) outer.left else insideV),
