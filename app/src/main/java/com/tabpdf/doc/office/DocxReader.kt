@@ -20,21 +20,6 @@ private const val EMU = 1f / 12700f // points per EMU
 /** Word's built-in heading style names ("heading 1" … "heading 9"). */
 private val HEADING_STYLE = Regex("heading ([1-9])")
 
-/**
- * Word's "single" line pitch relative to the font size. It comes from the font's own metrics, so
- * it differs a lot between fonts: Malgun Gothic (Korean Word's default) is measured at 1.73.
- */
-private fun singleLine(font: String?): Float {
-    val n = font?.lowercase() ?: return 1.2f
-    return when {
-        "malgun" in n || "맑은" in n -> 1.73f
-        listOf("굴림", "gulim", "돋움", "dotum", "바탕", "batang", "궁서", "gungsuh").any { it in n } -> 1.15f
-        // Other Korean fonts are usually missing on the reader's PC and replaced with Malgun Gothic.
-        n.any { it.code > 0x2E80 } -> 1.73f
-        else -> 1.2f
-    }
-}
-
 /** Paragraph properties; null means "not set here", so layers can be merged. */
 private data class PProps(
     val align: Align? = null,
@@ -71,13 +56,20 @@ private data class RProps(
     val spacing: Float? = null,
     val vertAlign: String? = null,
     val hidden: Boolean? = null,
-    val fontName: String? = null,
+    /** Typeface of Latin letters (w:ascii) and of Hangul and Han (w:eastAsia). */
+    val latinFont: String? = null,
+    val eastAsiaFont: String? = null,
+    /** w:hint="eastAsia": letters both scripts share (quotes, dashes) take the East Asian typeface. */
+    val eastAsiaHint: Boolean? = null,
+    /** Kern text from this size up (points). */
+    val kern: Float? = null,
 ) {
     infix fun over(base: RProps) = RProps(
         size ?: base.size, bold ?: base.bold, italic ?: base.italic, underline ?: base.underline,
         strike ?: base.strike, color ?: base.color, background ?: base.background, font ?: base.font,
         scaleX ?: base.scaleX, spacing ?: base.spacing, vertAlign ?: base.vertAlign, hidden ?: base.hidden,
-        fontName ?: base.fontName,
+        latinFont ?: base.latinFont, eastAsiaFont ?: base.eastAsiaFont, eastAsiaHint ?: base.eastAsiaHint,
+        kern ?: base.kern,
     )
 
     fun toStyle(): TextStyle {
@@ -95,6 +87,10 @@ private data class RProps(
             letterSpacing = (spacing ?: 0f) / size,
             superscript = vertAlign == "superscript",
             subscript = vertAlign == "subscript",
+            latinFont = latinFont,
+            eastAsiaFont = eastAsiaFont,
+            eastAsiaHint = eastAsiaHint == true,
+            kerning = kern != null && kern > 0f && size >= kern,
         )
     }
 }
@@ -235,19 +231,10 @@ private class Docx(private val parts: ZipParts) {
 
         val label = level?.let { label(numId, ilvl, it, (level.child("w:rPr")?.let(::rProps) ?: RProps()) over markR) }
         val line = props.line
-        // The line pitch follows the font of the paragraph's first run.
-        val firstRun = p.findAll("w:r").firstOrNull { it.child("w:t") != null }
-        val font = (firstRun?.child("w:rPr")?.let { rPr -> rProps(rPr) over styleR(rPr.child("w:rStyle")?.attr("w:val")) } ?: RProps())
-            .over(markR).fontName
         val spacing = when (props.lineRule) {
             "exact" -> LineSpacing.Exactly((line ?: 240f) * TWIP)
             "atLeast" -> LineSpacing.AtLeast((line ?: 240f) * TWIP)
-            else -> singleLine(font).let { single ->
-                // Measured on Word's own output: the baseline sits about 0.72 of a single line down,
-                // and unlike Hangul, the space under the last line of a cell counts.
-                val pitch = (line ?: 240f) / 240f * single
-                LineSpacing.Multiple(pitch, baseline = 0.72f * single, textHeight = pitch)
-            }
+            else -> LineSpacing.Single((line ?: 240f) / 240f)
         }
         return segments.mapIndexed { i, runs ->
             Paragraph(
@@ -315,6 +302,10 @@ private class Docx(private val parts: ZipParts) {
                 text.append('\n')
             }
             "w:cr" -> text.append('\n')
+            "w:lastRenderedPageBreak" -> {
+                flush()
+                add(Run.PageEnd)
+            }
             "w:noBreakHyphen" -> text.append('‑')
             "w:sym" -> text.append(symbol(c.attr("w:char")))
             "w:drawing" -> {
@@ -434,6 +425,7 @@ private class Docx(private val parts: ZipParts) {
             rows += TableRow(
                 minHeight = (h?.attr("w:val")?.toFloatOrNull() ?: 0f) * TWIP,
                 exactHeight = h?.attr("w:hRule") == "exact",
+                repeats = toggle(trPr?.child("w:tblHeader")) == true,
             )
             var column = trPr?.child("w:gridBefore")?.attr("w:val")?.toIntOrNull() ?: 0
             for (tc in tr.all("w:tc") + tr.all("w:sdt").flatMap { it.child("w:sdtContent")?.all("w:tc").orEmpty() }) {
@@ -495,6 +487,7 @@ private class Docx(private val parts: ZipParts) {
                 "right", "end" -> Align.Right
                 else -> Align.Left
             },
+            bordersInRows = true,
         )
     }
 
@@ -543,8 +536,8 @@ private class Docx(private val parts: ZipParts) {
     private fun rProps(rPr: Element): RProps {
         val fonts = rPr.child("w:rFonts")
         fun theme(attr: String) = fonts?.attr(attr)?.let { themeFonts[it] }?.takeIf { it.isNotEmpty() }
-        val fontName = fonts?.attr("w:eastAsia") ?: theme("w:eastAsiaTheme")
-            ?: fonts?.attr("w:ascii") ?: theme("w:asciiTheme") ?: fonts?.attr("w:hAnsi")
+        val latin = fonts?.attr("w:ascii") ?: theme("w:asciiTheme") ?: fonts?.attr("w:hAnsi") ?: theme("w:hAnsiTheme")
+        val eastAsia = fonts?.attr("w:eastAsia") ?: theme("w:eastAsiaTheme")
         val highlight = rPr.child("w:highlight")?.attr("w:val")?.let(::highlightColor)
         val shade = parseColor(rPr.child("w:shd")?.attr("w:fill"))?.takeIf { it != 0xFFFFFFFF.toInt() }
         return RProps(
@@ -555,12 +548,15 @@ private class Docx(private val parts: ZipParts) {
             strike = toggle(rPr.child("w:strike")) ?: toggle(rPr.child("w:dstrike")),
             color = rPr.child("w:color")?.attr("w:val")?.let { parseColor(it) ?: if (it == "auto") 0xFF000000.toInt() else null },
             background = highlight ?: shade,
-            font = fontName?.let(::fontKind),
+            font = (eastAsia ?: latin)?.let(::fontKind),
             scaleX = rPr.child("w:w")?.attr("w:val")?.toFloatOrNull()?.div(100f),
             spacing = rPr.child("w:spacing")?.attr("w:val")?.toFloatOrNull()?.times(TWIP),
             vertAlign = rPr.child("w:vertAlign")?.attr("w:val"),
             hidden = toggle(rPr.child("w:vanish")),
-            fontName = fontName,
+            latinFont = latin,
+            eastAsiaFont = eastAsia,
+            eastAsiaHint = fonts?.attr("w:hint")?.let { it == "eastAsia" },
+            kern = rPr.child("w:kern")?.attr("w:val")?.toFloatOrNull()?.div(2f),
         )
     }
 

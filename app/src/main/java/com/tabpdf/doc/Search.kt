@@ -57,7 +57,7 @@ object TextSearch {
         val plain = StringBuilder(text.length)
         for (i in text.indices) {
             val c = when (val raw = text[i]) {
-                '⁠', '­' -> continue
+                '⁠', '­', '​' -> continue
                 '￼' -> '\u0000'
                 ' ', ' ' -> ' '
                 else -> raw.lowercaseChar()

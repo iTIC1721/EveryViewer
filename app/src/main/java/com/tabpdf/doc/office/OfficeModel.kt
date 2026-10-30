@@ -87,6 +87,11 @@ sealed interface LineSpacing {
     data class AtLeast(val points: Float) : LineSpacing
     /** Exactly [points] per line. */
     data class Exactly(val points: Float) : LineSpacing
+    /**
+     * Word's "single" line times [factor]: as tall as the tallest font on the line makes a single
+     * line ([OfficeFonts]), the text at its top and the rest of the pitch below it.
+     */
+    data class Single(val factor: Float = 1f) : LineSpacing
 }
 
 enum class FontKind { Sans, Serif, Mono }
@@ -107,7 +112,23 @@ data class TextStyle(
     val letterSpacing: Float = 0f,
     val superscript: Boolean = false,
     val subscript: Boolean = false,
-)
+    /**
+     * Word's typefaces: Latin letters in [latinFont], Hangul and Han in [eastAsiaFont] (with
+     * [eastAsiaHint], also the letters both share). Set, the text keeps those fonts' widths and
+     * line heights ([OfficeFonts]) though drawn in the system's.
+     */
+    val latinFont: String? = null,
+    val eastAsiaFont: String? = null,
+    val eastAsiaHint: Boolean = false,
+    /** Word kerns pairs of letters (w:kern, set for text this size). */
+    val kerning: Boolean = false,
+) {
+    /** The size the letters are drawn at, smaller for super- and subscripts. */
+    val textSize: Float get() = size * if (superscript || subscript) SMALL_SCRIPT else 1f
+}
+
+/** Super- and subscripts' size relative to the text. */
+const val SMALL_SCRIPT = 0.7f
 
 sealed interface Run {
     data class Text(val text: String, val style: TextStyle, val link: String? = null) : Run
@@ -115,6 +136,8 @@ sealed interface Run {
     class Picture(val bytes: ByteArray?, val width: Float, val height: Float) : Run
     /** Something this viewer doesn't draw (chart, equation, drawing): an empty box of its size. */
     class Unsupported(val width: Float, val height: Float) : Run
+    /** Where Word last ended a page before this, when it saved the file (w:lastRenderedPageBreak). */
+    data object PageEnd : Run
 }
 
 class Table(
@@ -131,6 +154,8 @@ class Table(
     val width: Float? = null,
     /** Room kept on the right of a content-sized table. */
     val indentRight: Float = 0f,
+    /** A row is as much taller as the line above it is wide (Word; rows of exact height excepted). */
+    val bordersInRows: Boolean = false,
 ) : OfficeBlock
 
 /**
@@ -147,7 +172,8 @@ class Box(
     val spaceBefore: Float = 0f,
 ) : OfficeBlock
 
-class TableRow(val minHeight: Float = 0f, val exactHeight: Boolean = false)
+/** [repeats]: a heading row, drawn again at the top of each page the table goes on to. */
+class TableRow(val minHeight: Float = 0f, val exactHeight: Boolean = false, val repeats: Boolean = false)
 
 class TableCell(
     val row: Int,

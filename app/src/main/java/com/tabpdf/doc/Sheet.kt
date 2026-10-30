@@ -25,6 +25,8 @@ class StackBlock(private val placed: List<Placed>, override val height: Float) :
         }
     }.filter { it > 0f && it < height }.distinct().sorted().toFloatArray()
 
+    override val pageEnds: FloatArray = placed.flatMap { p -> p.block.pageEnds.map { p.y + it } }.distinct().sorted().toFloatArray()
+
     override fun draw(canvas: Canvas) {
         // Only what shows: a stack can hold a whole document (an HTML page on a background).
         val clip = canvas.clipBounds
@@ -71,12 +73,17 @@ class SheetDocument(
     private val paperWidth: Float,
     /** Outline headings, in body flow positions. */
     private val headings: List<FlowHeading> = emptyList(),
+    /** For each sheet, the table whose heading rows are drawn again at its top, if any. */
+    private val repeated: List<Placed?> = emptyList(),
 ) : Document {
+    /** How far down the sheet's body its slice of the flow starts, below repeated heading rows. */
+    private fun lead(index: Int): Float = repeated.getOrNull(index)?.block?.repeatedTop ?: 0f
+
     override suspend fun tableOfContents(): List<TocEntry> = TocEntry.tree(headings.map { h ->
         val (page, down) = pageAt(boundaries, h.y)
         // The body slice sits below the header on the sheet.
         val bodyY = down * (boundaries[page + 1] - boundaries[page])
-        TocEntry.Flat(h.level, h.title, page, ((frame.bodyTop + bodyY) / frame.height).coerceIn(0f, 1f))
+        TocEntry.Flat(h.level, h.title, page, ((frame.bodyTop + lead(page) + bodyY) / frame.height).coerceIn(0f, 1f))
     })
 
     private val mutex = Mutex()
@@ -118,9 +125,17 @@ class SheetDocument(
         drawAll(canvas, frame.footer)
         val top = boundaries[index]
         val bottom = boundaries[index + 1]
+        val lead = lead(index)
+        repeated.getOrNull(index)?.let { table ->
+            canvas.save()
+            canvas.clipRect(0f, frame.bodyTop, FLOW_WIDTH, frame.bodyTop + lead)
+            canvas.translate(0f, frame.bodyTop - table.y)
+            drawAll(canvas, listOf(table))
+            canvas.restore()
+        }
         canvas.save()
-        canvas.clipRect(0f, frame.bodyTop, FLOW_WIDTH, frame.bodyTop + (bottom - top))
-        canvas.translate(0f, frame.bodyTop - top)
+        canvas.clipRect(0f, frame.bodyTop + lead, FLOW_WIDTH, frame.bodyTop + lead + (bottom - top))
+        canvas.translate(0f, frame.bodyTop + lead - top)
         drawAll(canvas, placed.filter { it.bottom > top && it.y < bottom })
         canvas.restore()
     }
@@ -145,7 +160,7 @@ class SheetDocument(
                 for (found in p.block.find(q)) {
                     val rects = found.offset(p.x, p.y)
                     val page = pageOf(boundaries, rects.first().centerY())
-                    val shift = frame.bodyTop - boundaries[page]
+                    val shift = frame.bodyTop + lead(page) - boundaries[page]
                     result += SearchMatch(page, rects.map {
                         RectF(it.left / FLOW_WIDTH, (it.top + shift) / frame.height, it.right / FLOW_WIDTH, (it.bottom + shift) / frame.height)
                     })
@@ -164,8 +179,12 @@ class SheetDocument(
         for (p in frame.header) p.block.collectText(builder.offset(p.x, p.y))
         val top = boundaries[index]
         val bottom = boundaries[index + 1]
+        repeated.getOrNull(index)?.let { table ->
+            val heading = builder.offset(0f, frame.bodyTop - table.y).clipped(table.y, table.y + lead(index))
+            table.block.collectText(heading.offset(table.x, table.y))
+        }
         // Body characters in flow coordinates, kept to this sheet's slice, then moved onto the sheet.
-        val body = builder.offset(0f, frame.bodyTop - top).clipped(top, bottom)
+        val body = builder.offset(0f, frame.bodyTop + lead(index) - top).clipped(top, bottom)
         for (p in placed.filter { it.bottom > top && it.y < bottom }) p.block.collectText(body.offset(p.x, p.y))
         for (p in frame.footer) p.block.collectText(builder.offset(p.x, p.y))
         builder.build().also { pageTexts.put(index, it) }
@@ -182,8 +201,8 @@ class SheetDocument(
     override fun linkAt(index: Int, x: Float, y: Float): String? {
         val sheetY = y * frame.height
         val flowX = x * FLOW_WIDTH
-        if (sheetY < frame.bodyTop) return null
-        val flowY = boundaries[index] + sheetY - frame.bodyTop
+        if (sheetY < frame.bodyTop + lead(index)) return null
+        val flowY = boundaries[index] + sheetY - frame.bodyTop - lead(index)
         if (flowY >= boundaries[index + 1]) return null
         return placed.firstOrNull { flowY >= it.y && flowY < it.bottom && flowX >= it.x }
             ?.let { it.block.linkAt(flowX - it.x, flowY - it.y) }
