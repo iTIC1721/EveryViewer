@@ -124,7 +124,13 @@ object FileAccess {
             e.isNotEmpty() && e.length <= 10 && e.all { it in 'a'..'z' || it in 'A'..'Z' || it in '0'..'9' }
         }
         val target = File(dir, UUID.randomUUID().toString() + (extension?.let { ".$it" } ?: ""))
-        val limit = StatFs(dir.path).availableBytes - KEEP_FREE_BYTES
+        copy(context, uri, target)
+        return Uri.fromFile(target)
+    }
+
+    /** Copies [uri] into [target], always leaving [KEEP_FREE_BYTES] free on the device. */
+    fun copy(context: Context, uri: Uri, target: File) {
+        val limit = StatFs(requireNotNull(target.parentFile).path).availableBytes - KEEP_FREE_BYTES
         try {
             context.contentResolver.openInputStream(uri)?.use { input ->
                 target.outputStream().use { output ->
@@ -144,7 +150,6 @@ object FileAccess {
             target.delete()
             throw e
         }
-        return Uri.fromFile(target)
     }
 
     /**

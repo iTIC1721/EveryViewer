@@ -22,6 +22,7 @@ import com.tabpdf.doc.Bundles
 import com.tabpdf.doc.Document
 import com.tabpdf.doc.Documents
 import com.tabpdf.doc.FileFormat
+import com.tabpdf.doc.ImageDocument
 import com.tabpdf.doc.Thumbnails
 import com.tabpdf.doc.TocEntry
 import com.tabpdf.doc.awaitComplete
@@ -119,8 +120,10 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
             // password, so it isn't kept on the disk longer than that (as for thumbnails).
             withContext(Dispatchers.IO) {
                 File(app.cacheDir, EXPORT_DIR).deleteRecursively()
-                // Copies for reading bookmarks, left when the app ended while one was read.
-                File(app.cacheDir, PdfDocument.TEMP_DIR).listFiles()?.forEach { if (it.lastModified() < app.startedAt) it.delete() }
+                // Copies for reading bookmarks, and of images being shown, left when the app ended meanwhile.
+                for (temp in listOf(PdfDocument.TEMP_DIR, ImageDocument.TEMP_DIR)) {
+                    File(app.cacheDir, temp).listFiles()?.forEach { if (it.lastModified() < app.startedAt) it.delete() }
+                }
             }
         }
         ink.deleteOrphans()

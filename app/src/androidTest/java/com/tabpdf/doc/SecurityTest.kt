@@ -1,7 +1,9 @@
 package com.tabpdf.doc
 
+import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.SystemClock
+import android.util.Base64
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.tabpdf.doc.html.HtmlDocument
@@ -28,6 +30,7 @@ import java.io.DataOutputStream
 import java.io.File
 import java.io.IOException
 import java.nio.ByteBuffer
+import java.util.UUID
 import java.util.zip.CRC32
 import java.util.zip.DeflaterOutputStream
 import java.util.zip.ZipEntry
@@ -359,6 +362,51 @@ class SecurityTest {
             }
         }
         assertTrue(SystemClock.elapsedRealtime() - started < 5_000)
+    }
+
+    /** A 1×1 WBMP: a format Android decodes, but not one the app shows. */
+    private val wbmp = byteArrayOf(0, 0, 1, 1, 0)
+
+    @Test
+    fun picturesInFormatsTheAppDoesNotShowAreNotDecoded() = runBlocking {
+        // Android picks the decoder by content, whatever the name or "data:image/png" says, and has
+        // more of them than the formats the app shows (camera raw like DNG: the way in of the 2025
+        // attacks with a single picture). Only those formats reach it.
+        assertNotNull(BitmapFactory.decodeByteArray(wbmp, 0, wbmp.size))
+        assertFalse(FileFormats.isImage(wbmp))
+        assertFalse(FileFormats.isImage(byteArrayOf(0x49, 0x49, 0x2A, 0, 8, 0, 0, 0))) // TIFF, DNG
+        assertFalse(FileFormats.isImage(byteArrayOf(0x4D, 0x4D, 0, 0x2A, 0, 0, 0, 8)))
+        assertTrue(FileFormats.isImage(png(1, 1)))
+        try {
+            openFile("photo.jpg", wbmp, FileFormat.Image).close()
+            fail("opened")
+        } catch (e: DocumentOpenException) {
+            assertEquals(DocumentOpenException.Reason.Unsupported, e.reason)
+        }
+        // In a page, its description shows instead, as for a picture that isn't in the file.
+        fun page(bytes: ByteArray) = HtmlDocument.render(
+            "<p><img src=\"data:image/png;base64,${Base64.encodeToString(bytes, Base64.NO_WRAP)}\" alt=\"그림설명\"></p>"
+        )
+        page(wbmp).let { doc -> assertTrue(doc.search("그림설명").isNotEmpty()); doc.close() }
+        page(png(1, 1)).let { doc -> assertTrue(doc.search("그림설명").isEmpty()); doc.close() }
+    }
+
+    @Test
+    fun anImageIsDecodedFromTheBytesThatWereChecked() = runBlocking {
+        // Its provider gives a 1×1 picture first and a 4000×4000 one after that. Read again to be
+        // decoded, the file would have got past the checks made on the first (format, size limit).
+        val uri = Uri.parse("content://${ChangingImageProvider.AUTHORITY}/${UUID.randomUUID()}.png")
+        val copies = File(context.cacheDir, ImageDocument.TEMP_DIR)
+        val before = copies.listFiles().orEmpty().size
+        val doc = Documents.open(context, uri, "changing.png", FileFormat.Image)
+        try {
+            assertEquals(1f, doc.pageSizes[0].width)
+            assertEquals(1, doc.renderPage(0, 100)!!.width)
+        } finally {
+            doc.close()
+        }
+        // The copy goes with the document.
+        assertEquals(before, copies.listFiles().orEmpty().size)
     }
 
     @Test

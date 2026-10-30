@@ -7,6 +7,11 @@
             android:name="com.tabpdf.tabs.TestPdfProvider"
             android:authorities="com.tabpdf.test.pdfs"
             android:exported="true" />
+        <!-- Gives other bytes each time a file is read, as a hostile app's provider could (SecurityTest). -->
+        <provider
+            android:name="com.tabpdf.doc.ChangingImageProvider"
+            android:authorities="com.tabpdf.test.images"
+            android:exported="true" />
     </application>
 
 </manifest>

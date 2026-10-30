@@ -2,6 +2,7 @@ package com.tabpdf.doc.html
 
 import android.graphics.BitmapFactory
 import android.util.Base64
+import com.tabpdf.doc.FileFormats
 import com.tabpdf.doc.isWebLink
 import com.tabpdf.doc.office.Align
 import com.tabpdf.doc.office.Border
@@ -393,7 +394,7 @@ class HtmlReader private constructor(
     /** An image: drawn if it is inside the file, else its description (pages can't be fetched). */
     private fun image(e: Element, s: Style, inline: Inline, state: InlineState) {
         val src = e.attr("src").trim()
-        val bytes = if (src.startsWith("data:image/", true) && src.contains(";base64,")) {
+        val found = if (src.startsWith("data:image/", true) && src.contains(";base64,")) {
             val data = src.substringAfter(";base64,")
             if (data.length / 4 * 3 > MAX_IMAGE_BYTES) null
             else try {
@@ -406,6 +407,8 @@ class HtmlReader private constructor(
         } else {
             null
         }
+        // Whatever "data:image/png" or the name says: only the formats the app shows are decoded.
+        val bytes = found?.takeIf { FileFormats.isImage(it) }
         val cssWidth = s.width?.takeIf { !it.auto && it.percent == 0f }?.px
         val cssHeight = s.height?.takeIf { !it.auto && it.percent == 0f }?.px
         var width = cssWidth ?: pixels(e.attr("width"))

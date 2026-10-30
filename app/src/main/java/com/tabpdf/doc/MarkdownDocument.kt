@@ -298,6 +298,7 @@ private class MarkdownRenderer {
         if (!url.startsWith("data:image/") || !url.contains(";base64,")) return null
         return try {
             val bytes = Base64.decode(url.substringAfter(";base64,"), Base64.DEFAULT)
+            if (!FileFormats.isImage(bytes)) return null
             // A small file can claim a huge picture: read it no larger than the page needs.
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)

@@ -18,6 +18,7 @@ import android.graphics.Shader
 import android.util.LruCache
 import com.tabpdf.doc.Document
 import com.tabpdf.doc.FLOW_WIDTH
+import com.tabpdf.doc.FileFormats
 import com.tabpdf.doc.FlowBlock
 import com.tabpdf.doc.Found
 import com.tabpdf.doc.PageText
@@ -107,6 +108,7 @@ class SlideDocument private constructor(
 
     /** [bytes] decoded at least [widthPx] wide (or as large as it is), or null if it can't be. */
     private fun picture(bytes: ByteArray, widthPx: Float): Bitmap? {
+        if (!FileFormats.isImage(bytes)) return null
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
         if (bounds.outWidth <= 0) return null
