@@ -260,7 +260,7 @@ private class Hwp(private val file: HWPFile) {
         val raw = control.rowList.flatMap { it.cellList }
         val columnCount = maxOf(t.columnCount, raw.maxOfOrNull { it.listHeader.colIndex + it.listHeader.colSpan.coerceAtLeast(1) } ?: 0)
         val rowCount = maxOf(t.rowCount, raw.maxOfOrNull { it.listHeader.rowIndex + it.listHeader.rowSpan.coerceAtLeast(1) } ?: 0)
-        if (columnCount > 10_000 || rowCount > 100_000) throw IOException("Table too large")
+        if (columnCount > MAX_TABLE_COLUMNS || rowCount > MAX_TABLE_ROWS) throw IOException("Table too large")
 
         // Column edges from the cell widths: each cell fixes the distance between two edges.
         val edges = arrayOfNulls<Float>(columnCount + 1).also { it[0] = 0f }

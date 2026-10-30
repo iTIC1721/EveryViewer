@@ -94,6 +94,13 @@ class LinkSpan(val url: String)
 fun isWebLink(url: String) =
     url.startsWith("http://", true) || url.startsWith("https://", true) || url.startsWith("mailto:", true)
 
+/**
+ * A number from a file, if it is one that can be a length or size: "NaN" and "Infinity" read as
+ * numbers too, and slip through every comparison (coerceIn keeps NaN), so pages and loops would
+ * never end. Files are read with this, not toFloatOrNull.
+ */
+fun String.toFiniteFloatOrNull(): Float? = toFloatOrNull()?.takeIf { it.isFinite() }
+
 /** A block placed in the flow at ([x], [y]). */
 class Placed(val block: FlowBlock, val x: Float, val y: Float) {
     val bottom: Float get() = y + block.height
@@ -185,12 +192,16 @@ class FlowBuilder {
     }
 }
 
+/** More pages than any real document laid out at once has (a 64 MB e-book chapter makes some tens of thousands). */
+private const val MAX_PAGES = 1_000_000
+
 /**
  * Page boundaries for content [total] tall: 0, then each page's end, ending at [total]. A page
  * ends at a [forced] break (page break) if one comes within [maxPage]; otherwise at the last
  * allowed break no lower than [maxPage] below its top, preferring one that keeps it at least half
  * full; content with no break in reach is cut at [maxPage].
  */
+
 fun paginate(
     total: Float,
     breaks: FloatArray,
@@ -205,9 +216,12 @@ fun paginate(
     /** How far a page may run past [maxPage] to end where the saving program ended it. */
     overrun: Float = 0f,
 ): FloatArray {
+    // Sizes from a crafted file (endless, not a number) would make pages that never end.
+    if (!total.isFinite() || !maxPage.isFinite() || maxPage <= 0f) throw java.io.IOException("Bad layout")
     val result = mutableListOf(0f)
     var top = 0f
     while (true) {
+        if (!top.isFinite() || result.size > MAX_PAGES) throw java.io.IOException("Pages never end")
         val limit = top + (maxPage - (lead?.invoke(top) ?: 0f)).coerceAtLeast(maxPage / 2)
         val pageBreak = forced.firstOrNull { it > top + 0.5f && it <= limit && it < total }
         // The saving program's page end, unless it is far from this layout's (an old or foreign mark).

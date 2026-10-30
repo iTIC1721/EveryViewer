@@ -1,5 +1,6 @@
 package com.tabpdf.doc.html
 
+import com.tabpdf.doc.toFiniteFloatOrNull
 import com.tabpdf.doc.DocumentOpenException
 import org.jsoup.nodes.Element
 import java.util.BitSet
@@ -112,6 +113,12 @@ private const val MAX_MATCH_STEPS = 200_000_000L
 /** Longer selectors are dropped: real ones have a few compounds. */
 private const val MAX_COMPOUNDS = 32
 
+/** Deeper @media and @supports blocks are skipped: real style sheets nest one or two. */
+private const val MAX_NESTING = 16
+
+/** Longer lengths aren't read: "12.5px" is short, and a long run of digits made the pattern below backtrack for ever. */
+private const val MAX_LENGTH_CHARS = 32
+
 /** Rules without a tag, class or id to look them up by are tried on every element: their number is limited. */
 private const val MAX_UNIVERSAL_RULES = 1_000
 
@@ -150,7 +157,11 @@ class Stylesheet {
         return normal + important
     }
 
-    private fun parseRules(css: String) {
+    /**
+     * [depth]: how many @media and @supports blocks this is inside. Each level copies its body, so
+     * thousands of them nested in a large style sheet would never finish (or run out of stack).
+     */
+    private fun parseRules(css: String, depth: Int = 0) {
         var i = 0
         while (i < css.length) {
             val c = css[i]
@@ -168,8 +179,9 @@ class Stylesheet {
                     val name = prelude.substringBefore(' ').substringBefore('(').lowercase()
                     val body = css.substring(end + 1, close)
                     when {
-                        name == "media" && mediaMatches(prelude.substring(5)) -> parseRules(body)
-                        name == "supports" -> parseRules(body)
+                        depth >= MAX_NESTING -> Unit
+                        name == "media" && mediaMatches(prelude.substring(5)) -> parseRules(body, depth + 1)
+                        name == "supports" -> parseRules(body, depth + 1)
                     }
                     i = close + 1
                 }
@@ -399,8 +411,10 @@ object CssValues {
     fun length(value: String, em: Float, rem: Float, percentOf: Float?): Float? {
         val v = value.trim().lowercase()
         if (v == "0") return 0f
+        if (v.length > MAX_LENGTH_CHARS) return null
         val m = Regex("""^([+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?)([a-z%]*)$""").find(v) ?: return null
-        val n = m.groupValues[1].toFloatOrNull() ?: return null
+        // "1e99" is a number too, but no length: it would be endless.
+        val n = m.groupValues[1].toFiniteFloatOrNull()?.takeIf { it.isFinite() } ?: return null
         return when (m.groupValues[2]) {
             "px", "" -> if (m.groupValues[2].isEmpty() && n != 0f) null else n
             "pt" -> n * 4f / 3f
@@ -443,15 +457,15 @@ object CssValues {
         if (fn != null) {
             val args = fn.groupValues[2].split(',', ' ', '/').map { it.trim() }.filter { it.isNotEmpty() }
             if (args.size < 3) return null
-            val alpha = args.getOrNull(3)?.let { a -> if (a.endsWith('%')) a.dropLast(1).toFloatOrNull()?.div(100f) else a.toFloatOrNull() } ?: 1f
+            val alpha = args.getOrNull(3)?.let { a -> if (a.endsWith('%')) a.dropLast(1).toFiniteFloatOrNull()?.div(100f) else a.toFiniteFloatOrNull() } ?: 1f
             val a = (alpha.coerceIn(0f, 1f) * 255).toInt()
             return if (fn.groupValues[1].startsWith("rgb")) {
-                fun ch(s: String) = (if (s.endsWith('%')) s.dropLast(1).toFloatOrNull()?.times(2.55f) else s.toFloatOrNull())?.toInt()?.coerceIn(0, 255)
+                fun ch(s: String) = (if (s.endsWith('%')) s.dropLast(1).toFiniteFloatOrNull()?.times(2.55f) else s.toFiniteFloatOrNull())?.toInt()?.coerceIn(0, 255)
                 argb(a, ch(args[0]) ?: return null, ch(args[1]) ?: return null, ch(args[2]) ?: return null)
             } else {
-                val h = args[0].removeSuffix("deg").toFloatOrNull() ?: return null
-                val s = args[1].removeSuffix("%").toFloatOrNull()?.div(100f) ?: return null
-                val l = args[2].removeSuffix("%").toFloatOrNull()?.div(100f) ?: return null
+                val h = args[0].removeSuffix("deg").toFiniteFloatOrNull() ?: return null
+                val s = args[1].removeSuffix("%").toFiniteFloatOrNull()?.div(100f) ?: return null
+                val l = args[2].removeSuffix("%").toFiniteFloatOrNull()?.div(100f) ?: return null
                 val rgb = android.graphics.Color.HSVToColor(hslToHsv(h, s.coerceIn(0f, 1f), l.coerceIn(0f, 1f)))
                 (a shl 24) or (rgb and 0xFFFFFF)
             }

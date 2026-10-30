@@ -18,6 +18,14 @@ fun checkPaper(width: Float, height: Float) {
     if (width !in PAPER_POINTS || height !in PAPER_POINTS) throw java.io.IOException("Bad paper size")
 }
 
+/**
+ * Most columns and rows a table in a file may have; beyond it the file is crafted (Word makes at most
+ * 63 columns). Laying a table out takes columns × cells work, so a few bytes claiming billions would
+ * never finish.
+ */
+const val MAX_TABLE_COLUMNS = 10_000
+const val MAX_TABLE_ROWS = 100_000
+
 class OfficeDocument(
     val page: PageSetup,
     val body: List<OfficeBlock>,

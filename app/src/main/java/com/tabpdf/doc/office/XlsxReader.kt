@@ -1,5 +1,6 @@
 package com.tabpdf.doc.office
 
+import com.tabpdf.doc.toFiniteFloatOrNull
 import android.util.Xml
 import org.xmlpull.v1.XmlPullParser
 import java.io.ByteArrayInputStream
@@ -88,6 +89,9 @@ object XlsxReader {
     private const val MAX_ROWS = 1_048_576
     private const val MAX_COLUMNS = 16_384
 
+    /** Excel's widest column, in characters: a wider one would make a page of any width. */
+    private const val MAX_COLUMN_WIDTH = 255f
+
     /** Columns past this many are not shown (a style applied to whole rows reaches column XFD). */
     private const val SHOWN_COLUMNS = 1_000
 
@@ -166,7 +170,7 @@ object XlsxReader {
                 ?: e.attr("theme")?.toIntOrNull()?.let { theme.getOrNull(it) }
                 ?: e.attr("indexed")?.toIntOrNull()?.let { if (it == 64 || it == 65) null else indexed.getOrNull(it) }
                 ?: return null
-            val tint = e.attr("tint")?.toFloatOrNull() ?: 0f
+            val tint = e.attr("tint")?.toFiniteFloatOrNull() ?: 0f
             return if (tint == 0f) base else tinted(base, tint)
         }
 
@@ -236,7 +240,7 @@ object XlsxReader {
             else -> FontKind.Sans
         }
         return CellFont(
-            size = e.child("sz")?.attr("val")?.toFloatOrNull()?.coerceIn(1f, 409f) ?: 11f,
+            size = e.child("sz")?.attr("val")?.toFiniteFloatOrNull()?.coerceIn(1f, 409f) ?: 11f,
             bold = flag("b"),
             italic = flag("i"),
             underline = e.child("u")?.let { it.attr("val") != "none" } ?: false,
@@ -368,9 +372,7 @@ object XlsxReader {
         var truncated = false
 
         fun read(bytes: ByteArray, name: String, parts: ZipParts, path: String): SheetModel {
-            val parser = Xml.newPullParser()
-            parser.setFeature(XmlPullParser.FEATURE_PROCESS_NAMESPACES, false)
-            parser.setInput(ByteArrayInputStream(bytes), null)
+            val parser = xmlParser(bytes)
 
             var tabColor: Int? = null
             var showGrid = true
@@ -426,15 +428,15 @@ object XlsxReader {
                             "tabColor" -> tabColor = colorAttrs(parser)
                             "sheetView" -> showGrid = parser.getAttributeValue(null, "showGridLines") != "0"
                             "sheetFormatPr" -> {
-                                parser.getAttributeValue(null, "defaultRowHeight")?.toFloatOrNull()?.let { defaultRowHeight = it.coerceIn(0f, 409f) }
-                                defaultColumnWidth = parser.getAttributeValue(null, "defaultColWidth")?.toFloatOrNull()
-                                parser.getAttributeValue(null, "baseColWidth")?.toFloatOrNull()?.let { baseColumnWidth = it }
+                                parser.getAttributeValue(null, "defaultRowHeight")?.toFiniteFloatOrNull()?.let { defaultRowHeight = it.coerceIn(0f, 409f) }
+                                defaultColumnWidth = parser.getAttributeValue(null, "defaultColWidth")?.toFiniteFloatOrNull()?.coerceIn(0f, MAX_COLUMN_WIDTH)
+                                parser.getAttributeValue(null, "baseColWidth")?.toFiniteFloatOrNull()?.let { baseColumnWidth = it.coerceIn(0f, MAX_COLUMN_WIDTH) }
                             }
                             "col" -> {
                                 val min = parser.getAttributeValue(null, "min")?.toIntOrNull() ?: continue@loop
                                 val max = parser.getAttributeValue(null, "max")?.toIntOrNull() ?: min
                                 if (min < 1 || max < min) continue@loop
-                                val width = parser.getAttributeValue(null, "width")?.toFloatOrNull()
+                                val width = parser.getAttributeValue(null, "width")?.toFiniteFloatOrNull()?.coerceIn(0f, MAX_COLUMN_WIDTH)
                                 val hidden = parser.getAttributeValue(null, "hidden").let { it == "1" || it == "true" }
                                 columnSpecs += Triple((min - 1)..(minOf(max, MAX_COLUMNS) - 1), width, hidden)
                             }
@@ -447,7 +449,7 @@ object XlsxReader {
                                     skipping = true
                                 }
                                 cellColumn = -1
-                                parser.getAttributeValue(null, "ht")?.toFloatOrNull()?.let { rowHeights[rowIndex] = it.coerceIn(0f, 409f) }
+                                parser.getAttributeValue(null, "ht")?.toFiniteFloatOrNull()?.let { rowHeights[rowIndex] = it.coerceIn(0f, 409f) }
                                 if (parser.getAttributeValue(null, "hidden").let { it == "1" || it == "true" }) hiddenRows += rowIndex
                             }
                             "c" -> {

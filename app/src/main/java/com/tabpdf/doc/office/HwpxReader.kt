@@ -1,5 +1,7 @@
 package com.tabpdf.doc.office
 
+import com.tabpdf.doc.toFiniteFloatOrNull
+
 /**
  * Hangul documents (.hwpx, OWPML / KS X 6101) into an [OfficeDocument] (기획서 5.7). Text and
  * paragraph shapes come from the header's property tables (charPr, paraPr, borderFill), referred
@@ -147,7 +149,7 @@ private class Hwpx(private val parts: ZipParts) {
 
     private fun size(e: Element): Pair<Float, Float> {
         val sz = e.child("hp:sz")
-        return ((sz?.attr("width")?.toFloatOrNull() ?: 4000f) * HWPUNIT) to ((sz?.attr("height")?.toFloatOrNull() ?: 2000f) * HWPUNIT)
+        return ((sz?.attr("width")?.toFiniteFloatOrNull() ?: 4000f) * HWPUNIT) to ((sz?.attr("height")?.toFiniteFloatOrNull() ?: 2000f) * HWPUNIT)
     }
 
     private fun picture(pic: Element): Run {
@@ -176,11 +178,11 @@ private class Hwpx(private val parts: ZipParts) {
 
     private fun page(secPr: Element): PageSetup? {
         val pagePr = secPr.child("hp:pagePr") ?: return null
-        var width = (pagePr.attr("width")?.toFloatOrNull() ?: 59528f) * HWPUNIT
-        var height = (pagePr.attr("height")?.toFloatOrNull() ?: 84188f) * HWPUNIT
+        var width = (pagePr.attr("width")?.toFiniteFloatOrNull() ?: 59528f) * HWPUNIT
+        var height = (pagePr.attr("height")?.toFiniteFloatOrNull() ?: 84188f) * HWPUNIT
         if (pagePr.attr("landscape") == "NARROWLY" && width < height) width = height.also { height = width }
         val m = pagePr.child("hp:margin")
-        fun v(name: String, default: Float) = m?.attr(name)?.toFloatOrNull()?.times(HWPUNIT) ?: default
+        fun v(name: String, default: Float) = m?.attr(name)?.toFiniteFloatOrNull()?.times(HWPUNIT) ?: default
         val top = v("top", 20f)
         val bottom = v("bottom", 15f)
         val headerHeight = v("header", 15f)
@@ -203,8 +205,8 @@ private class Hwpx(private val parts: ZipParts) {
     private fun table(tbl: Element, pageBreak: Boolean): OfficeBlock {
         val inMargin = tbl.child("hp:inMargin")
         fun insets(e: Element?, default: Insets) = if (e == null) default else Insets(
-            (e.attr("left")?.toFloatOrNull() ?: 0f) * HWPUNIT, (e.attr("top")?.toFloatOrNull() ?: 0f) * HWPUNIT,
-            (e.attr("right")?.toFloatOrNull() ?: 0f) * HWPUNIT, (e.attr("bottom")?.toFloatOrNull() ?: 0f) * HWPUNIT,
+            (e.attr("left")?.toFiniteFloatOrNull() ?: 0f) * HWPUNIT, (e.attr("top")?.toFiniteFloatOrNull() ?: 0f) * HWPUNIT,
+            (e.attr("right")?.toFiniteFloatOrNull() ?: 0f) * HWPUNIT, (e.attr("bottom")?.toFiniteFloatOrNull() ?: 0f) * HWPUNIT,
         )
         val tableMargin = insets(inMargin, Insets(5.1f, 1.4f, 5.1f, 1.4f))
 
@@ -218,13 +220,14 @@ private class Hwpx(private val parts: ZipParts) {
                 col = addr?.attr("colAddr")?.toIntOrNull() ?: 0,
                 rowSpan = span?.attr("rowSpan")?.toIntOrNull()?.coerceAtLeast(1) ?: 1,
                 colSpan = span?.attr("colSpan")?.toIntOrNull()?.coerceAtLeast(1) ?: 1,
-                width = (sz?.attr("width")?.toFloatOrNull() ?: 0f) * HWPUNIT,
-                height = (sz?.attr("height")?.toFloatOrNull() ?: 0f) * HWPUNIT,
+                width = (sz?.attr("width")?.toFiniteFloatOrNull() ?: 0f) * HWPUNIT,
+                height = (sz?.attr("height")?.toFiniteFloatOrNull() ?: 0f) * HWPUNIT,
                 tc = tc,
             )
         }
         val columnCount = maxOf(tbl.attr("colCnt")?.toIntOrNull() ?: 0, raw.maxOfOrNull { it.col + it.colSpan } ?: 0)
         val rowCount = maxOf(tbl.attr("rowCnt")?.toIntOrNull() ?: 0, raw.maxOfOrNull { it.row + it.rowSpan } ?: 0)
+        if (columnCount !in 0..MAX_TABLE_COLUMNS || rowCount !in 0..MAX_TABLE_ROWS) throw java.io.IOException("Table too large")
 
         // Column edges from the cell widths: each cell fixes the distance between two edges.
         val edges = arrayOfNulls<Float>(columnCount + 1).also { it[0] = 0f }
@@ -293,7 +296,7 @@ private class Hwpx(private val parts: ZipParts) {
      */
     private fun fitPadding(padding: Insets, cellWidth: Float, subList: Element?): Insets {
         val p = subList?.child("hp:p") ?: return padding
-        val used = p.find("hp:lineseg")?.attr("horzsize")?.toFloatOrNull()?.times(HWPUNIT) ?: return padding
+        val used = p.find("hp:lineseg")?.attr("horzsize")?.toFiniteFloatOrNull()?.times(HWPUNIT) ?: return padding
         val shape = paraShapes[p.attr("paraPrIDRef")]
         val inner = used + (shape?.left ?: 0f) + (shape?.right ?: 0f)
         val sides = padding.left + padding.right
@@ -307,7 +310,7 @@ private class Hwpx(private val parts: ZipParts) {
             val e = bf.child(name) ?: return null
             val type = e.attr("type") ?: "NONE"
             if (type == "NONE") return null
-            val mm = e.attr("width")?.substringBefore(' ')?.toFloatOrNull() ?: 0.12f
+            val mm = e.attr("width")?.substringBefore(' ')?.toFiniteFloatOrNull() ?: 0.12f
             val width = mm * 72f / 25.4f
             return Border(if (type.startsWith("DOUBLE")) width * 2.5f else width, parseColor(e.attr("color"), bgr = true) ?: 0xFF000000.toInt())
         }
@@ -329,13 +332,13 @@ private class Hwpx(private val parts: ZipParts) {
             font?.child("hh:typeInfo")?.attr("familyType") == "FCAT_MYUNGJO" -> FontKind.Serif
             else -> font?.attr("face")?.let(::fontKind) ?: FontKind.Sans
         }
-        val ratio = e.child("hh:ratio")?.attr("hangul")?.toFloatOrNull() ?: 100f
-        val spacing = e.child("hh:spacing")?.attr("hangul")?.toFloatOrNull() ?: 0f
+        val ratio = e.child("hh:ratio")?.attr("hangul")?.toFiniteFloatOrNull() ?: 100f
+        val spacing = e.child("hh:spacing")?.attr("hangul")?.toFiniteFloatOrNull() ?: 0f
         val underline = e.child("hh:underline")?.attr("type")?.let { it != "NONE" } ?: false
         val strike = e.child("hh:strikeout")?.attr("shape")?.let { it != "NONE" && it != "3D" } ?: false
         return CharShape(
             TextStyle(
-                size = (e.attr("height")?.toFloatOrNull() ?: 1000f) / 100f,
+                size = (e.attr("height")?.toFiniteFloatOrNull() ?: 1000f) / 100f,
                 bold = e.child("hh:bold") != null,
                 italic = e.child("hh:italic") != null,
                 underline = underline,
@@ -359,9 +362,9 @@ private class Hwpx(private val parts: ZipParts) {
 
     private fun paraShape(e: Element): ParaShape {
         val margin = property(e, "hh:margin")
-        fun m(name: String) = (margin?.child(name)?.attr("value")?.toFloatOrNull() ?: 0f) * HWPUNIT
+        fun m(name: String) = (margin?.child(name)?.attr("value")?.toFiniteFloatOrNull() ?: 0f) * HWPUNIT
         val ls = property(e, "hh:lineSpacing")
-        val value = ls?.attr("value")?.toFloatOrNull() ?: 160f
+        val value = ls?.attr("value")?.toFiniteFloatOrNull() ?: 160f
         val spacing = when (ls?.attr("type")) {
             "FIXED" -> LineSpacing.Exactly(value * HWPUNIT)
             "AT_LEAST" -> LineSpacing.AtLeast(value * HWPUNIT)
