@@ -64,6 +64,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -312,7 +313,9 @@ fun DocumentViewer(
                 Modifier.align(Alignment.Center),
             )
             doc == null -> CircularProgressIndicator(Modifier.align(Alignment.Center))
-            else -> DocumentPages(
+            // Composed anew for each document: its remembered state (the pages laid out so far
+            // among it) must not carry over to another one opened in its place (a tab made a bundle).
+            else -> key(doc) { DocumentPages(
                 document = doc,
                 viewportWidth = constraints.maxWidth.toFloat(),
                 viewportHeight = constraints.maxHeight.toFloat(),
@@ -328,7 +331,7 @@ fun DocumentViewer(
                 searchIndex = searchIndex,
                 onSearchResults = onSearchResults,
                 onPageDrawn = { drawn.value = true },
-            )
+            ) }
         }
     }
 }
