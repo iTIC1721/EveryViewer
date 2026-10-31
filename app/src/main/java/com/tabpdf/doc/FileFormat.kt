@@ -119,9 +119,27 @@ object FileFormats {
             // "BM" alone is too common a start for text; check the size of the header that follows.
             head.startsWith("BM") && head.size >= 18 && head.int32At(14) in setOf(12, 40, 52, 56, 64, 108, 124) ||
             head.startsWith("RIFF") && head.size >= 12 && String(head, 8, 4, Charsets.US_ASCII) == "WEBP" ||
-            // ISO media "ftyp" box with a HEIF brand.
-            head.size >= 12 && String(head, 4, 4, Charsets.US_ASCII) == "ftyp" &&
-            String(head, 8, 4, Charsets.US_ASCII) in setOf("heic", "heix", "mif1", "msf1", "hevc", "heim", "heis")
+            isHeif(head)
+
+    /**
+     * HEIF: an ISO media "ftyp" box with a HEIF brand, and not AVIF (the same container, another
+     * decoder) among the brands it also claims. Android decodes HEIF through its media service,
+     * which an isolated process can't reach ([Pictures]).
+     */
+    fun isHeif(head: ByteArray): Boolean {
+        if (head.size < 12 || String(head, 4, 4, Charsets.US_ASCII) != "ftyp") return false
+        if (String(head, 8, 4, Charsets.US_ASCII) !in setOf("heic", "heix", "mif1", "msf1", "hevc", "heim", "heis")) return false
+        val box = ((head[0].toInt() and 0xFF) shl 24) or ((head[1].toInt() and 0xFF) shl 16) or
+            ((head[2].toInt() and 0xFF) shl 8) or (head[3].toInt() and 0xFF)
+        // Brands after the major one and its version, as far as the box (and what was read) goes.
+        val end = minOf(box, head.size)
+        var i = 16
+        while (i + 4 <= end) {
+            if (String(head, i, 4, Charsets.US_ASCII) in setOf("avif", "avis")) return false
+            i += 4
+        }
+        return true
+    }
 
     private fun ByteArray.int32At(i: Int): Int =
         (this[i].toInt() and 0xFF) or ((this[i + 1].toInt() and 0xFF) shl 8) or

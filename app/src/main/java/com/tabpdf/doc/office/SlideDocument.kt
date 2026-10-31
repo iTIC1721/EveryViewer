@@ -1,7 +1,7 @@
 package com.tabpdf.doc.office
 
+import com.tabpdf.doc.Pictures
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.ColorMatrix
@@ -18,7 +18,6 @@ import android.graphics.Shader
 import android.util.LruCache
 import com.tabpdf.doc.Document
 import com.tabpdf.doc.FLOW_WIDTH
-import com.tabpdf.doc.FileFormats
 import com.tabpdf.doc.FlowBlock
 import com.tabpdf.doc.Found
 import com.tabpdf.doc.PageText
@@ -108,18 +107,14 @@ class SlideDocument private constructor(
 
     /** [bytes] decoded at least [widthPx] wide (or as large as it is), or null if it can't be. */
     private fun picture(bytes: ByteArray, widthPx: Float): Bitmap? {
-        if (!FileFormats.isImage(bytes)) return null
-        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-        if (bounds.outWidth <= 0) return null
+        val size = Pictures.size(bytes) ?: return null
         var sample = 1
-        while (bounds.outWidth / (sample * 2) >= widthPx && sample < 64) sample *= 2
+        while (size.width / (sample * 2) >= widthPx && sample < 64) sample *= 2
         // A small file can claim a huge (or very tall) picture: never more than 16 million pixels.
-        while (bounds.outWidth.toLong() * bounds.outHeight / (sample.toLong() * sample) > MAX_PICTURE_PIXELS) sample *= 2
+        while (size.width.toLong() * size.height / (sample.toLong() * sample) > MAX_PICTURE_PIXELS) sample *= 2
         pictures[bytes to sample]?.let { return it }
         return try {
-            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
-                ?.also { pictures.put(bytes to sample, it) }
+            Pictures.decode(bytes, size, sample)?.also { pictures.put(bytes to sample, it) }
         } catch (e: OutOfMemoryError) {
             android.util.Log.w("EveryViewer", "No memory for a picture", e)
             null

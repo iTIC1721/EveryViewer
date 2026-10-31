@@ -1,7 +1,7 @@
 package com.tabpdf.doc.office
 
+import com.tabpdf.doc.Pictures
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.DashPathEffect
 import android.graphics.Paint
@@ -801,13 +801,11 @@ private class PictureSpan(private val bytes: ByteArray?, private val width: Floa
         val data = bytes?.takeIf { FileFormats.isImage(it) } ?: return null
         cache.get(this)?.let { return it }
         return try {
-            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            BitmapFactory.decodeByteArray(data, 0, data.size, bounds)
+            val size = Pictures.size(data) ?: return null
             var sample = 1
-            while (bounds.outWidth / (sample * 2) >= width * 3 ||
-                bounds.outWidth.toLong() * bounds.outHeight / (sample.toLong() * sample) > MAX_PIXELS) sample *= 2
-            BitmapFactory.decodeByteArray(data, 0, data.size, BitmapFactory.Options().apply { inSampleSize = sample })
-                ?.also { cache.put(this, it) }
+            while (size.width / (sample * 2) >= width * 3 ||
+                size.width.toLong() * size.height / (sample.toLong() * sample) > MAX_PIXELS) sample *= 2
+            Pictures.decode(data, size, sample)?.also { cache.put(this, it) }
         } catch (_: Exception) {
             null
         } catch (_: OutOfMemoryError) {

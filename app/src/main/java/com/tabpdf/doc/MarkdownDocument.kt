@@ -2,7 +2,6 @@ package com.tabpdf.doc
 
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.RectF
@@ -303,19 +302,17 @@ private class MarkdownRenderer {
         if (!url.startsWith("data:image/") || !url.contains(";base64,")) return null
         return try {
             val bytes = Base64.decode(url.substringAfter(";base64,"), Base64.DEFAULT)
-            if (!FileFormats.isImage(bytes)) return null
             // A small file can claim a huge picture: read it no larger than the page needs.
-            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+            val size = Pictures.size(bytes) ?: return null
             var sample = 1
-            while (bounds.outWidth / sample > MAX_IMAGE_PX || bounds.outHeight / sample > MAX_IMAGE_PX) sample *= 2
+            while (size.width / sample > MAX_IMAGE_PX || size.height / sample > MAX_IMAGE_PX) sample *= 2
             // All of them stay decoded, out of the app's own memory: a few-KB picture of one colour
             // can claim 16 MB, and hundreds of them would make Android end the app (not an error it
             // could catch). Past the limit, the rest are named as inline ones are.
-            val decodedBytes = 4L * (bounds.outWidth / sample) * (bounds.outHeight / sample)
+            val decodedBytes = 4L * (size.width / sample) * (size.height / sample)
             if (imageBytes + decodedBytes > MAX_IMAGE_BYTES_TOTAL) return null
             imageBytes += decodedBytes
-            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
+            Pictures.decode(bytes, size, sample)
         } catch (_: Exception) {
             null
         } catch (_: OutOfMemoryError) {

@@ -34,6 +34,7 @@ import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import com.tabpdf.export.PdfExport
 import com.tabpdf.pdf.PdfDocument
+import com.tabpdf.pdf.RenderProcess
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import java.io.File
@@ -116,6 +117,7 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
         // Groups are never empty (as in Chrome), and something should be on screen if any tab is open.
         val cleaned = saved.copy(top = saved.top.filter { it !is TabGroup || saved.tabsOf(it.id).isNotEmpty() })
             .withValidCurrent(null, 0)
+        if (cleaned.allTabs.any { it.format == FileFormat.Pdf }) RenderProcess.prepare(app)
         // Before any tab is shown (and so opened): which ones ended the app last time.
         withContext(Dispatchers.IO) { OpenGuard.load(app) }
         _state.value = cleaned
