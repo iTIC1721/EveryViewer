@@ -27,7 +27,7 @@ Git 작업(브랜치, 커밋, 머지, 태그) 전에는 반드시 `git-workflow`
 - 계측 테스트(`app/src/androidTest`)는 구조 편집 규칙, 저장·불러오기, DB 마이그레이션, 파일 복사를 다룬다. 구조 규칙(`SessionEdits.kt`)이나 DB를 바꾸면 반드시 돌린다.
 - `connectedDebugAndroidTest`는 끝나면 앱을 지운다 → 에뮬레이터의 탭 데이터도 사라진다.
 - 테스트 APK의 컴포넌트(예: `TestPdfProvider`)는 별도 프로세스에서 돌고 Kotlin 런타임이 없다. 그런 클래스는 Java로 쓴다.
-- 릴리스 서명: 프로젝트 루트의 `keystore.properties`(커밋하지 않음, 양식은 `keystore.properties.example`)가 있으면 그 키로 서명한다. 키 파일은 저장소 밖(`%USERPROFILE%\keys\everyviewer.jks`)에 두고 백업한다 — 키가 바뀌면 사용자가 앱을 다시 설치해야 해서 탭·필기가 사라진다. 배포용 APK는 GitHub Releases에 사전 출시로 올린다(`gh release create`, 사용자 확인 후).
+- 릴리스 서명: 프로젝트 루트의 `keystore.properties`(커밋하지 않음, 양식은 `keystore.properties.example`)가 있으면 그 키로 서명한다. 키 파일은 저장소 밖(`%USERPROFILE%\keys\everyviewer.jks`)에 두고 백업한다 — 키가 바뀌면 사용자가 앱을 다시 설치해야 해서 탭·필기가 사라진다. 배포용 APK는 GitHub Releases에 사전 출시로 올린다(`gh release create`, 사용자 확인 후). 릴리스 노트 끝에 받은 사람이 확인할 수 있게 APK의 SHA-256(`(Get-FileHash <apk> -Algorithm SHA256).Hash`)과 서명 인증서의 SHA-256(`apksigner verify --print-certs <apk>`의 `certificate SHA-256 digest`, `apksigner`는 SDK `build-tools`에 있음)을 적는다. 인증서 지문은 키가 바뀌지 않는 한 매번 같아야 한다.
 - 시작 시간·용량은 릴리스 빌드로 잰다. `keystore.properties` 없이 디버그 키로 서명하려면:
   `.\gradlew.bat assembleRelease -Pandroid.injected.signing.store.file=$env:USERPROFILE\.android\debug.keystore -Pandroid.injected.signing.store.password=android -Pandroid.injected.signing.key.alias=androiddebugkey -Pandroid.injected.signing.key.password=android`
 
