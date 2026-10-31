@@ -87,7 +87,7 @@ class PdfDocument private constructor(
                 if (pages.size != pageCount) emptyList() else TocEntry.tree(PdfOutline.read(pdf, pages))
             }
         } catch (e: Exception) {
-            android.util.Log.w("EveryViewer", "No bookmarks", e)
+            android.util.Log.w("EveryViewer", "No bookmarks: ${e.javaClass.simpleName}")
             emptyList()
         } catch (e: StackOverflowError) {
             emptyList()

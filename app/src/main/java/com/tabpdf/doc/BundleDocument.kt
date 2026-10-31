@@ -96,9 +96,21 @@ object Bundles {
         return Uri.fromFile(file)
     }
 
-    fun read(uri: Uri): List<BundleItem> = read(File(requireNotNull(uri.path)))
+    fun read(uri: Uri): List<BundleItem> = read(file(uri))
 
-    fun write(uri: Uri, items: List<BundleItem>) = write(File(requireNotNull(uri.path)), items)
+    fun write(uri: Uri, items: List<BundleItem>) = write(file(uri), items)
+
+    /**
+     * The bundle file at [uri], which must be one of the app's own lists: the address comes from
+     * the saved session, and a damaged or tampered one must not make the app write elsewhere.
+     */
+    private fun file(uri: Uri): File {
+        val file = File(requireNotNull(uri.path)).canonicalFile
+        if (uri.scheme != "file" || file.parentFile?.name != DIR || file.parentFile?.parentFile?.name != "files") {
+            throw java.io.IOException("Not a bundle")
+        }
+        return file
+    }
 }
 
 /** Where a bundle's pages go when its files are rearranged (handwriting and reading positions follow). */

@@ -176,7 +176,7 @@ private class Pptx(private val zip: ZipParts) {
                     "p:graphicFrame" -> scope.graphicFrame(element, xf)?.let(out::add)
                 }
             } catch (e: RuntimeException) {
-                android.util.Log.w("EveryViewer", "Skipping a shape that could not be read", e)
+                android.util.Log.w("EveryViewer", "Skipping a shape that could not be read: ${e.javaClass.simpleName}")
             }
         }
     }

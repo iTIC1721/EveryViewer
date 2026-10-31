@@ -229,7 +229,7 @@ class EpubDocument private constructor(
                 ?: ncx?.let { ncxContents(parts, resolve(opfPath, it)) }
                 ?: emptyList()
         } catch (e: Exception) {
-            android.util.Log.w("EveryViewer", "No table of contents", e)
+            android.util.Log.w("EveryViewer", "No table of contents: ${e.javaClass.simpleName}")
             emptyList()
         }
 

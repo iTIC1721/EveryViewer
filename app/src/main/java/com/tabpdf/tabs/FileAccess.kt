@@ -1,6 +1,7 @@
 package com.tabpdf.tabs
 
 import android.app.ActivityManager
+import android.content.ContentResolver
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -33,6 +34,7 @@ object FileAccess {
     private const val KEEP_FREE_BYTES = 256L * 1024 * 1024
 
     suspend fun prepare(context: Context, uri: Uri): OpenedFile = withContext(Dispatchers.IO) {
+        checkNotOwn(context, uri)
         val name = displayName(context, uri)
         val format = FileFormats.detect(context, uri, name)
         if (uri.scheme == "file") return@withContext OpenedFile(uri, name, isInternalCopy = false, format)
@@ -51,13 +53,45 @@ object FileAccess {
         }
     }
 
+    /**
+     * Throws unless [uri] is another app's file. One of this app's own providers (its export folder,
+     * where a locked PDF's unencrypted copy is made while it is exported) would be read with this
+     * app's rights and kept as a copy; a file: address only the debug hook's own files may use.
+     */
+    private fun checkNotOwn(context: Context, uri: Uri) {
+        when (uri.scheme) {
+            ContentResolver.SCHEME_CONTENT -> {
+                val authority = uri.authority ?: throw SecurityException("No provider")
+                if (context.packageManager.resolveContentProvider(authority, 0)?.packageName == context.packageName) {
+                    throw SecurityException("This app's own file")
+                }
+            }
+            ContentResolver.SCHEME_FILE -> {
+                val file = File(requireNotNull(uri.path)).canonicalFile
+                if (file.parentFile != context.filesDir.canonicalFile) throw SecurityException("Not a test file")
+            }
+            else -> throw SecurityException("Not a file")
+        }
+    }
+
+    /**
+     * The file [uri] points at if it is one the app made itself (a copy, a bundle's list), else null:
+     * the address comes from the saved session, and only those may be deleted.
+     */
+    fun ownFile(context: Context, uri: Uri): File? {
+        if (uri.scheme != ContentResolver.SCHEME_FILE) return null
+        val file = File(uri.path ?: return null).canonicalFile
+        val dirs = listOf(File(context.filesDir, COPY_DIR), Bundles.dir(context)).map { it.canonicalFile }
+        return file.takeIf { f -> f.parentFile?.let { it in dirs } == true }
+    }
+
     /** Frees what [tab] held, once no tab uses its file any more. */
     suspend fun release(context: Context, tab: DocTab) = release(context, tab.uri, tab.isInternalCopy)
 
     /** Frees file [uri] (a copy is deleted, a grant given back), once nothing uses it any more. */
     suspend fun release(context: Context, uri: Uri, isInternalCopy: Boolean) = withContext(Dispatchers.IO) {
         if (isInternalCopy) {
-            uri.path?.let { File(it).delete() }
+            ownFile(context, uri)?.delete()
         } else if (uri.scheme == "content") {
             try {
                 context.contentResolver.releasePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)

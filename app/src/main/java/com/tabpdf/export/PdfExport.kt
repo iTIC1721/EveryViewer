@@ -39,6 +39,9 @@ object PdfExport {
     private const val MAX_PICTURE_SIDE = 4000
     private const val JPEG_QUALITY = 85
 
+    /** Under the cache folder, outside the one shared with other apps: the source while it is exported. */
+    const val WORK_DIR = "export-work"
+
     /**
      * Writes [document] (opened from [uri]) with [strokes] to [target]. [onProgress] gets pages
      * done and the total. Returns how it was made. On failure or cancellation [target] is deleted.
@@ -75,7 +78,8 @@ object PdfExport {
         target: File,
         onProgress: (Int, Int) -> Unit,
     ): Method? {
-        val work = File(target.parentFile, "source.tmp")
+        // Not in the shared export folder: a locked PDF's copy here has no password (writeUnlocked).
+        val work = File(File(context.cacheDir, WORK_DIR).apply { mkdirs() }, "source.tmp")
         try {
             context.contentResolver.openInputStream(uri)?.use { input -> work.outputStream().use { input.copyTo(it) } }
                 ?: throw FileNotFoundException()
@@ -104,7 +108,8 @@ object PdfExport {
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            android.util.Log.w("EveryViewer", "PDF not appended to; exporting pictures", e)
+            // Only the kind: messages may hold the file's address (and so its name).
+            android.util.Log.w("EveryViewer", "PDF not appended to (${e.javaClass.simpleName}); exporting pictures")
             target.delete()
             return null
         } catch (e: OutOfMemoryError) {

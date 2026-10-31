@@ -13,6 +13,7 @@ import com.tabpdf.doc.office.ZipParts
 import com.tabpdf.export.PdfFile
 import com.tabpdf.export.PdfSyntaxException
 import com.tabpdf.tabs.DocTab
+import com.tabpdf.tabs.FileAccess
 import com.tabpdf.tabs.TabsViewModel
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -222,6 +223,31 @@ class SecurityTest {
             assertEquals(file, export.canonicalPath, File(export, file).parentFile!!.canonicalPath)
         }
         assertEquals("보고서.pdf", TabsViewModel.exportFileName("보고서.docx"))
+        // Counted in bytes, as file systems do: 300 Hangul letters used to make a name too long to save.
+        export.mkdirs()
+        for (name in listOf("가".repeat(300) + ".hwp", "😀".repeat(100) + ".md")) {
+            val file = TabsViewModel.exportFileName(name)
+            assertTrue(file, file.toByteArray().size <= 255 && !file.contains('�'))
+            assertTrue(file, File(export, file).createNewFile())
+        }
+    }
+
+    @Test
+    fun theAppsOwnFilesAreNotTakenAsAnotherAppsFile() = runBlocking {
+        // Its own export folder holds, while a locked PDF is exported, a copy without the password.
+        val own = Uri.parse("content://${context.packageName}.export/export/source.tmp")
+        val outside = File(dir, "notes.txt").apply { writeText("x") }
+        for (uri in listOf(own, Uri.fromFile(outside))) {
+            try {
+                FileAccess.prepare(context, uri)
+                fail("taken: $uri")
+            } catch (_: SecurityException) {
+                // Refused.
+            }
+        }
+        // A saved address pointing out of the app's copies is never deleted, whatever it says.
+        FileAccess.release(context, Uri.fromFile(outside), isInternalCopy = true)
+        assertTrue(outside.exists())
     }
 
     /**
