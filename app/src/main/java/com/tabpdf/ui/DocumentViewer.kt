@@ -783,6 +783,7 @@ private fun DocumentPages(
             SelectionToolbar(
                 text = { joinSelection(selection) },
                 onDone = { selectionAnchors.value = null },
+                sensitive = document.locked,
                 modifier = Modifier
                     .align(Alignment.TopCenter)
                     .offset { IntOffset(0, toolbarY.roundToInt()) }

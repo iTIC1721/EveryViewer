@@ -83,6 +83,10 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
     /** Documents open in viewers, by tab: a bundle's page counts are read from it when it is edited. */
     private val openDocuments = mutableMapOf<String, Document>()
 
+    /** A document opened with a password is open (on screen or beside it), see [TabsScreen]'s screen guard. */
+    private val _lockedOpen = MutableStateFlow(false)
+    val lockedOpen: StateFlow<Boolean> = _lockedOpen.asStateFlow()
+
     private val _undoOffer = MutableStateFlow<UndoOffer?>(null)
     val undoOffer: StateFlow<UndoOffer?> = _undoOffer.asStateFlow()
     private var undoable: Closed? = null
@@ -380,6 +384,7 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
     /** A viewer opened ([document]) or let go of (null) tab [tabId]'s file. */
     fun onDocument(tabId: String, document: Document?) {
         if (document != null) openDocuments[tabId] = document else openDocuments -= tabId
+        _lockedOpen.value = openDocuments.values.any { it.locked }
     }
 
     /** Edits tab [tabId]'s bundle; a tab of one file starts as a bundle of just that file. */

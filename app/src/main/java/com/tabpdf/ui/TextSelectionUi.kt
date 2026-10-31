@@ -133,13 +133,25 @@ fun SelectionHandle(tip: Offset, isStart: Boolean, onBounds: (Rect) -> Unit, onM
 
 /** What to do with the selection, as Android's text toolbar offers: copy and share. */
 @Composable
-fun SelectionToolbar(text: () -> String, onDone: () -> Unit, modifier: Modifier) {
+fun SelectionToolbar(
+    text: () -> String,
+    onDone: () -> Unit,
+    modifier: Modifier,
+    /** From a document opened with a password: Android 13+ doesn't preview it from the clipboard. */
+    sensitive: Boolean = false,
+) {
     val context = LocalContext.current
     Surface(modifier, shape = MaterialTheme.shapes.small, color = MaterialTheme.colorScheme.surfaceContainer, shadowElevation = 4.dp) {
         Row {
             TextButton(onClick = {
                 val clipboard = context.getSystemService(ClipboardManager::class.java)
-                clipboard.setPrimaryClip(ClipData.newPlainText("EveryViewer", text()))
+                val clip = ClipData.newPlainText("EveryViewer", text())
+                if (sensitive && Build.VERSION.SDK_INT >= 33) {
+                    clip.description.extras = android.os.PersistableBundle().apply {
+                        putBoolean(android.content.ClipDescription.EXTRA_IS_SENSITIVE, true)
+                    }
+                }
+                clipboard.setPrimaryClip(clip)
                 // Android 13+ shows its own confirmation.
                 if (Build.VERSION.SDK_INT < 33) Toast.makeText(context, "복사했습니다", Toast.LENGTH_SHORT).show()
                 onDone()
