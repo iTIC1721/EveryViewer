@@ -13,7 +13,7 @@ ksp = "2.3.10"
 juniversalchardet = "2.5.0"
 commonmark = "0.24.0"
 ink = "1.0.0"
-jsoup = "1.21.1"
+jsoup = "1.23.2"
 hwplib = "1.1.11"
 
 [libraries]
