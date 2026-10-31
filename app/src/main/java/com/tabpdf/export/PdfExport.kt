@@ -2,7 +2,6 @@ package com.tabpdf.export
 
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.pdf.PdfRenderer
 import android.net.Uri
 import android.os.ParcelFileDescriptor
 import com.tabpdf.doc.BundleDocument
@@ -102,7 +101,7 @@ object PdfExport {
                 }
                 append()
             }
-            check(target, document.pageCount)
+            check(context, target, document.pageCount)
             onProgress(document.pageCount, document.pageCount)
             return Method.Appended
         } catch (e: CancellationException) {
@@ -125,13 +124,9 @@ object PdfExport {
     }
 
     /** Android's own reading of the result: it must open with every page, or it isn't kept. */
-    private fun check(file: File, pages: Int) {
-        ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY).use { fd ->
-            PdfRenderer(fd).use { r ->
-                if (r.pageCount != pages) throw IOException("Wrote ${r.pageCount} pages, expected $pages")
-                for (i in 0 until r.pageCount) r.openPage(i).close()
-            }
-        }
+    private suspend fun check(context: Context, file: File, pages: Int) {
+        val read = PdfDocument.pageCount(context, file)
+        if (read != pages) throw IOException("Wrote $read pages, expected $pages")
     }
 
     /** Text and shapes with Android's PDF writer; false (nothing written) if a page only comes as a picture. */

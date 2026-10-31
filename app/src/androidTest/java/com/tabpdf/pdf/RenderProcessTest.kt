@@ -58,6 +58,26 @@ class RenderProcessTest {
     }
 
     @Test
+    fun textAndPagesReadTheSameAsInTheApp() = runBlocking {
+        val uri = Uri.fromFile(file)
+        RenderProcess.enabled = false
+        val local = PdfDocument.open(context, uri)
+        val localCount = PdfDocument.pageCount(context, file)
+        RenderProcess.enabled = true
+        val remote = PdfDocument.open(context, uri)
+        assertEquals(PAGES, PdfDocument.pageCount(context, file))
+        assertEquals(PAGES, localCount)
+        // Text support only on Android 12+ with the system update; elsewhere both find nothing.
+        assertEquals(local.search("fox").map { it.page to it.rects }, remote.search("fox").map { it.page to it.rects })
+        val from = android.graphics.PointF(0.05f, 0.04f)
+        val to = android.graphics.PointF(0.6f, 0.1f)
+        assertEquals(local.selectText(0, from, to)?.text, remote.selectText(0, from, to)?.text)
+        assertEquals(local.link(0, 0.5f, 0.5f), remote.link(0, 0.5f, 0.5f))
+        local.close()
+        remote.close()
+    }
+
+    @Test
     fun pagesAreStillDrawnAfterTheProcessEnds() = runBlocking {
         val doc = PdfDocument.open(context, Uri.fromFile(file))
         assertNotNull(doc.renderPage(0, WIDTH_PX))
