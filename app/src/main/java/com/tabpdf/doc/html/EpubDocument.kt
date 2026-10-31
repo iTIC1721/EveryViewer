@@ -82,7 +82,9 @@ class EpubDocument private constructor(
                     laid = laidOf(done.toList())
                     _progress.value = LayoutProgress(laid.pages, complete = done.size == spine.size)
                 }
-            } catch (e: OutOfMemoryError) {
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
                 // Nothing above catches it here (an error out of this scope ends the app): the
                 // chapters laid out so far stay readable, as for a text file that stops being read.
                 _progress.value = LayoutProgress(laid.pages, complete = true)
@@ -227,7 +229,7 @@ class EpubDocument private constructor(
                 ?: ncx?.let { ncxContents(parts, resolve(opfPath, it)) }
                 ?: emptyList()
         } catch (e: Exception) {
-            android.util.Log.w("EveryViewer", "No table of contents", e)
+            android.util.Log.w("EveryViewer", "No table of contents: ${e.javaClass.simpleName}")
             emptyList()
         }
 
@@ -308,10 +310,9 @@ class EpubDocument private constructor(
                 HtmlDocument.render(HtmlDocument.decode(bytes), { href -> parts[resolve(path, href)] }, MARGIN)
             } catch (e: CancellationException) {
                 throw e
-            } catch (e: Exception) {
-                android.util.Log.w("EveryViewer", "Chapter $path not laid out", e)
-                HtmlDocument.render("")
-            } catch (e: OutOfMemoryError) {
+            } catch (e: Throwable) {
+                // Out of memory or stack as well. Only the kind: the path and message name the book's files.
+                android.util.Log.w("EveryViewer", "Chapter not laid out: ${e.javaClass.simpleName}")
                 HtmlDocument.render("")
             }
         }

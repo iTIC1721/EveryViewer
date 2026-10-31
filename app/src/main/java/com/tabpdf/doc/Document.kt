@@ -18,6 +18,8 @@ class DocumentOpenException(val reason: Reason) : IOException(reason.name) {
         Protected,
         /** A page too tall for its width to be shown (Documents.MAX_PAGE_ASPECT). */
         PageTooTall,
+        /** The app ended while opening it last time ([com.tabpdf.tabs.OpenGuard]): opened again only when asked. */
+        Interrupted,
     }
 }
 

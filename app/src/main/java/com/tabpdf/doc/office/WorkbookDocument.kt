@@ -20,6 +20,7 @@ import android.text.style.StrikethroughSpan
 import android.text.style.UnderlineSpan
 import android.util.LruCache
 import com.tabpdf.doc.Document
+import com.tabpdf.doc.FileFormats
 import com.tabpdf.doc.PageSize
 import com.tabpdf.doc.TocEntry
 import com.tabpdf.doc.PageText
@@ -315,6 +316,7 @@ class WorkbookDocument private constructor(private val book: Workbook) : Documen
     /** A picture decoded once, no larger than needed for a 3× zoom (and never more than 2048 pixels a side). */
     private fun picture(key: String, bytes: ByteArray, r: RectF): Bitmap? {
         pictures.get(key)?.let { return it }
+        if (!FileFormats.isImage(bytes)) return null
         return try {
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)

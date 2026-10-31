@@ -99,10 +99,13 @@ class StreamedTextDocument private constructor(
         scope.launch {
             try {
                 index(textStart)
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
+                // Errors too (out of memory on an endless file): nothing above this scope catches
+                // them, and one would end the app — again on every start, as the tab is reopened.
                 if (e is kotlinx.coroutines.CancellationException) throw e
-                android.util.Log.w("EveryViewer", "Text read stopped", e)
-                failure = e
+                // Only the kind: messages may hold the file's address (and so its name).
+                android.util.Log.w("EveryViewer", "Text read stopped: ${e.javaClass.simpleName}")
+                failure = e as? Exception ?: java.io.IOException(e.javaClass.simpleName)
                 // What was laid out stays readable.
                 _progress.value = LayoutProgress(pageCount, complete = true)
             }

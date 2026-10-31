@@ -1,7 +1,9 @@
 package com.tabpdf.doc
 
+import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.SystemClock
+import android.util.Base64
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.tabpdf.doc.html.HtmlDocument
@@ -11,6 +13,7 @@ import com.tabpdf.doc.office.ZipParts
 import com.tabpdf.export.PdfFile
 import com.tabpdf.export.PdfSyntaxException
 import com.tabpdf.tabs.DocTab
+import com.tabpdf.tabs.FileAccess
 import com.tabpdf.tabs.TabsViewModel
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -28,6 +31,7 @@ import java.io.DataOutputStream
 import java.io.File
 import java.io.IOException
 import java.nio.ByteBuffer
+import java.util.UUID
 import java.util.zip.CRC32
 import java.util.zip.DeflaterOutputStream
 import java.util.zip.ZipEntry
@@ -219,6 +223,31 @@ class SecurityTest {
             assertEquals(file, export.canonicalPath, File(export, file).parentFile!!.canonicalPath)
         }
         assertEquals("보고서.pdf", TabsViewModel.exportFileName("보고서.docx"))
+        // Counted in bytes, as file systems do: 300 Hangul letters used to make a name too long to save.
+        export.mkdirs()
+        for (name in listOf("가".repeat(300) + ".hwp", "😀".repeat(100) + ".md")) {
+            val file = TabsViewModel.exportFileName(name)
+            assertTrue(file, file.toByteArray().size <= 255 && !file.contains('�'))
+            assertTrue(file, File(export, file).createNewFile())
+        }
+    }
+
+    @Test
+    fun theAppsOwnFilesAreNotTakenAsAnotherAppsFile() = runBlocking {
+        // Its own export folder holds, while a locked PDF is exported, a copy without the password.
+        val own = Uri.parse("content://${context.packageName}.export/export/source.tmp")
+        val outside = File(dir, "notes.txt").apply { writeText("x") }
+        for (uri in listOf(own, Uri.fromFile(outside))) {
+            try {
+                FileAccess.prepare(context, uri)
+                fail("taken: $uri")
+            } catch (_: SecurityException) {
+                // Refused.
+            }
+        }
+        // A saved address pointing out of the app's copies is never deleted, whatever it says.
+        FileAccess.release(context, Uri.fromFile(outside), isInternalCopy = true)
+        assertTrue(outside.exists())
     }
 
     /**
@@ -359,6 +388,110 @@ class SecurityTest {
             }
         }
         assertTrue(SystemClock.elapsedRealtime() - started < 5_000)
+    }
+
+    /** A 1×1 WBMP: a format Android decodes, but not one the app shows. */
+    private val wbmp = byteArrayOf(0, 0, 1, 1, 0)
+
+    @Test
+    fun picturesInFormatsTheAppDoesNotShowAreNotDecoded() = runBlocking {
+        // Android picks the decoder by content, whatever the name or "data:image/png" says, and has
+        // more of them than the formats the app shows (camera raw like DNG: the way in of the 2025
+        // attacks with a single picture). Only those formats reach it.
+        assertNotNull(BitmapFactory.decodeByteArray(wbmp, 0, wbmp.size))
+        assertFalse(FileFormats.isImage(wbmp))
+        assertFalse(FileFormats.isImage(byteArrayOf(0x49, 0x49, 0x2A, 0, 8, 0, 0, 0))) // TIFF, DNG
+        assertFalse(FileFormats.isImage(byteArrayOf(0x4D, 0x4D, 0, 0x2A, 0, 0, 0, 8)))
+        assertTrue(FileFormats.isImage(png(1, 1)))
+        try {
+            openFile("photo.jpg", wbmp, FileFormat.Image).close()
+            fail("opened")
+        } catch (e: DocumentOpenException) {
+            assertEquals(DocumentOpenException.Reason.Unsupported, e.reason)
+        }
+        // In a page, its description shows instead, as for a picture that isn't in the file.
+        fun page(bytes: ByteArray) = HtmlDocument.render(
+            "<p><img src=\"data:image/png;base64,${Base64.encodeToString(bytes, Base64.NO_WRAP)}\" alt=\"그림설명\"></p>"
+        )
+        page(wbmp).let { doc -> assertTrue(doc.search("그림설명").isNotEmpty()); doc.close() }
+        page(png(1, 1)).let { doc -> assertTrue(doc.search("그림설명").isEmpty()); doc.close() }
+    }
+
+    @Test
+    fun anImageIsDecodedFromTheBytesThatWereChecked() = runBlocking {
+        // Its provider gives a 1×1 picture first and a 4000×4000 one after that. Read again to be
+        // decoded, the file would have got past the checks made on the first (format, size limit).
+        val uri = Uri.parse("content://${ChangingImageProvider.AUTHORITY}/${UUID.randomUUID()}.png")
+        val copies = File(context.cacheDir, ImageDocument.TEMP_DIR)
+        val before = copies.listFiles().orEmpty().size
+        val doc = Documents.open(context, uri, "changing.png", FileFormat.Image)
+        try {
+            assertEquals(1f, doc.pageSizes[0].width)
+            assertEquals(1, doc.renderPage(0, 100)!!.width)
+        } finally {
+            doc.close()
+        }
+        // The copy goes with the document.
+        assertEquals(before, copies.listFiles().orEmpty().size)
+    }
+
+    @Test
+    fun entitiesTheFileDeclaresAreNotExpanded() = runBlocking {
+        // "Billion laughs": ten levels of ten references each, a few hundred bytes making 10¹⁰ characters.
+        val entities = (1..10).joinToString("") { i -> "<!ENTITY e$i \"" + "&e${i - 1};".repeat(10) + "\">" }
+        val xml = "<!DOCTYPE w:document [<!ENTITY e0 \"하하하하하하하하하하\">$entities]>" +
+            body("<w:p><w:r><w:t>&e10;</w:t></w:r></w:p>")
+        val started = SystemClock.elapsedRealtime()
+        try {
+            openFile("laughs.docx", docx(mapOf("word/document.xml" to xml)), FileFormat.Docx).close()
+            fail("opened")
+        } catch (e: Exception) {
+            // Refused for the reference, not after running out of memory expanding it.
+            assertFalse((e as? DocumentOpenException)?.reason == DocumentOpenException.Reason.TooLarge)
+        }
+        assertTrue(SystemClock.elapsedRealtime() - started < 5_000)
+    }
+
+    @Test
+    fun sizesThatAreNoNumbersOrHugeOpenQuickly() = runBlocking {
+        val started = SystemClock.elapsedRealtime()
+        val cases = listOf(
+            "<w:p><w:r><w:rPr><w:sz w:val=\"Infinity\"/></w:rPr><w:t>x</w:t></w:r></w:p>" +
+                "<w:sectPr><w:pgSz w:w=\"11906\" w:h=\"16838\"/><w:pgMar w:top=\"NaN\" w:bottom=\"NaN\" w:left=\"NaN\" w:right=\"Infinity\"/></w:sectPr>",
+            "<w:tbl><w:tr><w:trPr><w:gridBefore w:val=\"2000000000\"/></w:trPr>" +
+                "<w:tc><w:tcPr><w:gridSpan w:val=\"2000000000\"/></w:tcPr><w:p/></w:tc></w:tr></w:tbl><w:p/>",
+        )
+        for (xml in cases) {
+            try {
+                openFile("sizes.docx", docx(mapOf("word/document.xml" to body(xml))), FileFormat.Docx).close()
+            } catch (_: Exception) {
+                // Refusing is fine; ending the app or never finishing is not.
+            }
+        }
+        val sheet = xlsx("<row r=\"1\" ht=\"NaN\" customHeight=\"1\"><c r=\"A1\"><v>1</v></c></row>")
+        openFile("sizes.xlsx", sheet, FileFormat.Xlsx).close()
+        assertTrue(SystemClock.elapsedRealtime() - started < 10_000)
+    }
+
+    @Test
+    fun longNumbersInStylesAreReadQuickly() = runBlocking {
+        // A run of digits made the length pattern try every way to split it: for ever, at this length.
+        val started = SystemClock.elapsedRealtime()
+        HtmlDocument.render("<p style=\"width: ${"1".repeat(200_000)}x!; margin-left: 1e99px\">글</p>").close()
+        assertTrue(SystemClock.elapsedRealtime() - started < 5_000)
+    }
+
+    @Test
+    fun markdownPicturesStayWithinTheirMemory() = runBlocking {
+        // A few KB each, 16 MB each once decoded: 500 of them would make Android end the app.
+        val picture = "![그림](data:image/png;base64,${Base64.encodeToString(png(2048, 2048), Base64.NO_WRAP)})\n\n"
+        val doc = openFile("pictures.md", picture.repeat(500).toByteArray(), FileFormat.Markdown)
+        try {
+            // The first are drawn, the rest named as inline pictures are.
+            assertTrue(doc.search("이미지: 그림").size in 400..500)
+        } finally {
+            doc.close()
+        }
     }
 
     @Test

@@ -60,6 +60,9 @@ import kotlin.math.max
 /** Embedded images are read at most this many pixels wide or high (pages are drawn about 1000 wide). */
 private const val MAX_IMAGE_PX = 2048
 
+/** Most memory all of a file's embedded images may take once decoded (they are kept). */
+private const val MAX_IMAGE_BYTES_TOTAL = 64L * 1024 * 1024
+
 /**
  * Markdown files, always shown rendered (기획서 5.7, 11장 8번): no raw view, so handwriting has one
  * layout to stay on. Images are drawn only when embedded in the file (data: URIs): files next to
@@ -130,6 +133,8 @@ private data class Ctx(val x: Float, val width: Float, val bars: List<Float>)
 private class MarkdownRenderer {
     private val out = FlowBuilder()
     private var pendingMarker: Marker? = null
+    /** Memory the embedded images decoded so far take. */
+    private var imageBytes = 0L
 
     fun render(root: Node): FlowDocument {
         out.space(Md.MARGIN)
@@ -298,11 +303,18 @@ private class MarkdownRenderer {
         if (!url.startsWith("data:image/") || !url.contains(";base64,")) return null
         return try {
             val bytes = Base64.decode(url.substringAfter(";base64,"), Base64.DEFAULT)
+            if (!FileFormats.isImage(bytes)) return null
             // A small file can claim a huge picture: read it no larger than the page needs.
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
             var sample = 1
             while (bounds.outWidth / sample > MAX_IMAGE_PX || bounds.outHeight / sample > MAX_IMAGE_PX) sample *= 2
+            // All of them stay decoded, out of the app's own memory: a few-KB picture of one colour
+            // can claim 16 MB, and hundreds of them would make Android end the app (not an error it
+            // could catch). Past the limit, the rest are named as inline ones are.
+            val decodedBytes = 4L * (bounds.outWidth / sample) * (bounds.outHeight / sample)
+            if (imageBytes + decodedBytes > MAX_IMAGE_BYTES_TOTAL) return null
+            imageBytes += decodedBytes
             BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
         } catch (_: Exception) {
             null

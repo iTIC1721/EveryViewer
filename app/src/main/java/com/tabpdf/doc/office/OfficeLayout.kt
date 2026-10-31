@@ -22,6 +22,7 @@ import android.text.style.StrikethroughSpan
 import android.text.style.UnderlineSpan
 import com.tabpdf.doc.FLOW_PAINT_FLAGS
 import com.tabpdf.doc.FLOW_WIDTH
+import com.tabpdf.doc.FileFormats
 import com.tabpdf.doc.FlowBlock
 import com.tabpdf.doc.FlowBuilder
 import com.tabpdf.doc.FlowDocument
@@ -797,7 +798,7 @@ private const val UNKNOWN_DESCENT = 336
  */
 private class PictureSpan(private val bytes: ByteArray?, private val width: Float, private val height: Float) : ReplacementSpan() {
     private fun bitmap(): Bitmap? {
-        val data = bytes ?: return null
+        val data = bytes?.takeIf { FileFormats.isImage(it) } ?: return null
         cache.get(this)?.let { return it }
         return try {
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }

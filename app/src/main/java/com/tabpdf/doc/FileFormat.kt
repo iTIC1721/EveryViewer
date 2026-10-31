@@ -106,7 +106,13 @@ object FileFormats {
         return start.startsWith("<!doctype html", ignoreCase = true) || start.startsWith("<html", ignoreCase = true)
     }
 
-    private fun isImage(head: ByteArray): Boolean =
+    /**
+     * A picture in a format the app shows (기획서 5.7), told by its first bytes: PNG, JPEG, GIF,
+     * BMP, WebP or HEIF. Every picture is checked with this before Android decodes it: Android picks
+     * the decoder by content whatever the name or type says, and reaches far more than these
+     * (camera raw formats like DNG, makers' own codecs) — a way into phones with a single picture.
+     */
+    fun isImage(head: ByteArray): Boolean =
         head.startsWith(0x89, 'P'.code, 'N'.code, 'G'.code) ||
             head.startsWith(0xFF, 0xD8, 0xFF) ||
             head.startsWith("GIF8") ||

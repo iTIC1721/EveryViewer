@@ -1,5 +1,6 @@
 package com.tabpdf.doc.office
 
+import com.tabpdf.doc.toFiniteFloatOrNull
 import com.tabpdf.doc.DocumentOpenException
 import com.tabpdf.doc.isWebLink
 import java.io.IOException
@@ -17,7 +18,10 @@ object PptxReader {
 
 private const val EMU_PER_PT = 12700f
 
-private fun emu(value: String?): Float? = value?.toFloatOrNull()?.div(EMU_PER_PT)
+/** Most slides read: every one is laid out when the file opens (PowerPoint's own limit is far lower in practice). */
+private const val MAX_SLIDES = 5_000
+
+private fun emu(value: String?): Float? = value?.toFiniteFloatOrNull()?.div(EMU_PER_PT)
 
 private class Rel(val target: String, val type: String, val external: Boolean)
 
@@ -82,7 +86,9 @@ private class Pptx(private val zip: ZipParts) {
         val width = emu(size?.attr("cx")) ?: 720f
         val height = emu(size?.attr("cy")) ?: 540f
         defaultTextStyle = pres.root.child("p:defaultTextStyle")
+        // A slide listed many times would be read and laid out each time (as an EPUB's spine).
         val slidePaths = pres.root.child("p:sldIdLst")?.all("p:sldId").orEmpty().mapNotNull { pres.rels[it.attr("r:id")]?.target }
+            .distinct().take(MAX_SLIDES)
         val slides = slidePaths.mapIndexedNotNull { i, path -> part(path)?.let { slide(it, i + 1) } }
         if (slides.isEmpty()) throw DocumentOpenException(DocumentOpenException.Reason.NoPages)
         return Presentation(width, height, slides)
@@ -170,7 +176,7 @@ private class Pptx(private val zip: ZipParts) {
                     "p:graphicFrame" -> scope.graphicFrame(element, xf)?.let(out::add)
                 }
             } catch (e: RuntimeException) {
-                android.util.Log.w("EveryViewer", "Skipping a shape that could not be read", e)
+                android.util.Log.w("EveryViewer", "Skipping a shape that could not be read: ${e.javaClass.simpleName}")
             }
         }
     }
@@ -185,7 +191,7 @@ private class Pptx(private val zip: ZipParts) {
             y = emu(off.attr("y")) ?: 0f,
             width = emu(ext.attr("cx")) ?: 0f,
             height = emu(ext.attr("cy")) ?: 0f,
-            rotation = (xfrm.attr("rot")?.toFloatOrNull() ?: 0f) / 60000f,
+            rotation = (xfrm.attr("rot")?.toFiniteFloatOrNull() ?: 0f) / 60000f,
             flipH = xfrm.attr("flipH") == "1",
             flipV = xfrm.attr("flipV") == "1",
         )
@@ -263,7 +269,7 @@ private class Pptx(private val zip: ZipParts) {
     private fun geometry(spPr: Element): Geometry? {
         spPr.child("a:prstGeom")?.let { g ->
             val adjust = g.child("a:avLst")?.all("a:gd").orEmpty().mapNotNull { gd ->
-                val v = gd.attr("fmla")?.removePrefix("val ")?.trim()?.toFloatOrNull() ?: return@mapNotNull null
+                val v = gd.attr("fmla")?.removePrefix("val ")?.trim()?.toFiniteFloatOrNull() ?: return@mapNotNull null
                 (gd.attr("name") ?: return@mapNotNull null) to v
             }.toMap()
             return Geometry.Preset(g.attr("prst") ?: "rect", adjust)
@@ -271,25 +277,25 @@ private class Pptx(private val zip: ZipParts) {
         val cust = spPr.child("a:custGeom") ?: return null
         val paths = cust.child("a:pathLst")?.all("a:path").orEmpty().map { p ->
             val commands = p.children.mapNotNull { c ->
-                val pts = c.all("a:pt").map { (it.attr("x")?.toFloatOrNull() ?: 0f) to (it.attr("y")?.toFloatOrNull() ?: 0f) }
+                val pts = c.all("a:pt").map { (it.attr("x")?.toFiniteFloatOrNull() ?: 0f) to (it.attr("y")?.toFiniteFloatOrNull() ?: 0f) }
                 when (c.name) {
                     "a:moveTo" -> pts.firstOrNull()?.let { PathCommand.MoveTo(it.first, it.second) }
                     "a:lnTo" -> pts.firstOrNull()?.let { PathCommand.LineTo(it.first, it.second) }
                     "a:cubicBezTo" -> if (pts.size >= 3) PathCommand.CubicTo(pts[0].first, pts[0].second, pts[1].first, pts[1].second, pts[2].first, pts[2].second) else null
                     "a:quadBezTo" -> if (pts.size >= 2) PathCommand.QuadTo(pts[0].first, pts[0].second, pts[1].first, pts[1].second) else null
                     "a:arcTo" -> PathCommand.ArcTo(
-                        c.attr("wR")?.toFloatOrNull() ?: 0f,
-                        c.attr("hR")?.toFloatOrNull() ?: 0f,
-                        (c.attr("stAng")?.toFloatOrNull() ?: 0f) / 60000f,
-                        (c.attr("swAng")?.toFloatOrNull() ?: 0f) / 60000f,
+                        c.attr("wR")?.toFiniteFloatOrNull() ?: 0f,
+                        c.attr("hR")?.toFiniteFloatOrNull() ?: 0f,
+                        (c.attr("stAng")?.toFiniteFloatOrNull() ?: 0f) / 60000f,
+                        (c.attr("swAng")?.toFiniteFloatOrNull() ?: 0f) / 60000f,
                     )
                     "a:close" -> PathCommand.Close
                     else -> null
                 }
             }
             CustomPath(
-                p.attr("w")?.toFloatOrNull() ?: 0f,
-                p.attr("h")?.toFloatOrNull() ?: 0f,
+                p.attr("w")?.toFiniteFloatOrNull() ?: 0f,
+                p.attr("h")?.toFiniteFloatOrNull() ?: 0f,
                 commands,
                 filled = p.attr("fill") != "none",
                 stroked = p.attr("stroke").let { it != "0" && it != "false" },
@@ -308,12 +314,12 @@ private class Pptx(private val zip: ZipParts) {
                 "a:gradFill" -> {
                     val stops = f.child("a:gsLst")?.all("a:gs").orEmpty().mapNotNull { gs ->
                         val c = color(gs, phColor) ?: return@mapNotNull null
-                        ((gs.attr("pos")?.toFloatOrNull() ?: 0f) / 100000f) to c
+                        ((gs.attr("pos")?.toFiniteFloatOrNull() ?: 0f) / 100000f) to c
                     }.sortedBy { it.first }
                     when {
                         stops.isEmpty() -> null
                         stops.size == 1 -> Fill.Solid(stops[0].second)
-                        else -> Fill.Gradient(stops, (f.child("a:lin")?.attr("ang")?.toFloatOrNull() ?: 5400000f) / 60000f)
+                        else -> Fill.Gradient(stops, (f.child("a:lin")?.attr("ang")?.toFiniteFloatOrNull() ?: 5400000f) / 60000f)
                     }
                 }
                 "a:blipFill" -> picture(f)?.let { Fill.Picture(it) } ?: Fill.Solid(0)
@@ -378,15 +384,15 @@ private class Pptx(private val zip: ZipParts) {
             ?: return null
         val blipFill = pic.child("p:blipFill")
         val srcRect = blipFill?.child("a:srcRect")
-        val crop = FloatArray(4) { i -> (srcRect?.attr(CROP_SIDES[i])?.toFloatOrNull() ?: 0f) / 100000f }
+        val crop = FloatArray(4) { i -> (srcRect?.attr(CROP_SIDES[i])?.toFiniteFloatOrNull() ?: 0f) / 100000f }
         val stroke = stroke(spPr?.child("a:ln"), pic.child("p:style")?.child("a:lnRef"))
         val blip = blipFill?.child("a:blip")
         val lum = blip?.child("a:lum")
         val look = PictureLook(
             grayscale = blip?.child("a:grayscl") != null,
-            brightness = (lum?.attr("bright")?.toFloatOrNull() ?: 0f) / 100000f,
-            contrast = (lum?.attr("contrast")?.toFloatOrNull() ?: 0f) / 100000f,
-            alpha = (blip?.child("a:alphaModFix")?.attr("amt")?.toFloatOrNull() ?: 100000f) / 100000f,
+            brightness = (lum?.attr("bright")?.toFiniteFloatOrNull() ?: 0f) / 100000f,
+            contrast = (lum?.attr("contrast")?.toFiniteFloatOrNull() ?: 0f) / 100000f,
+            alpha = (blip?.child("a:alphaModFix")?.attr("amt")?.toFiniteFloatOrNull() ?: 100000f) / 100000f,
         )
         return PictureOnSlide(xf.apply(frame), blipFill?.let { picture(it) }, crop, stroke, look)
     }
@@ -412,8 +418,8 @@ private class Pptx(private val zip: ZipParts) {
         val body = Chain(bodyPrs)
         val own = bodyPrs.firstOrNull()
         val autofit = own?.child("a:normAutofit")
-        val fontScale = (autofit?.attr("fontScale")?.toFloatOrNull() ?: 100000f) / 100000f
-        val reduction = (autofit?.attr("lnSpcReduction")?.toFloatOrNull() ?: 0f) / 100000f
+        val fontScale = (autofit?.attr("fontScale")?.toFiniteFloatOrNull() ?: 100000f) / 100000f
+        val reduction = (autofit?.attr("lnSpcReduction")?.toFiniteFloatOrNull() ?: 0f) / 100000f
         val paragraphs = paragraphs(txBody, styles, fallback, fontScale, reduction)
         if (paragraphs.isEmpty()) return null
         return TextFrame(
@@ -475,16 +481,16 @@ private class Pptx(private val zip: ZipParts) {
             val size = runs.filterIsInstance<Run.Text>().maxOfOrNull { it.style.size } ?: markStyle.size
 
             val lnSpc = para.child("a:lnSpc")
-            val lineSpacing = lnSpc?.child("a:spcPts")?.attr("val")?.toFloatOrNull()?.let { LineSpacing.Exactly(it / 100f) }
+            val lineSpacing = lnSpc?.child("a:spcPts")?.attr("val")?.toFiniteFloatOrNull()?.let { LineSpacing.Exactly(it / 100f) }
                 ?: run {
-                    val pct = ((lnSpc?.child("a:spcPct")?.attr("val")?.toFloatOrNull() ?: 100000f) / 100000f - reduction).coerceAtLeast(0.1f)
+                    val pct = ((lnSpc?.child("a:spcPct")?.attr("val")?.toFiniteFloatOrNull() ?: 100000f) / 100000f - reduction).coerceAtLeast(0.1f)
                     val factor = SINGLE_LINE * pct
                     LineSpacing.Multiple(factor, baseline = factor - SINGLE_LINE + BASELINE, textHeight = factor)
                 }
             fun spacing(name: String): Float {
                 val s = para.child(name) ?: return 0f
-                s.child("a:spcPts")?.attr("val")?.toFloatOrNull()?.let { return it / 100f }
-                return (s.child("a:spcPct")?.attr("val")?.toFloatOrNull() ?: 0f) / 100000f * size * SINGLE_LINE
+                s.child("a:spcPts")?.attr("val")?.toFiniteFloatOrNull()?.let { return it / 100f }
+                return (s.child("a:spcPct")?.attr("val")?.toFiniteFloatOrNull() ?: 0f) / 100000f * size * SINGLE_LINE
             }
 
             val firstText = runs.firstOrNull { it is Run.Text && it.text.isNotBlank() } as? Run.Text
@@ -526,7 +532,7 @@ private class Pptx(private val zip: ZipParts) {
         val baseline = chain.attr("baseline")?.toIntOrNull() ?: 0
         val bold = chain.attr("b")?.let { it == "1" || it == "true" } ?: fallback.bold ?: heavy
         return TextStyle(
-            size = (chain.attr("sz")?.toFloatOrNull()?.div(100f) ?: 18f) * fontScale,
+            size = (chain.attr("sz")?.toFiniteFloatOrNull()?.div(100f) ?: 18f) * fontScale,
             bold = bold,
             scaleX = fontWidth(typeface, bold),
             italic = chain.attr("i").let { it == "1" || it == "true" },
@@ -573,8 +579,8 @@ private class Pptx(private val zip: ZipParts) {
         if (kind.name == "a:buNone" || kind.name == "a:buBlip") return null
         val size = para.firstOf("a:buSzPct", "a:buSzPts", "a:buSzTx").let { s ->
             when (s?.name) {
-                "a:buSzPct" -> textStyle.size * (s.attr("val")?.toFloatOrNull() ?: 100000f) / 100000f
-                "a:buSzPts" -> (s.attr("val")?.toFloatOrNull() ?: 1200f) / 100f
+                "a:buSzPct" -> textStyle.size * (s.attr("val")?.toFiniteFloatOrNull() ?: 100000f) / 100000f
+                "a:buSzPts" -> (s.attr("val")?.toFiniteFloatOrNull() ?: 1200f) / 100f
                 else -> textStyle.size
             }
         }
@@ -715,7 +721,7 @@ private class Pptx(private val zip: ZipParts) {
             "a:sysClr" -> parseColor(c.attr("lastClr")) ?: if (c.attr("val") == "window") 0xFFFFFFFF.toInt() else 0xFF000000.toInt()
             "a:prstClr" -> presetColor(c.attr("val"))
             "a:scrgbClr" -> {
-                fun ch(n: String) = ((c.attr(n)?.toFloatOrNull() ?: 0f) / 100000f * 255f).toInt().coerceIn(0, 255)
+                fun ch(n: String) = ((c.attr(n)?.toFiniteFloatOrNull() ?: 0f) / 100000f * 255f).toInt().coerceIn(0, 255)
                 (0xFF shl 24) or (ch("r") shl 16) or (ch("g") shl 8) or ch("b")
             }
             else -> null
@@ -780,7 +786,7 @@ internal object Colors {
         var b = (color and 0xFF) / 255f
         var a = ((color ushr 24) and 0xFF) / 255f
         for (m in modifiers) {
-            val v = (m.attr("val")?.toFloatOrNull() ?: continue) / 100000f
+            val v = (m.attr("val")?.toFiniteFloatOrNull() ?: continue) / 100000f
             when (m.name) {
                 "a:tint" -> { r = 1 - (1 - r) * v; g = 1 - (1 - g) * v; b = 1 - (1 - b) * v }
                 "a:shade" -> { r *= v; g *= v; b *= v }

@@ -74,7 +74,13 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import android.content.Intent
+import android.os.Build
+import android.view.WindowManager
+import com.tabpdf.pdf.PdfPasswords
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -120,6 +126,19 @@ fun Modifier.barEdge(): Modifier {
     }
 }
 
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
+}
+
+/** Keeps the screen out of the recent apps' picture ([on]), as far as this Android version allows. */
+private fun Activity.shield(on: Boolean) {
+    if (Build.VERSION.SDK_INT >= 33) setRecentsScreenshotEnabled(!on)
+    else if (on) window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+    else window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+}
+
 /**
  * Main screen: the viewer pager with its top bar, and the tab switcher over it.
  * [onOpenFiles] opens the file picker for a group, or for ungrouped tabs (null).
@@ -149,6 +168,17 @@ fun TabsScreen(
 
     val keepScreenOn by viewModel.settings.keepScreenOn.collectAsState()
     val view = LocalView.current
+    // A PDF opened with a password leaves nothing of itself on the disk (기획서 5.5), not even the
+    // picture of the screen Android keeps for the recent apps: while one is open, or its thumbnail
+    // shows in the switcher, that picture is left out (Android 13+); before 13 only blocking
+    // screenshots altogether (FLAG_SECURE) does that.
+    val lockedOpen by viewModel.lockedOpen.collectAsState()
+    val shielded = lockedOpen || showSwitcher && session.allTabs.any { PdfPasswords[it.uri] != null }
+    DisposableEffect(shielded) {
+        val activity = view.context.findActivity()
+        activity?.shield(shielded)
+        onDispose { activity?.shield(false) }
+    }
     DisposableEffect(keepScreenOn) {
         view.keepScreenOn = keepScreenOn
         onDispose { view.keepScreenOn = false }
@@ -335,6 +365,7 @@ private fun ContextPager(
                 top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + TOP_BAR_HEIGHT + 8.dp,
                 bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + 8.dp,
             )
+            val heldBack by viewModel.heldBack.collectAsState()
             HorizontalPager(
                 state = pagerState,
                 key = { tabs[it].id },
@@ -378,6 +409,10 @@ private fun ContextPager(
                     searchIndex = searchIndex,
                     onSearchResults = { searchCount = it },
                     active = tab.id == session.currentTabId,
+                    heldBack = tab.id in heldBack,
+                    onReopen = { viewModel.reopen(tab.id) },
+                    onOpening = { viewModel.opening(tab.id) },
+                    onOpened = { viewModel.opened(tab.id) },
                 )
             }
         }

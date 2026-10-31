@@ -1,5 +1,6 @@
 package com.tabpdf.doc.html
 
+import com.tabpdf.doc.toFiniteFloatOrNull
 import com.tabpdf.doc.office.Align
 import com.tabpdf.doc.office.FontKind
 import org.jsoup.nodes.Element
@@ -135,7 +136,7 @@ class StyleResolver(private val author: Stylesheet) {
         fun len(v: String, percent: Boolean = true): Len? {
             val t = v.trim().lowercase()
             if (t == "auto") return Len.AUTO
-            if (percent && t.endsWith("%")) return t.dropLast(1).toFloatOrNull()?.let { Len(0f, it) }
+            if (percent && t.endsWith("%")) return t.dropLast(1).toFiniteFloatOrNull()?.let { Len(0f, it) }
             return CssValues.length(t, em, rootFontSize, null)?.let { Len(it) }
         }
         for ((property, value) in resolved) {
@@ -159,8 +160,8 @@ class StyleResolver(private val author: Stylesheet) {
                 }
                 "line-height" -> when {
                     lower == "normal" || lower == "initial" -> { s.lineHeight = Style.NORMAL_LINE_HEIGHT; s.lineHeightPx = null }
-                    lower.toFloatOrNull() != null -> { s.lineHeight = lower.toFloat().coerceIn(0.5f, 5f); s.lineHeightPx = null }
-                    lower.endsWith("%") -> lower.dropLast(1).toFloatOrNull()?.let { s.lineHeightPx = it * em / 100f }
+                    lower.toFiniteFloatOrNull() != null -> { s.lineHeight = lower.toFloat().coerceIn(0.5f, 5f); s.lineHeightPx = null }
+                    lower.endsWith("%") -> lower.dropLast(1).toFiniteFloatOrNull()?.let { s.lineHeightPx = it * em / 100f }
                     else -> CssValues.length(lower, em, rootFontSize, null)?.let { s.lineHeightPx = it }
                 }
                 "white-space" -> s.whiteSpace = when (lower) {
@@ -217,7 +218,7 @@ class StyleResolver(private val author: Stylesheet) {
         return when (v) {
             "smaller" -> parent / 1.2f
             "larger" -> parent * 1.2f
-            else -> if (v.endsWith("%")) v.dropLast(1).toFloatOrNull()?.let { it * parent / 100f }
+            else -> if (v.endsWith("%")) v.dropLast(1).toFiniteFloatOrNull()?.let { it * parent / 100f }
             else CssValues.length(v, parent, rootFontSize, null)
         }
     }

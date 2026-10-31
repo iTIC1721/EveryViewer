@@ -80,9 +80,21 @@ class ZipParts private constructor(private val parts: Map<String, ByteArray>) {
 }
 
 /**
+ * A pull parser for a document's XML. Android's (Xml.newPullParser) processes the DTD: entities
+ * declared in the file itself would be expanded without limit and read again as markup ("billion
+ * laughs": a few hundred bytes filling all memory). Office and Hangul never write one; here its
+ * declarations are skipped, so a reference to one is an error and the file doesn't open.
+ */
+fun xmlParser(bytes: ByteArray): XmlPullParser = Xml.newPullParser().apply {
+    setFeature(XmlPullParser.FEATURE_PROCESS_DOCDECL, false)
+    setFeature(XmlPullParser.FEATURE_PROCESS_NAMESPACES, false)
+    setInput(ByteArrayInputStream(bytes), null)
+}
+
+/**
  * A parsed XML element. Names keep their prefixes as written ("w:p", "hp:run"): both formats use
- * fixed, conventional prefixes. No DTDs or external entities are processed, and nesting is
- * limited ([MAX_DEPTH]): elements are walked recursively.
+ * fixed, conventional prefixes. Entities the file declares and external ones are not expanded
+ * ([xmlParser]), and nesting is limited ([MAX_DEPTH]): elements are walked recursively.
  */
 class Element(
     val name: String,
@@ -127,9 +139,7 @@ class Element(
         const val MAX_DEPTH = 256
 
         fun parse(bytes: ByteArray): Element {
-            val parser = Xml.newPullParser()
-            parser.setFeature(XmlPullParser.FEATURE_PROCESS_NAMESPACES, false)
-            parser.setInput(ByteArrayInputStream(bytes), null)
+            val parser = xmlParser(bytes)
             class Building(val name: String, val attributes: Map<String, String>) {
                 val children = mutableListOf<Element>()
                 val nodes = mutableListOf<Any>()

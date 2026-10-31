@@ -7,9 +7,11 @@ import android.graphics.Canvas
 import com.tabpdf.ink.InkPainter
 import com.tabpdf.ink.InkStroke
 import com.tabpdf.tabs.DocTab
+import com.tabpdf.tabs.OpenGuard
 import android.util.LruCache
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
@@ -86,6 +88,10 @@ object Thumbnails {
 
     /** The page, and whether its file was opened with a password. */
     private suspend fun render(context: Context, tab: DocTab, page: Int): Pair<Bitmap, Boolean>? = renders.withPermit {
+        // Not a file that ended the app while opening last time: it waits for the reader. This
+        // opening is marked as well, since a crash here would come back with each overview (OpenGuard).
+        if (tab.id in OpenGuard.held.value) return@withPermit null
+        OpenGuard.begin(context, tab.id)
         try {
             val document = Documents.open(context, tab.uri, tab.name, tab.format)
             try {
@@ -105,6 +111,8 @@ object Thumbnails {
             null
         } catch (e: StackOverflowError) {
             null
+        } finally {
+            withContext(NonCancellable) { OpenGuard.end(context, tab.id) }
         }
     }
 }

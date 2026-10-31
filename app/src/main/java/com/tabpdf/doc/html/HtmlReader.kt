@@ -1,7 +1,9 @@
 package com.tabpdf.doc.html
 
+import com.tabpdf.doc.toFiniteFloatOrNull
 import android.graphics.BitmapFactory
 import android.util.Base64
+import com.tabpdf.doc.FileFormats
 import com.tabpdf.doc.isWebLink
 import com.tabpdf.doc.office.Align
 import com.tabpdf.doc.office.Border
@@ -120,7 +122,7 @@ class HtmlReader private constructor(
             else -> "$n."
         }
 
-        private fun pixels(value: String): Float? = value.trim().removeSuffix("px").toFloatOrNull()?.takeIf { it > 0f }
+        private fun pixels(value: String): Float? = value.trim().removeSuffix("px").toFiniteFloatOrNull()?.takeIf { it > 0f }
     }
 
     /** Where blocks go: margins collapse between siblings, padding doesn't; lengths in pixels. */
@@ -393,7 +395,7 @@ class HtmlReader private constructor(
     /** An image: drawn if it is inside the file, else its description (pages can't be fetched). */
     private fun image(e: Element, s: Style, inline: Inline, state: InlineState) {
         val src = e.attr("src").trim()
-        val bytes = if (src.startsWith("data:image/", true) && src.contains(";base64,")) {
+        val found = if (src.startsWith("data:image/", true) && src.contains(";base64,")) {
             val data = src.substringAfter(";base64,")
             if (data.length / 4 * 3 > MAX_IMAGE_BYTES) null
             else try {
@@ -406,6 +408,8 @@ class HtmlReader private constructor(
         } else {
             null
         }
+        // Whatever "data:image/png" or the name says: only the formats the app shows are decoded.
+        val bytes = found?.takeIf { FileFormats.isImage(it) }
         val cssWidth = s.width?.takeIf { !it.auto && it.percent == 0f }?.px
         val cssHeight = s.height?.takeIf { !it.auto && it.percent == 0f }?.px
         var width = cssWidth ?: pixels(e.attr("width"))
@@ -446,7 +450,7 @@ class HtmlReader private constructor(
             val href = image?.let { it.attr("xlink:href").ifBlank { it.attr("href") }.ifBlank { it.attr("src") } }?.trim()
             val bytes = href?.takeIf { it.isNotEmpty() && !it.contains(':') }?.let { resources?.invoke(it) }
             if (bytes != null) {
-                val box = e.attr("viewBox").trim().split(Regex("[\\s,]+")).mapNotNull { it.toFloatOrNull() }
+                val box = e.attr("viewBox").trim().split(Regex("[\\s,]+")).mapNotNull { it.toFiniteFloatOrNull() }
                 if (box.size == 4 && (width == null || height == null)) {
                     width = width ?: pixels(image.attr("width")) ?: box[2]
                     height = height ?: (width * box[3] / box[2].coerceAtLeast(1f))
@@ -504,9 +508,9 @@ class HtmlReader private constructor(
             }
         }
         val rows = head + bodies + foot
-        val borderAttr = e.attr("border").trim().let { if (e.hasAttr("border")) it.toFloatOrNull() ?: 1f else 0f }
+        val borderAttr = e.attr("border").trim().let { if (e.hasAttr("border")) it.toFiniteFloatOrNull() ?: 1f else 0f }
         val attrBorder = if (borderAttr > 0f) Border(PT, 0xFF808080.toInt()) else null
-        val cellPadding = e.attr("cellpadding").trim().toFloatOrNull()
+        val cellPadding = e.attr("cellpadding").trim().toFiniteFloatOrNull()
         val tableBorders = Array(4) { s.border(it)?.let { b -> Border(b.width * PT, b.color) } ?: attrBorder }
 
         val taken = HashMap<Int, java.util.BitSet>()

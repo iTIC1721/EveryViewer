@@ -22,6 +22,7 @@ import com.tabpdf.doc.Bundles
 import com.tabpdf.doc.Document
 import com.tabpdf.doc.Documents
 import com.tabpdf.doc.FileFormat
+import com.tabpdf.doc.ImageDocument
 import com.tabpdf.doc.Thumbnails
 import com.tabpdf.doc.TocEntry
 import com.tabpdf.doc.awaitComplete
@@ -30,6 +31,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import android.net.Uri
 import android.provider.DocumentsContract
+import android.provider.OpenableColumns
 import com.tabpdf.export.PdfExport
 import com.tabpdf.pdf.PdfDocument
 import kotlinx.coroutines.CancellationException
@@ -81,6 +83,10 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
     /** Documents open in viewers, by tab: a bundle's page counts are read from it when it is edited. */
     private val openDocuments = mutableMapOf<String, Document>()
 
+    /** A document opened with a password is open (on screen or beside it), see [TabsScreen]'s screen guard. */
+    private val _lockedOpen = MutableStateFlow(false)
+    val lockedOpen: StateFlow<Boolean> = _lockedOpen.asStateFlow()
+
     private val _undoOffer = MutableStateFlow<UndoOffer?>(null)
     val undoOffer: StateFlow<UndoOffer?> = _undoOffer.asStateFlow()
     private var undoable: Closed? = null
@@ -110,6 +116,8 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
         // Groups are never empty (as in Chrome), and something should be on screen if any tab is open.
         val cleaned = saved.copy(top = saved.top.filter { it !is TabGroup || saved.tabsOf(it.id).isNotEmpty() })
             .withValidCurrent(null, 0)
+        // Before any tab is shown (and so opened): which ones ended the app last time.
+        withContext(Dispatchers.IO) { OpenGuard.load(app) }
         _state.value = cleaned
         if (cleaned != saved) commit(cleaned)
         app.enqueueWrite {
@@ -119,12 +127,24 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
             // password, so it isn't kept on the disk longer than that (as for thumbnails).
             withContext(Dispatchers.IO) {
                 File(app.cacheDir, EXPORT_DIR).deleteRecursively()
-                // Copies for reading bookmarks, left when the app ended while one was read.
-                File(app.cacheDir, PdfDocument.TEMP_DIR).listFiles()?.forEach { if (it.lastModified() < app.startedAt) it.delete() }
+                File(app.cacheDir, PdfExport.WORK_DIR).deleteRecursively()
+                // Copies for reading bookmarks, and of images being shown, left when the app ended meanwhile.
+                for (temp in listOf(PdfDocument.TEMP_DIR, ImageDocument.TEMP_DIR)) {
+                    File(app.cacheDir, temp).listFiles()?.forEach { if (it.lastModified() < app.startedAt) it.delete() }
+                }
             }
         }
         ink.deleteOrphans()
     }
+
+    /** Tabs whose file was being opened when the app last ended: opened only when asked ([OpenGuard]). */
+    val heldBack: StateFlow<Set<String>> = OpenGuard.held
+
+    fun reopen(tabId: String) = OpenGuard.release(tabId)
+
+    /** Tab [tabId]'s file is about to be opened, or is open and drawn ([OpenGuard]). */
+    suspend fun opening(tabId: String) = OpenGuard.begin(app, tabId)
+    suspend fun opened(tabId: String) = OpenGuard.end(app, tabId)
 
     private fun current(): SessionState = _state.value!!
 
@@ -364,6 +384,7 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
     /** A viewer opened ([document]) or let go of (null) tab [tabId]'s file. */
     fun onDocument(tabId: String, document: Document?) {
         if (document != null) openDocuments[tabId] = document else openDocuments -= tabId
+        _lockedOpen.value = openDocuments.values.any { it.locked }
     }
 
     /** Edits tab [tabId]'s bundle; a tab of one file starts as a bundle of just that file. */
@@ -590,6 +611,15 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
     /** The name an export of [tab] is offered under: the file's name as a PDF. */
     fun exportName(tab: DocTab) = exportFileName(tab.name)
 
+    /** The size of the file at [uri] as its provider tells it, or null if it doesn't. */
+    private fun sizeOf(uri: Uri): Long? = try {
+        app.contentResolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)?.use {
+            if (it.moveToFirst() && !it.isNull(0)) it.getLong(0) else null
+        }
+    } catch (_: Exception) {
+        null
+    }
+
     /** Exports tab [tabId] to [destination] (a file the user picked), or for sharing if null. */
     fun startExport(tabId: String, destination: Uri?) {
         val tab = current().tab(tabId) ?: return
@@ -604,6 +634,9 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
                 return@launch
             }
             var document: Document? = null
+            // A file the save dialog just made is empty; one the user chose to replace is not, and is
+            // never deleted on failure (the export is written there only once it is complete).
+            val madeForIt = destination != null && withContext(Dispatchers.IO) { sizeOf(destination) == 0L }
             try {
                 withContext(Dispatchers.IO) {
                     // Only the latest export is kept (for the app it is shared with to read).
@@ -631,7 +664,7 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
                 // Only the kind: messages may hold the file's address (and so its name).
                 if (e !is CancellationException) android.util.Log.w("EveryViewer", "Export failed: ${e.javaClass.simpleName}")
                 // The empty file made for it is no use.
-                destination?.let { uri -> withContext(NonCancellable + Dispatchers.IO) { runCatching { DocumentsContract.deleteDocument(app.contentResolver, uri) } } }
+                destination?.takeIf { madeForIt }?.let { uri -> withContext(NonCancellable + Dispatchers.IO) { runCatching { DocumentsContract.deleteDocument(app.contentResolver, uri) } } }
                 target.delete()
                 _export.value = if (e is CancellationException) null else ExportState.Failed
                 if (e is CancellationException) throw e
@@ -664,14 +697,29 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
         /**
          * The file name an export of a file named [name] gets: that name as a PDF. The name comes from
          * the app that gave the file, so it is cut to a plain name: no folders ("../"), no characters
-         * file systems refuse, not hidden, not too long.
+         * file systems refuse, not hidden, not too long. Its length is counted in bytes, as file
+         * systems count it (255 at most): 100 Hangul letters are 300 bytes. A letter is never cut in two.
          */
         fun exportFileName(name: String): String {
-            val base = name.substringBeforeLast('.', name)
+            val plain = name.substringBeforeLast('.', name)
                 .map { c -> if (c.code < 32 || c in "/\\:*?\"<>|") '_' else c }.joinToString("")
-                .trim().trimStart('.').trim().take(100)
-            return base.ifBlank { "document" } + ".pdf"
+                .trim().trimStart('.').trim()
+            val base = StringBuilder()
+            var bytes = 0
+            var i = 0
+            while (i < plain.length) {
+                val codePoint = plain.codePointAt(i)
+                val size = String(Character.toChars(codePoint)).toByteArray().size
+                if (bytes + size > MAX_NAME_BYTES) break
+                base.appendCodePoint(codePoint)
+                bytes += size
+                i += Character.charCount(codePoint)
+            }
+            return base.toString().trim().ifBlank { "document" } + ".pdf"
         }
+
+        /** Bytes of an export's name before ".pdf": room left for "(1)" and the like added by other apps. */
+        private const val MAX_NAME_BYTES = 200
     }
 }
 

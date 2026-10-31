@@ -1,5 +1,6 @@
 package com.tabpdf.doc.office
 
+import com.tabpdf.doc.toFiniteFloatOrNull
 import com.tabpdf.doc.isWebLink
 
 /**
@@ -173,7 +174,7 @@ private class Docx(private val parts: ZipParts) {
 
         val size = section?.child("w:pgSz")
         val margin = section?.child("w:pgMar")
-        fun twips(e: Element?, name: String, default: Float) = e?.attr(name)?.toFloatOrNull()?.times(TWIP) ?: default
+        fun twips(e: Element?, name: String, default: Float) = e?.attr(name)?.toFiniteFloatOrNull()?.times(TWIP) ?: default
         var width = twips(size, "w:w", 595.3f)
         var height = twips(size, "w:h", 841.9f)
         if (size?.attr("w:orient") == "landscape" && width < height) width = height.also { height = width }
@@ -337,8 +338,8 @@ private class Docx(private val parts: ZipParts) {
     private fun drawing(d: Element): Run {
         val frame = d.child("wp:inline") ?: d.child("wp:anchor")
         val extent = frame?.child("wp:extent")
-        val width = (extent?.attr("cx")?.toFloatOrNull() ?: 0f) * EMU
-        val height = (extent?.attr("cy")?.toFloatOrNull() ?: 0f) * EMU
+        val width = (extent?.attr("cx")?.toFiniteFloatOrNull() ?: 0f) * EMU
+        val height = (extent?.attr("cy")?.toFiniteFloatOrNull() ?: 0f) * EMU
         val blip = d.find("a:blip")?.attr("r:embed")
         if (blip == null || width <= 0f || height <= 0f) return Run.Unsupported(width.coerceAtLeast(40f), height.coerceAtLeast(20f))
         val bytes = rels[blip]?.takeIf { !it.second }?.first?.let { parts[it] }
@@ -351,7 +352,7 @@ private class Docx(private val parts: ZipParts) {
         val h = anchor.child("wp:positionH")
         val v = anchor.child("wp:positionV")
         return Floating(
-            x = (h?.child("wp:posOffset")?.text?.trim()?.toFloatOrNull() ?: 0f) * EMU,
+            x = (h?.child("wp:posOffset")?.text?.trim()?.toFiniteFloatOrNull() ?: 0f) * EMU,
             fromPage = h?.attr("relativeFrom") in setOf("page", "leftMargin", "insideMargin", "outsideMargin", "rightMargin"),
             align = when (h?.child("wp:align")?.text?.trim()) {
                 "left", "inside" -> Align.Left
@@ -359,7 +360,7 @@ private class Docx(private val parts: ZipParts) {
                 "right", "outside" -> Align.Right
                 else -> null
             },
-            y = (v?.child("wp:posOffset")?.text?.trim()?.toFloatOrNull() ?: 0f) * EMU,
+            y = (v?.child("wp:posOffset")?.text?.trim()?.toFiniteFloatOrNull() ?: 0f) * EMU,
             behind = anchor.attr("behindDoc") == "1",
         )
     }
@@ -439,14 +440,14 @@ private class Docx(private val parts: ZipParts) {
         val insideV = tableBorder("w:insideV")
         val cellMargin = tblPr?.child("w:tblCellMar")
         fun margin(e: Element?, vararg names: String, default: Float): Float {
-            for (n in names) e?.child(n)?.attr("w:w")?.toFloatOrNull()?.let { return it * TWIP }
+            for (n in names) e?.child(n)?.attr("w:w")?.toFiniteFloatOrNull()?.let { return it * TWIP }
             return default
         }
         val defaultPadding = Insets(
             margin(cellMargin, "w:left", "w:start", default = 5.4f), margin(cellMargin, "w:top", default = 0f),
             margin(cellMargin, "w:right", "w:end", default = 5.4f), margin(cellMargin, "w:bottom", default = 0f),
         )
-        val columns = t.child("w:tblGrid")?.all("w:gridCol")?.map { (it.attr("w:w")?.toFloatOrNull() ?: 0f) * TWIP }.orEmpty()
+        val columns = t.child("w:tblGrid")?.all("w:gridCol")?.map { (it.attr("w:w")?.toFiniteFloatOrNull() ?: 0f) * TWIP }.orEmpty()
 
         val rows = mutableListOf<TableRow>()
         class Building(val row: Int, val column: Int, val span: Int, val tc: Element) {
@@ -458,14 +459,16 @@ private class Docx(private val parts: ZipParts) {
             val trPr = tr.child("w:trPr")
             val h = trPr?.child("w:trHeight")
             rows += TableRow(
-                minHeight = (h?.attr("w:val")?.toFloatOrNull() ?: 0f) * TWIP,
+                minHeight = (h?.attr("w:val")?.toFiniteFloatOrNull() ?: 0f) * TWIP,
                 exactHeight = h?.attr("w:hRule") == "exact",
                 repeats = toggle(trPr?.child("w:tblHeader")) == true,
             )
-            var column = trPr?.child("w:gridBefore")?.attr("w:val")?.toIntOrNull() ?: 0
+            // Word makes at most 63 columns; a crafted span of billions would make that many.
+            var column = trPr?.child("w:gridBefore")?.attr("w:val")?.toIntOrNull()?.coerceIn(0, MAX_TABLE_COLUMNS) ?: 0
             for (tc in tr.all("w:tc") + tr.all("w:sdt").flatMap { it.child("w:sdtContent")?.all("w:tc").orEmpty() }) {
                 val tcPr = tc.child("w:tcPr")
-                val span = tcPr?.child("w:gridSpan")?.attr("w:val")?.toIntOrNull() ?: 1
+                val span = tcPr?.child("w:gridSpan")?.attr("w:val")?.toIntOrNull()?.coerceIn(1, MAX_TABLE_COLUMNS) ?: 1
+                if (column > MAX_TABLE_COLUMNS) throw java.io.IOException("Table too wide")
                 val vMerge = tcPr?.child("w:vMerge")
                 if (vMerge != null && vMerge.attr("w:val") != "restart") {
                     built.lastOrNull { it.column == column && it.row + it.rowSpan == r }?.let { it.rowSpan++ }
@@ -520,7 +523,7 @@ private class Docx(private val parts: ZipParts) {
             columns = gridColumns,
             rows = rows,
             cells = cells,
-            indent = (tblPr?.child("w:tblInd")?.attr("w:w")?.toFloatOrNull() ?: 0f) * TWIP,
+            indent = (tblPr?.child("w:tblInd")?.attr("w:w")?.toFiniteFloatOrNull() ?: 0f) * TWIP,
             align = when (tblPr?.child("w:jc")?.attr("w:val")) {
                 "center" -> Align.Center
                 "right", "end" -> Align.Right
@@ -533,7 +536,7 @@ private class Docx(private val parts: ZipParts) {
     private fun border(e: Element): Border? {
         val kind = e.attr("w:val") ?: return null
         if (kind == "nil" || kind == "none") return null
-        val width = (e.attr("w:sz")?.toFloatOrNull() ?: 4f) / 8f
+        val width = (e.attr("w:sz")?.toFiniteFloatOrNull() ?: 4f) / 8f
         return Border(if (kind == "double") width * 3 else width, parseColor(e.attr("w:color")) ?: 0xFF000000.toInt())
     }
 
@@ -546,7 +549,7 @@ private class Docx(private val parts: ZipParts) {
         val spacing = pPr.child("w:spacing")
         val num = pPr.child("w:numPr")
         fun twips(e: Element?, vararg names: String): Float? {
-            for (n in names) e?.attr(n)?.toFloatOrNull()?.let { return it * TWIP }
+            for (n in names) e?.attr(n)?.toFiniteFloatOrNull()?.let { return it * TWIP }
             return null
         }
         val hanging = twips(ind, "w:hanging")
@@ -563,7 +566,7 @@ private class Docx(private val parts: ZipParts) {
             firstLine = hanging?.let { -it } ?: twips(ind, "w:firstLine"),
             before = if (spacing?.attr("w:beforeAutospacing") == "1") 14f else twips(spacing, "w:before"),
             after = if (spacing?.attr("w:afterAutospacing") == "1") 14f else twips(spacing, "w:after"),
-            line = spacing?.attr("w:line")?.toFloatOrNull(),
+            line = spacing?.attr("w:line")?.toFiniteFloatOrNull(),
             lineRule = spacing?.attr("w:lineRule") ?: spacing?.attr("w:line")?.let { "auto" },
             numId = num?.child("w:numId")?.attr("w:val")?.takeIf { it != "0" },
             ilvl = num?.child("w:ilvl")?.attr("w:val")?.toIntOrNull(),
@@ -581,7 +584,7 @@ private class Docx(private val parts: ZipParts) {
         val highlight = rPr.child("w:highlight")?.attr("w:val")?.let(::highlightColor)
         val shade = parseColor(rPr.child("w:shd")?.attr("w:fill"))?.takeIf { it != 0xFFFFFFFF.toInt() }
         return RProps(
-            size = (rPr.child("w:sz") ?: rPr.child("w:szCs"))?.attr("w:val")?.toFloatOrNull()?.div(2f),
+            size = (rPr.child("w:sz") ?: rPr.child("w:szCs"))?.attr("w:val")?.toFiniteFloatOrNull()?.div(2f),
             bold = toggle(rPr.child("w:b")),
             italic = toggle(rPr.child("w:i")),
             underline = rPr.child("w:u")?.attr("w:val")?.let { it != "none" },
@@ -589,14 +592,14 @@ private class Docx(private val parts: ZipParts) {
             color = rPr.child("w:color")?.attr("w:val")?.let { parseColor(it) ?: if (it == "auto") 0xFF000000.toInt() else null },
             background = highlight ?: shade,
             font = (eastAsia ?: latin)?.let(::fontKind),
-            scaleX = rPr.child("w:w")?.attr("w:val")?.toFloatOrNull()?.div(100f),
-            spacing = rPr.child("w:spacing")?.attr("w:val")?.toFloatOrNull()?.times(TWIP),
+            scaleX = rPr.child("w:w")?.attr("w:val")?.toFiniteFloatOrNull()?.div(100f),
+            spacing = rPr.child("w:spacing")?.attr("w:val")?.toFiniteFloatOrNull()?.times(TWIP),
             vertAlign = rPr.child("w:vertAlign")?.attr("w:val"),
             hidden = toggle(rPr.child("w:vanish")),
             latinFont = latin,
             eastAsiaFont = eastAsia,
             eastAsiaHint = fonts?.attr("w:hint")?.let { it == "eastAsia" },
-            kern = rPr.child("w:kern")?.attr("w:val")?.toFloatOrNull()?.div(2f),
+            kern = rPr.child("w:kern")?.attr("w:val")?.toFiniteFloatOrNull()?.div(2f),
         )
     }
 
