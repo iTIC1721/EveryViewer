@@ -89,7 +89,8 @@ app/src/main/java/com/tabpdf/
                          epub: EpubDocument(spine 순서로 장마다 HtmlDocument.render, 첫 장 뒤는 백그라운드 조판 — progress)
   pdf/                   PdfRenderer 래퍼 (렌더링 스레드 안전 처리), 암호(PdfPasswords: 메모리에만).
                          PDFium을 쓰는 일은 모두 PdfEngine에 모으고 격리 프로세스(RenderService, isolatedProcess)에서 돌린다:
-                         RenderProcess가 연결·시간 초과·재시작과 받은 값 확인. Android 8.0만 앱 안에서 PdfEngine을 쓴다
+                         RenderProcess가 연결·시간 초과·재시작과 받은 값 확인. Android 8.0만 앱 안에서 PdfEngine을 쓴다.
+                         문서 그림·이미지 파일 디코딩도 doc/Pictures를 거쳐 같은 프로세스에서 (HEIF만 앱에서)
   export/                PDF로 내보내기(PdfExport): PDF는 원본 뒤에 필기를 덧붙임(PdfFile: 구조 읽기, PdfAppend: 증분 업데이트,
                          PdfCrypt: 표준 보안 처리기), 흐르는 형식은 Document.drawPage로 글자 그대로, 이미지·묶음은 JpegPdfWriter.
                          필기는 PdfInk(획 외곽선 → 경로). PDF 북마크(PdfOutline)도 같은 구조 읽기로 읽는다.
