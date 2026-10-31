@@ -68,10 +68,16 @@ class RenderProcessTest {
         assertEquals(PAGES, PdfDocument.pageCount(context, file))
         assertEquals(PAGES, localCount)
         // Text support only on Android 12+ with the system update; elsewhere both find nothing.
-        assertEquals(local.search("fox").map { it.page to it.rects }, remote.search("fox").map { it.page to it.rects })
+        val found = remote.search("fox")
+        assertEquals(local.search("fox").map { it.page to it.rects }, found.map { it.page to it.rects })
         val from = android.graphics.PointF(0.05f, 0.04f)
         val to = android.graphics.PointF(0.6f, 0.1f)
-        assertEquals(local.selectText(0, from, to)?.text, remote.selectText(0, from, to)?.text)
+        val selected = remote.selectText(0, from, to)?.text
+        assertEquals(local.selectText(0, from, to)?.text, selected)
+        if (PdfEngine.textSupport) {
+            assertEquals("one match a line", minOf(PAGES * 70, com.tabpdf.doc.TextSearch.MAX_MATCHES), found.size)
+            assertTrue(selected.orEmpty().contains("quick brown fox"))
+        }
         assertEquals(local.link(0, 0.5f, 0.5f), remote.link(0, 0.5f, 0.5f))
         local.close()
         remote.close()
