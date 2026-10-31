@@ -70,6 +70,13 @@
             </intent-filter>
         </activity>
 
+        <!-- Draws PDF pages with no permissions and no access to the app's files (RenderService). -->
+        <service
+            android:name="com.tabpdf.pdf.RenderService"
+            android:exported="false"
+            android:isolatedProcess="true"
+            android:process=":render" />
+
         <!-- Shares the latest PDF export (기획서 5.9) with the app the user picks. -->
         <provider
             android:name="androidx.core.content.FileProvider"

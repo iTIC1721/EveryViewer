@@ -50,12 +50,17 @@ import kotlin.math.roundToInt
  * so every access goes through [mutex] on the IO dispatcher.
  */
 class PdfDocument private constructor(
-    private val fd: ParcelFileDescriptor,
+    private var fd: ParcelFileDescriptor?,
     /**
      * Android's [PdfRenderer]; or, for a file opened with a password on Android 12–14, the newer
      * [PdfRendererPreV] a system update brings there (the older one can't take passwords).
+     * Null while pages are drawn in [RenderProcess]: opened here only for what that doesn't do
+     * (text, links, export).
      */
-    private val renderer: AutoCloseable,
+    private var rendererOrNull: AutoCloseable?,
+    /** Where pages are drawn, if not here. */
+    private var remote: RenderProcess.Opened.Document?,
+    private val context: Context,
     override val pageSizes: List<PageSize>,
     /** Opens the file again (for the search-capable renderer of Android 12–14). */
     private val reopen: () -> ParcelFileDescriptor?,
@@ -143,6 +148,21 @@ class PdfDocument private constructor(
     private val mutex = Mutex()
     private var closed = false
 
+    /** The renderer in this process, opened on first use if pages are drawn elsewhere. Under [mutex]. */
+    private val renderer: AutoCloseable
+        get() = rendererOrNull ?: run {
+            val file = reopen() ?: throw FileNotFoundException()
+            try {
+                openRenderer(file, password).also { rendererOrNull = it; fd = file }
+            } catch (e: Exception) {
+                file.close()
+                throw e
+            }
+        }
+
+    /** Times in a row the render process has been started again for this file (see [renderRemotely]). */
+    private var restarts = 0
+
     /** Android 12–14's renderer that can search, opened on the first search. */
     private var searcher: AutoCloseable? = null
 
@@ -159,16 +179,40 @@ class PdfDocument private constructor(
                 android.util.Log.w("EveryViewer", "No memory for page $index at ${widthPx}x$heightPx", e)
                 return@withLock null
             }
+            if (remote != null) return@withLock if (renderRemotely(index, bitmap)) bitmap else null
             // PDF pages are transparent by default; paper should be white.
             bitmap.eraseColor(Color.WHITE)
-            if (renderer is PdfRenderer) {
-                renderer.openPage(index).use { page ->
-                    page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-                }
-            } else if (preVSearch) {
-                renderPreV(index, bitmap)
-            }
+            renderInto(renderer, index, bitmap)
             bitmap
+        }
+    }
+
+    /**
+     * Draws in [RenderProcess]. If that process ended meanwhile (another file, or this one, ended it),
+     * the file is opened there again, a few times at most: a file that ends it each time stops here.
+     */
+    private suspend fun renderRemotely(index: Int, bitmap: Bitmap): Boolean {
+        while (true) {
+            val opened = remote ?: return false
+            try {
+                if (RenderProcess.render(opened.id, opened.generation, index, bitmap)) {
+                    restarts = 0
+                    return true
+                }
+            } catch (e: IOException) {
+                android.util.Log.w("EveryViewer", "Page $index not drawn: ${e.message}")
+                // A page that can't be drawn, as opposed to a process that ended drawing it.
+                if (RenderProcess.isRunning(opened.generation)) return false
+            }
+            if (++restarts > MAX_RESTARTS) return false
+            val file = reopen() ?: return false
+            remote = try {
+                RenderProcess.open(context, file, password) as? RenderProcess.Opened.Document
+            } catch (e: IOException) {
+                null
+            } finally {
+                file.close()
+            }
         }
     }
 
@@ -196,13 +240,6 @@ class PdfDocument private constructor(
             }
         }
         result
-    }
-
-    @RequiresExtension(extension = Build.VERSION_CODES.S, version = 13)
-    private fun renderPreV(index: Int, bitmap: Bitmap) {
-        (renderer as PdfRendererPreV).openPage(index).use { page ->
-            page.render(bitmap, null, null, RenderParams.Builder(RenderParams.RENDER_MODE_FOR_DISPLAY).build())
-        }
     }
 
     /** On Android 15 the renderer is always [PdfRenderer] (it takes passwords there). */
@@ -310,7 +347,7 @@ class PdfDocument private constructor(
 
     @RequiresExtension(extension = Build.VERSION_CODES.S, version = 13)
     private fun writePreV(target: ParcelFileDescriptor) {
-        val own = renderer as? PdfRendererPreV
+        val own = rendererOrNull as? PdfRendererPreV
         if (own != null) {
             own.write(target, true)
             return
@@ -323,16 +360,18 @@ class PdfDocument private constructor(
 
     /** Android 12–14's renderer that can search: the one in use if the file needed a password, else opened once. */
     @RequiresExtension(extension = Build.VERSION_CODES.S, version = 13)
-    private fun preV(): PdfRendererPreV? = renderer as? PdfRendererPreV ?: searcher as? PdfRendererPreV
-        ?: reopen()?.let { file -> PdfRendererPreV(file).also { searcher = it } }
+    private fun preV(): PdfRendererPreV? = rendererOrNull as? PdfRendererPreV ?: searcher as? PdfRendererPreV
+        ?: reopen()?.let { file -> PdfRendererPreV(file, loadParams(password ?: "")).also { searcher = it } }
 
     override suspend fun close() = withContext(NonCancellable + Dispatchers.IO) {
         mutex.withLock {
             if (closed) return@withLock
             closed = true
-            renderer.close()
-            fd.close()
+            rendererOrNull?.close()
+            fd?.close()
             searcher?.close()
+            remote?.let { RenderProcess.close(it.id, it.generation) }
+            Unit
         }
     }
 
@@ -347,6 +386,8 @@ class PdfDocument private constructor(
 
         /** How far around a link a tap still hits it, in PDF points (1/72 inch). */
         private const val LINK_SLOP = 4f
+
+        private const val MAX_RESTARTS = 3
 
         /** Whether this Android 12–14 device has the system update that brings PDF text search. */
         @get:ChecksSdkIntAtLeast(api = 31)
@@ -369,13 +410,30 @@ class PdfDocument private constructor(
             val password = PdfPasswords[uri]?.takeIf { takesPasswords }
             val fd = context.contentResolver.openFileDescriptor(uri, "r")
                 ?: throw FileNotFoundException(uri.toString())
+            val app = context.applicationContext
+            val reopen = { app.contentResolver.openFileDescriptor(uri, "r") }
+            if (RenderProcess.available) {
+                val opened = try {
+                    RenderProcess.open(app, fd, password)
+                } finally {
+                    // The render process has its own copy of the descriptor.
+                    fd.close()
+                }
+                return@withContext when (opened) {
+                    is RenderProcess.Opened.Document -> {
+                        if (opened.sizes.isEmpty()) throw DocumentOpenException(DocumentOpenException.Reason.NoPages)
+                        PdfDocument(null, null, opened, app, opened.sizes, reopen, password, File(app.cacheDir, TEMP_DIR))
+                    }
+                    RenderProcess.Opened.NeedsPassword -> throw DocumentOpenException(DocumentOpenException.Reason.PasswordProtected)
+                    RenderProcess.Opened.WrongPassword -> {
+                        PdfPasswords.remove(uri)
+                        throw DocumentOpenException(DocumentOpenException.Reason.WrongPassword)
+                    }
+                }
+            }
             try {
                 val renderer = try {
-                    when {
-                        password == null -> PdfRenderer(fd)
-                        Build.VERSION.SDK_INT >= 35 -> PdfRenderer(fd, loadParams(password))
-                        else -> openPreV(fd, password)
-                    }
+                    openRenderer(fd, password)
                 } catch (e: SecurityException) {
                     // The renderer's way of saying the file is encrypted, or the password is wrong.
                     if (password == null) throw DocumentOpenException(DocumentOpenException.Reason.PasswordProtected)
@@ -392,16 +450,43 @@ class PdfDocument private constructor(
                     renderer.close()
                     throw DocumentOpenException(DocumentOpenException.Reason.NoPages)
                 }
-                val app = context.applicationContext
-                PdfDocument(fd, renderer, sizes, { app.contentResolver.openFileDescriptor(uri, "r") }, password, File(app.cacheDir, TEMP_DIR))
+                PdfDocument(fd, renderer, null, app, sizes, reopen, password, File(app.cacheDir, TEMP_DIR))
             } catch (e: Exception) {
                 fd.close()
                 throw e
             }
         }
 
+        /**
+         * Android's renderer for [fd] (see [renderer]), here or in [RenderService]. Throws
+         * [SecurityException] if the file needs a password, or the one given doesn't open it.
+         */
+        internal fun openRenderer(fd: ParcelFileDescriptor, password: String?): AutoCloseable = when {
+            password == null -> PdfRenderer(fd)
+            Build.VERSION.SDK_INT >= 35 -> PdfRenderer(fd, loadParams(password))
+            else -> openPreV(fd, password)
+        }
+
+        /** Draws page [index] over what is in [bitmap]. */
+        internal fun renderInto(renderer: AutoCloseable, index: Int, bitmap: Bitmap) {
+            if (renderer is PdfRenderer) {
+                renderer.openPage(index).use { page ->
+                    page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                }
+            } else if (preVSearch) {
+                renderPreV(renderer as PdfRendererPreV, index, bitmap)
+            }
+        }
+
+        @RequiresExtension(extension = Build.VERSION_CODES.S, version = 13)
+        private fun renderPreV(renderer: PdfRendererPreV, index: Int, bitmap: Bitmap) {
+            renderer.openPage(index).use { page ->
+                page.render(bitmap, null, null, RenderParams.Builder(RenderParams.RENDER_MODE_FOR_DISPLAY).build())
+            }
+        }
+
         // Reading every page size costs ~0.4 ms a page (1000 pages ≈ 0.4 s on an emulator).
-        private fun pageSizesOf(renderer: AutoCloseable): List<PageSize> = when {
+        internal fun pageSizesOf(renderer: AutoCloseable): List<PageSize> = when {
             renderer is PdfRenderer -> (0 until renderer.pageCount).map { i ->
                 renderer.openPage(i).use { PageSize(it.width.toFloat(), it.height.toFloat()) }
             }
