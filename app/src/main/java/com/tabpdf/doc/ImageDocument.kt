@@ -3,7 +3,7 @@ package com.tabpdf.doc
 import android.content.ContentResolver
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
+import android.util.Size
 import android.graphics.Matrix
 import android.media.ExifInterface
 import android.net.Uri
@@ -46,9 +46,8 @@ class ImageDocument private constructor(
         // Rounding down to a power of two can leave up to 4× the pixels asked for, and Android
         // won't draw a bitmap over 100 MB (the app would crash, again on every start at that zoom).
         while (storedWidth.toLong() * storedHeight / (sample.toLong() * sample) > MAX_DECODED_PIXELS) sample *= 2
-        val options = BitmapFactory.Options().apply { inSampleSize = sample }
         val decoded = try {
-            BitmapFactory.decodeFile(file.path, options)
+            Pictures.decode(file, Size(storedWidth, storedHeight), sample)
         } catch (e: OutOfMemoryError) {
             android.util.Log.w("EveryViewer", "No memory for image at 1/$sample", e)
             null
@@ -122,18 +121,14 @@ class ImageDocument private constructor(
                 val head = file.inputStream().use { it.readUpTo(FileFormats.HEAD_SIZE) }
                 // Only the formats the app shows reach Android's decoder (FileFormats.isImage).
                 if (!FileFormats.isImage(head)) throw DocumentOpenException(DocumentOpenException.Reason.Unsupported)
-                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                BitmapFactory.decodeFile(file.path, bounds)
-                if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
-                    // Not an image this device can decode (e.g. HEIF before Android 9) or a broken file.
-                    throw IOException("Can't decode image")
-                }
+                // Null if not an image this device can decode (e.g. HEIF before Android 9) or a broken file.
+                val size = Pictures.size(file) ?: throw IOException("Can't decode image")
                 val orientation = try {
                     ExifInterface(file.path).getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
                 } catch (_: Exception) {
                     ExifInterface.ORIENTATION_NORMAL
                 }
-                ImageDocument(file, temporary, bounds.outWidth, bounds.outHeight, orientation)
+                ImageDocument(file, temporary, size.width, size.height, orientation)
             } catch (e: Throwable) {
                 if (temporary) file.delete()
                 throw e

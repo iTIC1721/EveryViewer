@@ -3,7 +3,9 @@ package com.tabpdf.pdf
 import android.app.Service
 import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Color
+import android.graphics.ColorSpace
 import android.graphics.Point
 import android.os.Binder
 import android.os.IBinder
@@ -43,6 +45,8 @@ class RenderService : Service() {
                 when (code) {
                     RenderProcess.OPEN -> open(data, reply)
                     RenderProcess.COUNT_PAGES -> countPages(data, reply)
+                    RenderProcess.PICTURE_SIZE -> pictureSize(data, reply)
+                    RenderProcess.PICTURE -> picture(data, reply)
                     in RenderProcess.RENDER..RenderProcess.WRITE -> {
                         val opened = synchronized(documents) { documents[data.readInt()] }
                         if (opened == null) {
@@ -91,6 +95,67 @@ class RenderService : Service() {
         val pages = fd.use { PdfEngine.countPages(it) }
         reply.writeInt(RenderProcess.OK)
         reply.writeInt(pages)
+    }
+
+    /** A picture's bytes from [RenderProcess.writeSource], decoded with [options]. */
+    private fun decode(data: Parcel, options: BitmapFactory.Options): Bitmap? = when (data.readInt()) {
+        RenderProcess.FROM_MEMORY -> {
+            val length = data.readInt()
+            SharedMemory.CREATOR.createFromParcel(data).use { memory ->
+                if (length !in 0..memory.size) return null
+                val buffer = memory.mapReadOnly()
+                val bytes = try {
+                    ByteArray(length).also { buffer.get(it) }
+                } finally {
+                    SharedMemory.unmap(buffer)
+                }
+                BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+            }
+        }
+        RenderProcess.FROM_FILE -> data.readFileDescriptor()?.use { BitmapFactory.decodeFileDescriptor(it.fileDescriptor, null, options) }
+        else -> null
+    }
+
+    private fun pictureSize(data: Parcel, reply: Parcel) {
+        val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        decode(data, options)
+        reply.writeInt(RenderProcess.OK)
+        reply.writeInt(options.outWidth)
+        reply.writeInt(options.outHeight)
+    }
+
+    /** Decoded into the app's memory, which is only as large as the app expects the picture to be. */
+    private fun picture(data: Parcel, reply: Parcel) {
+        val options = BitmapFactory.Options().apply {
+            inSampleSize = data.readInt()
+            inPreferredConfig = Bitmap.Config.ARGB_8888
+            inPreferredColorSpace = ColorSpace.get(ColorSpace.Named.SRGB)
+        }
+        val mostWidth = data.readInt()
+        val mostHeight = data.readInt()
+        SharedMemory.CREATOR.createFromParcel(data).use { memory ->
+            var bitmap = decode(data, options) ?: return reply.writeInt(RenderProcess.FAILED)
+            try {
+                if (bitmap.config != Bitmap.Config.ARGB_8888) {
+                    bitmap = bitmap.copy(Bitmap.Config.ARGB_8888, false).also { bitmap.recycle() }
+                        ?: return reply.writeInt(RenderProcess.FAILED)
+                }
+                val bytes = bitmap.width.toLong() * bitmap.height * 4
+                if (bitmap.width > mostWidth || bitmap.height > mostHeight || bytes > memory.size) return reply.writeInt(RenderProcess.FAILED)
+                val buffer = memory.map(OsConstants.PROT_READ or OsConstants.PROT_WRITE, 0, bytes.toInt())
+                try {
+                    bitmap.copyPixelsToBuffer(buffer)
+                } finally {
+                    SharedMemory.unmap(buffer)
+                }
+                reply.writeInt(RenderProcess.OK)
+                reply.writeInt(bitmap.width)
+                reply.writeInt(bitmap.height)
+                reply.writeInt(if (bitmap.hasAlpha()) 1 else 0)
+            } finally {
+                bitmap.recycle()
+            }
+        }
     }
 
     private fun onDocument(code: Int, opened: Opened, data: Parcel, reply: Parcel) {

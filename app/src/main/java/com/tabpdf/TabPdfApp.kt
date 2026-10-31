@@ -25,6 +25,7 @@ class TabPdfApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        com.tabpdf.pdf.RenderProcess.app = this
         appScope.launch {
             for (write in writes) {
                 try {

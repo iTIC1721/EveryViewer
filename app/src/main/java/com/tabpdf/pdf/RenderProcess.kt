@@ -13,20 +13,24 @@ import android.os.Parcel
 import android.os.ParcelFileDescriptor
 import android.os.RemoteException
 import android.os.SharedMemory
+import android.util.Size
 import androidx.annotation.RequiresApi
 import com.tabpdf.doc.PageSize
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import java.io.File
 import java.io.IOException
+import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * The app's side of [RenderService]: binds it on first use and makes its calls. A call that takes
@@ -49,6 +53,12 @@ object RenderProcess {
     const val LINKS = IBinder.FIRST_CALL_TRANSACTION + 5
     const val WRITE = IBinder.FIRST_CALL_TRANSACTION + 6
     const val COUNT_PAGES = IBinder.FIRST_CALL_TRANSACTION + 7
+    const val PICTURE_SIZE = IBinder.FIRST_CALL_TRANSACTION + 8
+    const val PICTURE = IBinder.FIRST_CALL_TRANSACTION + 9
+
+    /** How a picture's bytes are passed: in shared memory, or as the file's descriptor. */
+    const val FROM_MEMORY = 0
+    const val FROM_FILE = 1
 
     const val OK = 0
     const val FAILED = 1
@@ -73,6 +83,9 @@ object RenderProcess {
     /** Shared memory for pixels came in Android 8.1; on 8.0 PDFs are read in the app as before. */
     val available: Boolean get() = Build.VERSION.SDK_INT >= 27 && enabled
 
+    /** The app, for pictures decoded where no context is at hand ([Pictures]); set at start. */
+    @Volatile var app: Context? = null
+
     /** Off only for comparing with reading in the app (tests). */
     @Volatile var enabled = true
 
@@ -80,18 +93,41 @@ object RenderProcess {
     class Ended : IOException("Render process ended")
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private val bindLock = Mutex()
+
+    /**
+     * Times calls and idleness on a thread of its own: callers that block (picture decoding during
+     * layout, on every thread of a dispatcher) can't keep it from ending a process that hangs.
+     */
+    private val timer = Executors.newSingleThreadScheduledExecutor { Thread(it, "render-timer").apply { isDaemon = true } }
+
+    /** Guards [bound], [generation], [idle] and [Bound.documents]. */
+    private val lock = Any()
+
+    /** One binding at a time. */
+    private val connecting = Mutex()
     private var bound: Bound? = null
 
     /** Counts processes started, so a document can tell its process is no longer there. */
     private var generation = 0
 
     private class Bound(val context: Context, val connection: ServiceConnection, val binder: IBinder, val generation: Int) {
-        /** Documents open there; under [bindLock]. */
+        /** Documents open there. */
         var documents = 0
+        private val ended = AtomicBoolean()
+
+        val alive: Boolean get() = !ended.get() && binder.isBinderAlive
+
+        /** Unbinds, which ends the isolated process; calls in progress there fail. */
+        fun end() {
+            if (!ended.compareAndSet(false, true)) return
+            try {
+                context.unbindService(connection)
+            } catch (_: IllegalArgumentException) {
+            }
+        }
     }
 
-    private var idle: Job? = null
+    private var idle: ScheduledFuture<*>? = null
 
     /** What [open] gives back. */
     sealed interface Opened {
@@ -100,9 +136,11 @@ object RenderProcess {
         data object WrongPassword : Opened
     }
 
-    private suspend fun bind(context: Context): Bound = bindLock.withLock {
-        bound?.let { if (it.binder.isBinderAlive) return it }
-        bound?.let { stop(it) }
+    private fun current(): Bound? = synchronized(lock) { bound?.takeIf { it.alive } }
+
+    private suspend fun bind(context: Context): Bound = current() ?: connecting.withLock {
+        current()?.let { return it }
+        synchronized(lock) { bound?.let { stop(it) } }
         val app = context.applicationContext
         val connected = CompletableDeferred<IBinder>()
         val connection = object : ServiceConnection {
@@ -130,28 +168,24 @@ object RenderProcess {
             app.unbindService(connection)
             throw e
         }
-        Bound(app, connection, binder, ++generation).also {
-            bound = it
-            stopWhenIdle(it)
+        synchronized(lock) {
+            Bound(app, connection, binder, ++generation).also {
+                bound = it
+                stopWhenIdle(it)
+            }
         }
     }
 
-    /** Under [bindLock]. */
+    /** Under [lock]. */
     private fun stop(it: Bound) {
         if (bound === it) bound = null
-        try {
-            it.context.unbindService(it.connection)
-        } catch (_: IllegalArgumentException) {
-        }
+        it.end()
     }
 
-    /** Under [bindLock]: ends [it] after [IDLE_MS] unless a document is opened there meanwhile. */
+    /** Under [lock]: ends [it] after [IDLE_MS] unless a document is opened there or a call made meanwhile. */
     private fun stopWhenIdle(it: Bound) {
-        idle?.cancel()
-        idle = scope.launch {
-            delay(IDLE_MS)
-            bindLock.withLock { if (it.documents == 0) stop(it) }
-        }
+        idle?.cancel(false)
+        idle = timer.schedule({ synchronized(lock) { if (it.documents == 0) stop(it) } }, IDLE_MS, TimeUnit.MILLISECONDS)
     }
 
     /** Starts the process ahead of the first PDF, so opening it doesn't wait for that. */
@@ -171,11 +205,10 @@ object RenderProcess {
      */
     private suspend fun <T> call(bound: Bound, code: Int, write: (Parcel) -> Unit, read: (Parcel) -> T): T =
         withContext(Dispatchers.IO) {
-            val watchdog = scope.launch {
-                delay(TIMEOUT_MS)
+            val watchdog = timer.schedule({
                 android.util.Log.w("EveryViewer", "Render process stopped: took too long")
-                bindLock.withLock { stop(bound) }
-            }
+                synchronized(lock) { stop(bound) }
+            }, TIMEOUT_MS, TimeUnit.MILLISECONDS)
             val data = Parcel.obtain()
             val reply = Parcel.obtain()
             try {
@@ -189,16 +222,17 @@ object RenderProcess {
                 }
             } catch (e: RemoteException) {
                 // A reply too large for Binder, say, from a process still running.
-                if (bound.binder.isBinderAlive) throw IOException("Render process failed") else throw Ended()
+                if (bound.alive) throw IOException("Render process failed") else throw Ended()
             } finally {
-                watchdog.cancel()
+                watchdog.cancel(false)
                 data.recycle()
                 reply.recycle()
+                synchronized(lock) { if (bound.documents == 0 && this@RenderProcess.bound === bound) stopWhenIdle(bound) }
             }
         }
 
     /** The process [generation] still running, or null once it has ended. */
-    private fun running(generation: Int): Bound? = bound?.takeIf { it.generation == generation && it.binder.isBinderAlive }
+    private fun running(generation: Int): Bound? = current()?.takeIf { it.generation == generation }
 
     /** A transaction on [document], which starts with its id. */
     private suspend fun <T> call(document: Opened.Document, code: Int, write: (Parcel) -> Unit, read: (Parcel) -> T): T {
@@ -230,9 +264,9 @@ object RenderProcess {
         } catch (e: PasswordReply) {
             return e.opened
         }
-        bindLock.withLock {
+        synchronized(lock) {
             bound.documents++
-            idle?.cancel()
+            idle?.cancel(false)
         }
         return opened
     }
@@ -309,13 +343,98 @@ object RenderProcess {
             call(document, CLOSE, { }) { }
         } catch (_: IOException) {
         }
-        bindLock.withLock {
+        synchronized(lock) {
             if (--bound.documents == 0 && this.bound === bound) stopWhenIdle(bound)
         }
     }
 
+    /** Where a picture to decode is ([Pictures]). */
+    sealed interface Source {
+        class Bytes(val bytes: ByteArray) : Source
+        class Path(val file: File) : Source
+    }
+
+    /** Writes [source] into a transaction; what it opened is closed after. */
+    @RequiresApi(27)
+    private fun Parcel.writeSource(source: Source): java.io.Closeable = when (source) {
+        is Source.Bytes -> {
+            val memory = SharedMemory.create("picture", source.bytes.size.coerceAtLeast(1))
+            try {
+                val buffer = memory.mapReadWrite()
+                try {
+                    buffer.put(source.bytes)
+                } finally {
+                    SharedMemory.unmap(buffer)
+                }
+                writeInt(FROM_MEMORY)
+                writeInt(source.bytes.size)
+                memory.writeToParcel(this, 0)
+            } catch (e: Exception) {
+                memory.close()
+                throw e
+            }
+            memory
+        }
+        is Source.Path -> {
+            val fd = ParcelFileDescriptor.open(source.file, ParcelFileDescriptor.MODE_READ_ONLY)
+            writeInt(FROM_FILE)
+            writeFileDescriptor(fd.fileDescriptor)
+            fd
+        }
+    }
+
+    /** The picture's size as stored, or null if Android can't read it. */
+    @RequiresApi(27)
+    suspend fun pictureSize(context: Context, source: Source): Size? {
+        val bound = bind(context)
+        var opened: java.io.Closeable? = null
+        try {
+            return call(bound, PICTURE_SIZE, { opened = it.writeSource(source) }) { reply ->
+                val width = reply.readInt()
+                val height = reply.readInt()
+                if (width > 0 && height > 0) Size(width, height) else null
+            }
+        } finally {
+            opened?.close()
+        }
+    }
+
+    /**
+     * The picture of [size] decoded at 1/[sample] (a power of two), in sRGB with 8 bits a channel;
+     * null if it can't be. The pixels come back in memory made here, as large as that can be.
+     */
+    @RequiresApi(27)
+    suspend fun picture(context: Context, source: Source, size: Size, sample: Int): Bitmap? {
+        val most = Size((size.width + sample - 1) / sample, (size.height + sample - 1) / sample)
+        val memory = SharedMemory.create("pixels", most.width * most.height * 4)
+        var opened: java.io.Closeable? = null
+        try {
+            val bound = bind(context)
+            val (width, height, alpha) = call(bound, PICTURE, { data ->
+                data.writeInt(sample)
+                data.writeInt(most.width)
+                data.writeInt(most.height)
+                memory.writeToParcel(data, 0)
+                opened = data.writeSource(source)
+            }) { reply -> Triple(reply.readInt(), reply.readInt(), reply.readInt() != 0) }
+            if (width !in 1..most.width || height !in 1..most.height) throw IOException("Bad picture size")
+            val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+            val buffer = memory.mapReadOnly()
+            try {
+                bitmap.copyPixelsFromBuffer(buffer)
+            } finally {
+                SharedMemory.unmap(buffer)
+            }
+            bitmap.setHasAlpha(alpha)
+            return bitmap
+        } finally {
+            opened?.close()
+            memory.close()
+        }
+    }
+
     /** Ends the process (tests; and what a call that takes too long does). */
-    suspend fun restart() = bindLock.withLock { bound?.let { stop(it) } }
+    fun restart() = synchronized(lock) { bound?.let { stop(it) } }
 
     private fun count(reply: Parcel, max: Int): Int =
         reply.readInt().also { if (it !in 0..max) throw IOException("Bad count") }

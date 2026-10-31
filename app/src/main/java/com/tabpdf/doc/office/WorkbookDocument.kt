@@ -1,7 +1,7 @@
 package com.tabpdf.doc.office
 
+import com.tabpdf.doc.Pictures
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.DashPathEffect
@@ -20,7 +20,6 @@ import android.text.style.StrikethroughSpan
 import android.text.style.UnderlineSpan
 import android.util.LruCache
 import com.tabpdf.doc.Document
-import com.tabpdf.doc.FileFormats
 import com.tabpdf.doc.PageSize
 import com.tabpdf.doc.TocEntry
 import com.tabpdf.doc.PageText
@@ -316,16 +315,12 @@ class WorkbookDocument private constructor(private val book: Workbook) : Documen
     /** A picture decoded once, no larger than needed for a 3× zoom (and never more than 2048 pixels a side). */
     private fun picture(key: String, bytes: ByteArray, r: RectF): Bitmap? {
         pictures.get(key)?.let { return it }
-        if (!FileFormats.isImage(bytes)) return null
         return try {
-            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-            if (bounds.outWidth <= 0) return null
+            val size = Pictures.size(bytes) ?: return null
             val want = min(2048f, r.width() * 4)
             var sample = 1
-            while (bounds.outWidth / (sample * 2) >= want || bounds.outHeight / sample > 2048) sample *= 2
-            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
-                ?.also { pictures.put(key, it) }
+            while (size.width / (sample * 2) >= want || size.height / sample > 2048) sample *= 2
+            Pictures.decode(bytes, size, sample)?.also { pictures.put(key, it) }
         } catch (_: Exception) {
             null
         } catch (_: OutOfMemoryError) {

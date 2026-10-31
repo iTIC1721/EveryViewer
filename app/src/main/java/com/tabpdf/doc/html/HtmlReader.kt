@@ -1,7 +1,7 @@
 package com.tabpdf.doc.html
 
+import com.tabpdf.doc.Pictures
 import com.tabpdf.doc.toFiniteFloatOrNull
-import android.graphics.BitmapFactory
 import android.util.Base64
 import com.tabpdf.doc.FileFormats
 import com.tabpdf.doc.isWebLink
@@ -423,11 +423,10 @@ class HtmlReader private constructor(
             return
         }
         if (width == null || height == null) {
-            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-            val w = bounds.outWidth.toFloat()
-            val h = bounds.outHeight.toFloat()
-            if (w > 0f && h > 0f) {
+            val size = Pictures.size(bytes)
+            if (size != null) {
+                val w = size.width.toFloat()
+                val h = size.height.toFloat()
                 when {
                     width == null && height == null -> { width = w; height = h }
                     width == null -> width = height!! * w / h
