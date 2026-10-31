@@ -410,6 +410,65 @@ class SecurityTest {
     }
 
     @Test
+    fun entitiesTheFileDeclaresAreNotExpanded() = runBlocking {
+        // "Billion laughs": ten levels of ten references each, a few hundred bytes making 10¹⁰ characters.
+        val entities = (1..10).joinToString("") { i -> "<!ENTITY e$i \"" + "&e${i - 1};".repeat(10) + "\">" }
+        val xml = "<!DOCTYPE w:document [<!ENTITY e0 \"하하하하하하하하하하\">$entities]>" +
+            body("<w:p><w:r><w:t>&e10;</w:t></w:r></w:p>")
+        val started = SystemClock.elapsedRealtime()
+        try {
+            openFile("laughs.docx", docx(mapOf("word/document.xml" to xml)), FileFormat.Docx).close()
+            fail("opened")
+        } catch (e: Exception) {
+            // Refused for the reference, not after running out of memory expanding it.
+            assertFalse((e as? DocumentOpenException)?.reason == DocumentOpenException.Reason.TooLarge)
+        }
+        assertTrue(SystemClock.elapsedRealtime() - started < 5_000)
+    }
+
+    @Test
+    fun sizesThatAreNoNumbersOrHugeOpenQuickly() = runBlocking {
+        val started = SystemClock.elapsedRealtime()
+        val cases = listOf(
+            "<w:p><w:r><w:rPr><w:sz w:val=\"Infinity\"/></w:rPr><w:t>x</w:t></w:r></w:p>" +
+                "<w:sectPr><w:pgSz w:w=\"11906\" w:h=\"16838\"/><w:pgMar w:top=\"NaN\" w:bottom=\"NaN\" w:left=\"NaN\" w:right=\"Infinity\"/></w:sectPr>",
+            "<w:tbl><w:tr><w:trPr><w:gridBefore w:val=\"2000000000\"/></w:trPr>" +
+                "<w:tc><w:tcPr><w:gridSpan w:val=\"2000000000\"/></w:tcPr><w:p/></w:tc></w:tr></w:tbl><w:p/>",
+        )
+        for (xml in cases) {
+            try {
+                openFile("sizes.docx", docx(mapOf("word/document.xml" to body(xml))), FileFormat.Docx).close()
+            } catch (_: Exception) {
+                // Refusing is fine; ending the app or never finishing is not.
+            }
+        }
+        val sheet = xlsx("<row r=\"1\" ht=\"NaN\" customHeight=\"1\"><c r=\"A1\"><v>1</v></c></row>")
+        openFile("sizes.xlsx", sheet, FileFormat.Xlsx).close()
+        assertTrue(SystemClock.elapsedRealtime() - started < 10_000)
+    }
+
+    @Test
+    fun longNumbersInStylesAreReadQuickly() = runBlocking {
+        // A run of digits made the length pattern try every way to split it: for ever, at this length.
+        val started = SystemClock.elapsedRealtime()
+        HtmlDocument.render("<p style=\"width: ${"1".repeat(200_000)}x!; margin-left: 1e99px\">글</p>").close()
+        assertTrue(SystemClock.elapsedRealtime() - started < 5_000)
+    }
+
+    @Test
+    fun markdownPicturesStayWithinTheirMemory() = runBlocking {
+        // A few KB each, 16 MB each once decoded: 500 of them would make Android end the app.
+        val picture = "![그림](data:image/png;base64,${Base64.encodeToString(png(2048, 2048), Base64.NO_WRAP)})\n\n"
+        val doc = openFile("pictures.md", picture.repeat(500).toByteArray(), FileFormat.Markdown)
+        try {
+            // The first are drawn, the rest named as inline pictures are.
+            assertTrue(doc.search("이미지: 그림").size in 400..500)
+        } finally {
+            doc.close()
+        }
+    }
+
+    @Test
     fun pdfStructuresThatPointAtThemselvesAreRefused() {
         // The catalog in object stream 4, which itself claims to be in object stream 4.
         val selfContained = pdfWithXrefStream(mapOf(2 to "<</Type/Pages/Kids[]/Count 0>>"), mapOf(1 to 0, 4 to 0))
