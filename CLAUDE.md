@@ -5,6 +5,7 @@ PDF·텍스트·마크다운·이미지·오피스 문서를 탭으로 열어두
 - 앱 식별자(`applicationId`)는 `io.github.itic1721.everyviewer`(v0.14.0부터; 그 전은 `com.tabpdf`). 설치된 앱의 업데이트와 데이터가 이 값에 묶이므로 바꾸지 않는다. 코드의 Kotlin 패키지는 옛 이름 `com.tabpdf` 그대로다(설치와 무관).
 
 - 기획서: [docs/기획서.md](docs/기획서.md) — 기능·UX 결정의 기준. 기획과 다르게 구현해야 하면 먼저 사용자와 상의하고 기획서를 갱신한다.
+- 공개 문서(README, 릴리스 노트, docs/, 앱 안 안내 문구)를 쓰거나 고칠 때는 `plain-writing` 스킬([.claude/skills/plain-writing/SKILL.md](.claude/skills/plain-writing/SKILL.md))을 따른다.
 
 ## Git
 
