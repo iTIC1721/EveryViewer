@@ -355,7 +355,7 @@ private fun ContextPager(
 
     Box(Modifier.fillMaxSize()) {
         if (tabs.isEmpty()) {
-            Button(onClick = { onOpenFiles(groupId) }, modifier = Modifier.align(Alignment.Center)) {
+            Button(onClick = { onOpenFiles(groupId) }, modifier = Modifier.align(Alignment.Center), shape = MaterialTheme.shapes.small) {
                 Icon(Icons.Default.Add, contentDescription = null)
                 Text("파일 열기", Modifier.padding(start = 8.dp))
             }

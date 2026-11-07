@@ -93,6 +93,7 @@ import com.tabpdf.tabs.displayName
 import com.tabpdf.ui.theme.Motion
 import com.tabpdf.ui.theme.Paper
 import com.tabpdf.ui.theme.card
+import com.tabpdf.ui.theme.tabularNumbers
 import com.tabpdf.ui.theme.desk
 import com.tabpdf.ui.theme.dimmed
 import com.tabpdf.ui.theme.floating
@@ -542,7 +543,7 @@ private fun EmptyTabs(onOpen: () -> Unit) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text("열린 탭이 없습니다", color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(16.dp))
-            Button(onClick = onOpen) { Text("파일 열기") }
+            Button(onClick = onOpen, shape = MaterialTheme.shapes.small) { Text("파일 열기") }
         }
     }
 }
@@ -629,8 +630,8 @@ private fun TabCard(tab: DocTab, page: Int, isCurrent: Boolean, onClose: () -> U
             Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
                 Text(tab.name, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(
-                    "p.${page + 1}",
-                    style = MaterialTheme.typography.labelSmall,
+                    "${page + 1}페이지",
+                    style = MaterialTheme.typography.labelSmall.tabularNumbers(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }

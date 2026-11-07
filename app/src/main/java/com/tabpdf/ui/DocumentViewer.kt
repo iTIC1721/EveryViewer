@@ -974,11 +974,11 @@ private fun OpenFailure(
             Spacer(Modifier.height(8.dp))
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = onClose) { Text("탭 닫기") }
+            OutlinedButton(onClick = onClose, shape = MaterialTheme.shapes.small) { Text("탭 닫기") }
             // Finding the file again only helps when it went missing.
-            if (missing) Button(onClick = onRelocate) { Text("다시 찾기") }
-            if (asksPassword) Button(onClick = submit, enabled = password.isNotEmpty()) { Text("열기") }
-            if (reason == DocumentOpenException.Reason.Interrupted) Button(onClick = onReopen) { Text("다시 열기") }
+            if (missing) Button(onClick = onRelocate, shape = MaterialTheme.shapes.small) { Text("다시 찾기") }
+            if (asksPassword) Button(onClick = submit, enabled = password.isNotEmpty(), shape = MaterialTheme.shapes.small) { Text("열기") }
+            if (reason == DocumentOpenException.Reason.Interrupted) Button(onClick = onReopen, shape = MaterialTheme.shapes.small) { Text("다시 열기") }
         }
     }
 }

@@ -120,7 +120,7 @@ private fun Section(title: String) {
         title,
         Modifier.padding(start = 24.dp, end = 24.dp, top = 20.dp, bottom = 4.dp),
         style = MaterialTheme.typography.titleSmall,
-        color = MaterialTheme.colorScheme.primary,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
 }
 

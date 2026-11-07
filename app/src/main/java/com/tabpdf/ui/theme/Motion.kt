@@ -30,9 +30,9 @@ object Motion {
         fadeOut(tween(150, easing = EmphasizedAccelerate)) +
             slideOutVertically(tween(200, easing = EmphasizedAccelerate)) { it / 10 }
 
-    /** A panel opening out of the card that was tapped. */
+    /** A panel opening out of the card that was tapped: grows a little and settles, no bounce. */
     val panelEnter: EnterTransition =
-        fadeIn(tween(200)) + scaleIn(spring(dampingRatio = 0.8f, stiffness = Spring.StiffnessMediumLow), initialScale = 0.92f)
+        fadeIn(tween(200, easing = EmphasizedDecelerate)) + scaleIn(tween(250, easing = EmphasizedDecelerate), initialScale = 0.94f)
     val panelExit: ExitTransition =
         fadeOut(tween(150, easing = EmphasizedAccelerate)) + scaleOut(tween(150, easing = EmphasizedAccelerate), targetScale = 0.95f)
 
