@@ -139,7 +139,7 @@ private fun ItemCard(item: BundleItem, position: Int, onRemove: (() -> Unit)?) {
         Column {
             Box(Modifier.fillMaxWidth().aspectRatio(0.75f).background(Paper)) {
                 Thumbnail(asTab, 0, Modifier.fillMaxSize())
-                if (onRemove != null) CloseBadge("묶음에서 빼기", onRemove, Modifier.align(Alignment.TopEnd))
+                if (onRemove != null) CloseBadge("묶음에서 제거", onRemove, Modifier.align(Alignment.TopEnd))
             }
             Row(Modifier.padding(horizontal = 10.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(

@@ -376,7 +376,7 @@ private fun GroupPanel(
                         overflow = TextOverflow.Ellipsis,
                     )
                     IconButton(onClick = onOpenFiles) {
-                        Icon(Icons.Default.Add, contentDescription = "이 그룹에 파일 열기")
+                        Icon(Icons.Default.Add, contentDescription = "이 그룹에서 파일 열기")
                     }
                     Box {
                         IconButton(onClick = { headerMenu = true }) {
@@ -444,7 +444,7 @@ private fun GroupPanel(
                                 onClose = { viewModel.close(tab.id) },
                             )
                             DropdownMenu(expanded = menuFor == tab.id, onDismissRequest = { menuFor = null }) {
-                                MenuItem("그룹에서 빼기") { menuFor = null; viewModel.removeFromGroup(tab.id) }
+                                MenuItem("그룹에서 제거") { menuFor = null; viewModel.removeFromGroup(tab.id) }
                                 MenuItem("파일 정보") { menuFor = null; dialog = SwitcherDialog.Info(tab) }
                                 MenuItem("닫기") { menuFor = null; viewModel.close(tab.id) }
                             }
@@ -473,7 +473,7 @@ private fun DragOutZone(color: Color) {
     ) {
         Icon(
             Icons.AutoMirrored.Filled.ExitToApp,
-            contentDescription = "그룹에서 빼기",
+            contentDescription = "그룹에서 제거",
             tint = colors.onSurface,
             modifier = Modifier.size(28.dp).graphicsLayer { rotationZ = -90f },
         )
@@ -502,7 +502,7 @@ private fun SwitcherDialogs(dialog: SwitcherDialog?, state: SessionState?, viewM
         is SwitcherDialog.NewGroupFor -> NameDialog(
             title = "새 그룹",
             initial = "",
-            confirmLabel = "만들기",
+            confirmLabel = "생성",
             onConfirm = { name -> next = null; onDone(); viewModel.addToNewGroup(d.tab.id, name) },
             onDismiss = { next = null; onDone() },
         )

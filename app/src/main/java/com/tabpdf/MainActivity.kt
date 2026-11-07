@@ -93,7 +93,7 @@ class MainActivity : ComponentActivity() {
                     prepare(uris) { tabsViewModel.addBundleItems(it) }
                 }
 
-                // Tab waiting for a replacement file from "다시 찾기"; saved across the picker round trip.
+                // Tab waiting for a replacement file from "파일 다시 선택"; saved across the picker round trip.
                 var relocatingTabId by rememberSaveable { mutableStateOf<String?>(null) }
                 val relocate = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
                     val tabId = relocatingTabId

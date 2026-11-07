@@ -56,13 +56,13 @@ object Documents {
                 MarkdownDocument.open(context, uri)
             } catch (e: DocumentOpenException) {
                 if (e.reason != DocumentOpenException.Reason.TooLarge) throw e
-                TextDocument.open(context, uri, name, notice = "파일이 커서 마크다운 미리보기를 지원하지 않습니다. 원문으로 표시합니다.")
+                TextDocument.open(context, uri, name, notice = "파일 크기가 커서 서식 없이 원문으로 표시합니다.")
             }
             FileFormat.Html -> try {
                 HtmlDocument.open(context, uri)
             } catch (e: DocumentOpenException) {
                 if (e.reason != DocumentOpenException.Reason.TooLarge) throw e
-                TextDocument.open(context, uri, name, notice = "파일이 커서 HTML 미리보기를 지원하지 않습니다. 원문으로 표시합니다.")
+                TextDocument.open(context, uri, name, notice = "파일 크기가 커서 서식 없이 원문으로 표시합니다.")
             }
             FileFormat.Epub -> EpubDocument.open(context, uri)
             FileFormat.Docx, FileFormat.Hwpx, FileFormat.Hwp, FileFormat.Pptx, FileFormat.Xlsx -> OfficeDocuments.open(context, uri, format)

@@ -146,7 +146,7 @@ object FileAccess {
         val dir = File(context.filesDir, COPY_DIR).apply { mkdirs() }
         val target = File(dir, "${UUID.randomUUID()}.txt")
         target.writeText(text)
-        val title = subject?.trim()?.takeIf { it.isNotEmpty() }?.take(40) ?: "공유한 텍스트"
+        val title = subject?.trim()?.takeIf { it.isNotEmpty() }?.take(40) ?: "공유된 텍스트"
         OpenedFile(Uri.fromFile(target), "$title.txt", isInternalCopy = true, FileFormat.Text)
     }
 

@@ -88,14 +88,14 @@ fun AboutScreen(onDismiss: () -> Unit) {
             Text("버전 $version", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(16.dp))
             Text(
-                "어떤 파일이든 탭으로 열어 두고 넘겨 보는 문서 뷰어",
+                "여러 형식의 문서를 탭으로 관리하는 문서 뷰어",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
             )
         }
         HorizontalDivider()
-        InfoRow("개인정보", "인터넷을 사용하지 않으며, 어떤 데이터도 외부로 보내지 않습니다.")
+        InfoRow("개인정보", "인터넷 권한을 사용하지 않으며, 데이터를 외부로 전송하지 않습니다.")
         InfoRow("오픈소스 라이선스", null, onClick = { showLicenses = true })
     }
     if (showLicenses) {

@@ -344,7 +344,7 @@ class InkInputTest {
     private fun pressFingerButton() {
         fun find(n: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
             if (n == null) return null
-            if (n.contentDescription == "손가락으로 그리기") return n
+            if (n.contentDescription == "손가락 필기") return n
             return (0 until n.childCount).firstNotNullOfOrNull { find(n.getChild(it)) }
         }
         var button: AccessibilityNodeInfo? = null

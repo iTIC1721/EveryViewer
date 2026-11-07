@@ -53,7 +53,7 @@ object Thumbnails {
     private suspend fun loadPage(context: Context, tab: DocTab, page: Int): Bitmap? {
         val tabId = tab.id
         val uri = tab.uri
-        // The URI is part of the key so a tab pointed at another file ("다시 찾기") gets a new image.
+        // The URI is part of the key so a tab pointed at another file ("파일 다시 선택") gets a new image.
         val key = "$tabId-${uri.toString().hashCode().toUInt()}-$page"
         memory.get(key)?.let { return it }
         return withContext(Dispatchers.IO) {

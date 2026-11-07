@@ -145,10 +145,10 @@ fun ExportDialog(locked: Boolean, onShare: () -> Unit, onSave: () -> Unit, onDis
         title = { Text("PDF로 내보내기") },
         text = {
             Column {
-                Text("이 탭의 문서를 필기와 함께 PDF 파일 하나로 만듭니다.")
+                Text("현재 탭의 문서와 필기를 PDF 파일 하나로 내보냅니다.")
                 if (locked) {
                     Spacer(Modifier.height(8.dp))
-                    Text("내보낸 PDF에는 암호가 걸리지 않습니다.", color = MaterialTheme.colorScheme.error)
+                    Text("내보낸 PDF에는 암호가 설정되지 않습니다.", color = MaterialTheme.colorScheme.error)
                 }
             }
         },
@@ -203,14 +203,14 @@ fun FileInfoDialog(tab: DocTab, page: Int, onDismiss: () -> Unit) {
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 InfoRow("형식", tab.format.label)
-                InfoRow("읽던 위치", "${page + 1}페이지")
+                InfoRow("마지막 위치", "${page + 1}페이지")
                 when {
                     // A bundle's own file is just its list; where its files are shows in its editor.
-                    tab.format == FileFormat.Bundle -> InfoRow("저장 방식", "파일 목록만 앱에 저장 (각 파일은 따로 열린 것과 같음)")
+                    tab.format == FileFormat.Bundle -> InfoRow("저장 방식", "파일 목록만 앱에 저장 (각 파일은 개별 탭과 같은 방식으로 저장)")
                     else -> {
                         InfoRow(
                             "저장 방식",
-                            if (tab.isInternalCopy) "앱에 복사본 저장 (탭을 닫으면 삭제)" else "원본 파일을 직접 엶",
+                            if (tab.isInternalCopy) "앱에 복사본 저장 (탭을 닫으면 삭제)" else "원본 파일 직접 참조",
                         )
                         InfoRow("위치", Uri.decode(tab.uri.path ?: tab.uri.toString()))
                     }
@@ -273,9 +273,9 @@ fun OpenChoiceDialog(count: Int, asGroup: Boolean, onBundle: () -> Unit, onSepar
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("파일 ${count}개 열기") },
-        text = { Text("하나로 묶으면 한 탭에서 쪽이 이어지는 한 문서처럼 봅니다.") },
-        confirmButton = { TextButton(onClick = onBundle) { Text("하나로 묶어 열기") } },
-        dismissButton = { TextButton(onClick = onSeparate) { Text(if (asGroup) "그룹으로 열기" else "따로 열기") } },
+        text = { Text("파일 묶음으로 열면 한 탭에서 모든 파일의 페이지를 이어서 표시합니다.") },
+        confirmButton = { TextButton(onClick = onBundle) { Text("파일 묶음으로 열기") } },
+        dismissButton = { TextButton(onClick = onSeparate) { Text(if (asGroup) "그룹으로 열기" else "개별 탭으로 열기") } },
     )
 }
 

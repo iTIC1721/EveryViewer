@@ -203,7 +203,7 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** Whether "따로 열기" of [choice] makes a new group (기획서 5.1: several files from outside any group). */
+    /** Whether "개별 탭으로 열기" of [choice] makes a new group (기획서 5.1: several files from outside any group). */
     fun opensAsGroup(choice: OpenChoice) = choice.groupId == null && choice.files.size > 1 && settings.openManyAsGroup.value
 
     /** Opens [files] as one bundle tab (기획서 5.1: 파일 묶음), named after the first file. */

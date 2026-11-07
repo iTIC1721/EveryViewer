@@ -184,7 +184,7 @@ fun DocumentViewer(
     uri: Uri,
     name: String,
     format: FileFormat,
-    /** Changing this reopens the file even if [uri] is the same (after "다시 찾기"). */
+    /** Changing this reopens the file even if [uri] is the same (after "파일 다시 선택"). */
     revision: Int,
     initialState: ViewerState,
     onStateChange: (ViewerState) -> Unit,
@@ -937,16 +937,16 @@ private fun OpenFailure(
     val wrongPassword = reason == DocumentOpenException.Reason.WrongPassword
     val asksPassword = onPassword != null && (reason == DocumentOpenException.Reason.PasswordProtected || wrongPassword)
     val (title, detail) = when {
-        missing -> "파일을 찾을 수 없습니다" to "이동되었거나 삭제되었을 수 있습니다."
-        asksPassword -> "암호가 걸린 문서입니다" to "문서를 열려면 암호를 입력하세요."
+        missing -> "파일을 찾을 수 없습니다" to "파일이 이동 또는 삭제되었을 수 있습니다."
+        asksPassword -> "암호로 보호된 문서입니다" to "문서를 열려면 암호를 입력하세요."
         reason == DocumentOpenException.Reason.PasswordProtected || wrongPassword ->
-            "암호가 걸린 문서입니다" to if (pdf) "이 기기에서는 암호 PDF를 열 수 없습니다." else "암호 문서는 아직 지원하지 않습니다."
-        reason == DocumentOpenException.Reason.Protected -> "보호된 문서입니다" to "DRM 등으로 보호된 문서는 열 수 없습니다."
-        reason == DocumentOpenException.Reason.NoPages -> "빈 PDF입니다" to "페이지가 하나도 없습니다."
+            "암호로 보호된 문서입니다" to if (pdf) "이 기기에서는 암호 PDF를 열 수 없습니다." else "암호 문서는 아직 지원하지 않습니다."
+        reason == DocumentOpenException.Reason.Protected -> "DRM이 적용된 문서입니다" to "DRM이 적용된 문서는 열 수 없습니다."
+        reason == DocumentOpenException.Reason.NoPages -> "빈 PDF입니다" to "이 PDF에는 페이지가 없습니다."
         reason == DocumentOpenException.Reason.Unsupported -> "이 형식은 열 수 없습니다" to "아직 지원하지 않는 파일 형식입니다."
-        reason == DocumentOpenException.Reason.TooLarge -> "파일이 너무 큽니다" to "이 기기에서 열 수 있는 크기를 넘습니다."
-        reason == DocumentOpenException.Reason.PageTooTall -> "페이지가 너무 깁니다" to "폭에 비해 세로로 아주 긴 페이지는 열 수 없습니다."
-        reason == DocumentOpenException.Reason.Interrupted -> "이 파일을 열다가 앱이 종료되었습니다" to "다시 열면 또 종료될 수 있습니다."
+        reason == DocumentOpenException.Reason.TooLarge -> "파일이 너무 큽니다" to "이 기기에서 열 수 있는 크기를 초과합니다."
+        reason == DocumentOpenException.Reason.PageTooTall -> "페이지 비율이 지원 범위를 벗어납니다" to "가로 대비 세로가 지나치게 긴 페이지는 열 수 없습니다."
+        reason == DocumentOpenException.Reason.Interrupted -> "이 파일을 여는 중 앱이 종료되었습니다" to "다시 열면 같은 문제가 반복될 수 있습니다."
         else -> "파일을 열 수 없습니다" to "손상되었거나 지원하지 않는 파일입니다."
     }
     Column(modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -976,7 +976,7 @@ private fun OpenFailure(
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(onClick = onClose, shape = MaterialTheme.shapes.small) { Text("탭 닫기") }
             // Finding the file again only helps when it went missing.
-            if (missing) Button(onClick = onRelocate, shape = MaterialTheme.shapes.small) { Text("다시 찾기") }
+            if (missing) Button(onClick = onRelocate, shape = MaterialTheme.shapes.small) { Text("파일 다시 선택") }
             if (asksPassword) Button(onClick = submit, enabled = password.isNotEmpty(), shape = MaterialTheme.shapes.small) { Text("열기") }
             if (reason == DocumentOpenException.Reason.Interrupted) Button(onClick = onReopen, shape = MaterialTheme.shapes.small) { Text("다시 열기") }
         }
