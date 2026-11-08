@@ -7,6 +7,7 @@ import androidx.ink.strokes.Stroke
 import com.tabpdf.TabPdfApp
 import com.tabpdf.ink.InkStore
 import com.tabpdf.ink.InkStroke
+import com.tabpdf.ink.InkText
 import com.tabpdf.ink.InkTool
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -544,9 +545,33 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
 
     fun eraseStrokes(tabId: String, ids: Set<String>, gesture: Long) = ink.erase(tabId, ids, gesture)
 
-    fun undoInk() = current().currentTabId?.let(ink::undo)
+    /** A text box made ([before] null), changed, or removed ([after] null) (기획서 5.8.6). */
+    fun changeText(tabId: String, before: InkText?, after: InkText?) {
+        if (current().tab(tabId) == null) return
+        ink.changeText(tabId, before, after)
+    }
 
-    fun redoInk() = current().currentTabId?.let(ink::redo)
+    /** Closes the text box being typed into, if any, saving it. */
+    private var typingFinisher: (() -> Unit)? = null
+
+    fun setTypingFinisher(finish: (() -> Unit)?) {
+        typingFinisher = finish
+    }
+
+    fun finishTyping() {
+        typingFinisher?.invoke()
+    }
+
+    // Undoing while typing: the typing is saved first, as one step, and that is what goes.
+    fun undoInk() {
+        finishTyping()
+        current().currentTabId?.let(ink::undo)
+    }
+
+    fun redoInk() {
+        finishTyping()
+        current().currentTabId?.let(ink::redo)
+    }
 
     // ---- Reading positions ----
 
@@ -647,7 +672,7 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 // A copy of its own, so the viewer keeps drawing meanwhile.
                 document = Documents.open(app, tab.uri, tab.name, tab.format)
-                PdfExport.export(app, tab.uri, document, ink.strokes(tabId).value, target) { done, total ->
+                PdfExport.export(app, tab.uri, document, ink.strokes(tabId).value, ink.texts(tabId).value, target) { done, total ->
                     _export.value = ExportState.Running(done, total)
                 }
                 if (destination != null) {

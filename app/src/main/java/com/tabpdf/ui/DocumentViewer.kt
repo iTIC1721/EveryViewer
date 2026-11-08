@@ -106,6 +106,17 @@ import com.tabpdf.ink.INK_PAGE_WIDTH
 import com.tabpdf.ink.InkBinding
 import com.tabpdf.ink.InkPainter
 import com.tabpdf.ink.InkStroke
+import com.tabpdf.ink.InkText
+import com.tabpdf.ink.InkTextLayout
+import com.tabpdf.ink.CharStyle
+import com.tabpdf.ink.RichText
+import com.tabpdf.ink.ToolStyle
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.union
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.runtime.key
 import com.tabpdf.ink.InkTool
 import com.tabpdf.ink.LocalInkSurface
 import com.tabpdf.ink.PageHit
@@ -200,6 +211,8 @@ fun DocumentViewer(
     onDocument: (Document?) -> Unit = {},
     /** The tab's handwriting, all pages. */
     strokes: List<InkStroke>,
+    /** The tab's text boxes, all pages (기획서 5.8.6). */
+    texts: List<InkText> = emptyList(),
     /** Set while handwriting mode is on (기획서 5.8). */
     ink: InkBinding?,
     /** Text to find and mark (기획서 5.5), or null when not searching this tab. */
@@ -326,6 +339,8 @@ fun DocumentViewer(
                 pageJump = pageJump,
                 onPageJumpHandled = onPageJumpHandled,
                 strokes = strokes,
+                texts = texts,
+                active = active,
                 ink = ink,
                 searchQuery = searchQuery,
                 searchIndex = searchIndex,
@@ -348,6 +363,8 @@ private fun DocumentPages(
     pageJump: PageJump?,
     onPageJumpHandled: (PageJump) -> Unit,
     strokes: List<InkStroke>,
+    texts: List<InkText>,
+    active: Boolean,
     ink: InkBinding?,
     searchQuery: String?,
     searchIndex: Int,
@@ -364,6 +381,18 @@ private fun DocumentPages(
     // Handwriting has the current gesture: no panning, zooming or tapping for it. Read by the
     // gesture handlers below, so a plain holder rather than state.
     val inkClaimed = remember { booleanArrayOf(false) }
+    // The text tool took the current gesture (a tap that makes or opens a box, or a box dragged).
+    val textClaimed = remember { booleanArrayOf(false) }
+    var editing by remember(document) { mutableStateOf<TextEditing?>(null) }
+    // A box being dragged to another place, drawn there until it is let go.
+    var movingText by remember(document) { mutableStateOf<InkText?>(null) }
+    // The binding last seen, so a box can still be saved after handwriting mode was turned off.
+    val lastInk = remember { arrayOfNulls<InkBinding>(1) }
+    if (ink != null) lastInk[0] = ink
+    // Where the format bar is, so touches on it stay its own.
+    val textBar = remember { arrayOfNulls<Rect>(1) }
+    // Read by the gesture handlers, which keep the first composition's functions.
+    val currentTexts by rememberUpdatedState(texts)
     val scope = rememberCoroutineScope()
     var fastScrolling by remember { mutableStateOf(false) }
 
@@ -550,6 +579,90 @@ private fun DocumentPages(
             ).also { inkPagesCache[0] = it }
     }
 
+    // ---- Text boxes (기획서 5.8.6) ----
+
+    val currentPageTops by rememberUpdatedState(pageTops)
+
+    /** Page units to px at the current zoom. */
+    fun textScale() = viewportWidth * zoom / INK_PAGE_WIDTH
+
+    /** Where page [page]'s top is in viewer px, whether or not it is on screen. */
+    fun pageTopPx(page: Int): Float {
+        val info = listState.layoutInfo
+        val first = info.visibleItemsInfo.firstOrNull() ?: return 0f
+        val top = (first.offset - info.viewportStartOffset).toFloat()
+        val tops = currentPageTops
+        if (page >= tops.size - 1 || first.index >= tops.size - 1) return top
+        return top + tops[page] - tops[first.index]
+    }
+
+    fun boxOrigin(box: InkText) = Offset(box.x * textScale() - panX, pageTopPx(box.page) + box.y * textScale())
+
+    fun pageHeightUnits(page: Int) = INK_PAGE_WIDTH * document.pageSizes[page].aspect
+
+    /** The box under [position] (viewer px) on [hit]'s page, other than the open one. */
+    fun textBoxAt(hit: PageHit, position: Offset): InkText? {
+        val p = hit.toPage(position)
+        val reach = 8f // page units around a box that still count as on it
+        return currentTexts.lastOrNull { box ->
+            if (box.page != hit.index || box.id == editing?.box?.id) return@lastOrNull false
+            val l = InkTextLayout.layOut(box)
+            p.x >= box.x - reach && p.x <= box.x + maxOf(l.width, box.content.base.size) + reach &&
+                p.y >= box.y - reach && p.y <= box.y + l.height + reach
+        }
+    }
+
+    fun onEditorChrome(position: Offset): Boolean {
+        val e = editing ?: return false
+        return e.chrome(boxOrigin(e.box), density.density).any { it.contains(position) } || textBar[0]?.contains(position) == true
+    }
+
+    fun finishTyping() {
+        val e = editing ?: return
+        editing = null
+        e.field?.let { f ->
+            f.clearFocus()
+            (context.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager)
+                .hideSoftInputFromWindow(f.windowToken, 0)
+        }
+        val binding = lastInk[0] ?: return
+        binding.onTyping(null)
+        val after = e.current()
+        when {
+            after.content.text.isBlank() -> e.original?.let { binding.onTextChange(it, null) }
+            after != e.original -> binding.onTextChange(e.original, after)
+        }
+    }
+
+    fun open(e: TextEditing) {
+        finishTyping()
+        editing = e
+        lastInk[0]?.onTyping(::finishTyping)
+    }
+
+    /** A new box where [position] is on [hit]'s page: the first line starts there. */
+    fun newTextBox(hit: PageHit, position: Offset) {
+        val binding = currentInk ?: return
+        val style = CharStyle(binding.style.size, binding.style.color)
+        val p = hit.toPage(position)
+        val line = InkTextLayout.paint(style, 1f).fontMetrics.let { it.descent - it.ascent }
+        val at = clampBox(p.x, p.y - line / 2, InkTextLayout.MIN_WIDTH, line, pageHeightUnits(hit.index))
+        val box = InkText(java.util.UUID.randomUUID().toString(), hit.index, binding.nextSeq(), at.x, at.y, 0f, RichText.empty(style))
+        open(TextEditing(null, box, 0))
+    }
+
+    /** Opens [box] with the cursor where [position] is in its text. */
+    fun editTextBox(box: InkText, hit: PageHit, position: Offset) {
+        val p = hit.toPage(position)
+        val layout = InkTextLayout.layOut(box).layout
+        val line = layout.getLineForVertical((p.y - box.y).roundToInt().coerceAtLeast(0))
+        open(TextEditing(box, box, layout.getOffsetForHorizontal(line, p.x - box.x)))
+    }
+
+    // The tool changed, handwriting mode ended or another tab is shown: the box is done.
+    LaunchedEffect(ink?.tool, active) { if (ink?.tool != InkTool.Text || !active) finishTyping() }
+    BackHandler(enabled = editing != null) { finishTyping() }
+
     // Text search (기획서 5.5): find as the query changes, mark every match, bring the current one into view.
     var matches by remember(document) { mutableStateOf<List<SearchMatch>>(emptyList()) }
     val currentOnSearchResults by rememberUpdatedState(onSearchResults)
@@ -596,6 +709,60 @@ private fun DocumentPages(
             .fillMaxSize()
             // Handwriting first: a pointer that draws is consumed before anything below sees it.
             .inkInput(LocalInkSurface.current, { currentInk }, ::pageAt, { inkPages() }, onClaim = { inkClaimed[0] = it }) { hover = it }
+            // Text tool (기획서 5.8.6): a tap makes or opens a box, dragging a box moves it; other
+            // drags scroll as ever. The open box and its handles take their own touches.
+            .pointerInput(Unit) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                    textClaimed[0] = false
+                    val binding = currentInk
+                    if (binding == null || binding.tool != InkTool.Text || inkClaimed[0] || onEditorChrome(down.position)) return@awaitEachGesture
+                    val hit = pageAt(down.position)
+                    val box = hit?.let { textBoxAt(it, down.position) }
+                    val slop = viewConfiguration.touchSlop
+                    var dragged = false
+                    var released = false
+                    while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        if (event.changes.count { it.pressed } > 1) {
+                            movingText = null
+                            return@awaitEachGesture
+                        }
+                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                        val moved = change.position - down.position
+                        if (box != null && (dragged || moved.getDistance() > slop)) {
+                            dragged = true
+                            textClaimed[0] = true
+                            val l = InkTextLayout.layOut(box)
+                            val at = clampBox(box.x + moved.x / textScale(), box.y + moved.y / textScale(), l.width, l.height, pageHeightUnits(box.page))
+                            movingText = box.copy(x = at.x, y = at.y)
+                            change.consume()
+                        } else if (moved.getDistance() > slop) {
+                            break // a scroll
+                        }
+                        if (!change.pressed) {
+                            released = true
+                            break
+                        }
+                    }
+                    val moved = movingText
+                    if (dragged && moved != null && box != null) {
+                        movingText = null
+                        if (moved.x != box.x || moved.y != box.y) currentInk?.onTextChange(box, moved)
+                    } else if (released && !dragged && hit != null) {
+                        textClaimed[0] = true
+                        when {
+                            box != null -> editTextBox(box, hit, down.position)
+                            // A tap beside the open box only closes it.
+                            editing != null -> finishTyping()
+                            else -> newTextBox(hit, down.position)
+                        }
+                    } else if (released && editing != null) {
+                        textClaimed[0] = true
+                        finishTyping()
+                    }
+                }
+            }
             // Pinch: watched on the Initial pass so two-finger moves never reach the list or pager.
             .pointerInput(Unit) {
                 awaitEachGesture {
@@ -660,8 +827,8 @@ private fun DocumentPages(
 
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
-                        // The selection handles move themselves.
-                        if (onHandle(down.position)) return@awaitEachGesture
+                        // The selection handles and the open text box move themselves.
+                        if (onHandle(down.position) || onEditorChrome(down.position)) return@awaitEachGesture
                         var total = Offset.Zero
                         var decided = false
                         var panning = false
@@ -695,7 +862,7 @@ private fun DocumentPages(
                                 change.consume()
                             }
                         }
-                        if (released && !decided && !multiTouch && !inked && !selectionClaimed[0]) {
+                        if (released && !decided && !multiTouch && !inked && !selectionClaimed[0] && !textClaimed[0]) {
                             val now = down.uptimeMillis
                             val position = down.position
                             if (now - lastTapTime < doubleTapTimeout &&
@@ -719,12 +886,21 @@ private fun DocumentPages(
             }
     ) {
         val pageWidth = viewportWidth * zoom
+        val textsByPage = remember(texts, movingText) {
+            val moving = movingText
+            (if (moving == null) texts else texts.map { if (it.id == moving.id) moving else it }).groupBy { it.page }
+        }
         // On the light desk a page needs an edge; on the dark one a white page already stands out.
         val pageEdge = MaterialTheme.colorScheme.let { if (it.desk.luminance() > 0.5f) it.onSurface else null }
+        // While a text box is open, room below the last page to bring it above the keyboard.
+        val typingRoom = if (editing != null) with(density) { (WindowInsets.ime.getBottom(this) + (textBar[0]?.height ?: 0f)).toDp() } else 0.dp
         LazyColumn(
             state = listState,
             modifier = Modifier.fillMaxSize(),
-            contentPadding = contentPadding,
+            contentPadding = PaddingValues(
+                top = contentPadding.calculateTopPadding(),
+                bottom = contentPadding.calculateBottomPadding() + typingRoom,
+            ),
             verticalArrangement = Arrangement.spacedBy(with(density) { (gapPx * zoom).toDp() }),
         ) {
             items(progress.pages) { index ->
@@ -737,6 +913,8 @@ private fun DocumentPages(
                     renderWidth = renderWidthFor(viewportWidth, zoom, aspect),
                     panX = { panX },
                     strokes = strokesByPage[index].orEmpty(),
+                    texts = textsByPage[index].orEmpty(),
+                    skipText = editing?.box?.id,
                     found = matchesByPage[index].orEmpty(),
                     selected = selection.firstOrNull { it.first == index }?.second?.rects.orEmpty(),
                     selectionColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f),
@@ -795,9 +973,60 @@ private fun DocumentPages(
         } else {
             handleBounds.clear()
         }
+        editing?.let { e ->
+            key(e) {
+                TextBoxEditor(
+                    editing = e,
+                    origin = { boxOrigin(e.box) },
+                    scale = textScale(),
+                    onMoveBy = { drag ->
+                        val l = e.size
+                        val k = textScale()
+                        val at = clampBox(e.box.x + drag.x / k, e.box.y + drag.y / k, l.width / k, l.height / k, pageHeightUnits(e.box.page))
+                        e.box = e.box.copy(x = at.x, y = at.y)
+                    },
+                    onWidthBy = { dx ->
+                        val k = textScale()
+                        val now = if (e.box.width > 0f) e.box.width else e.size.width / k
+                        e.box = e.box.copy(width = (now + dx / k).coerceIn(InkTextLayout.MIN_WIDTH, INK_PAGE_WIDTH - e.box.x))
+                    },
+                )
+                val binding = ink
+                if (binding != null) TextFormatBar(
+                    editing = e,
+                    recentColors = binding.recentTextColors,
+                    onCustomColor = binding.onCustomTextColor,
+                    onDefault = { binding.onTextStyle(ToolStyle(it.color, it.size)) },
+                    onDelete = {
+                        e.field?.setText("")
+                        finishTyping()
+                    },
+                    onDone = ::finishTyping,
+                    onShown = { if (!it) textBar[0] = null },
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .windowInsetsPadding(WindowInsets.ime.union(WindowInsets.navigationBars))
+                        .onGloballyPositioned { textBar[0] = it.boundsInParent() },
+                )
+            }
+            // Keep the line being typed on above the keyboard and the bar.
+            val imeBottom = WindowInsets.ime.getBottom(density)
+            LaunchedEffect(e, e.version, e.size, imeBottom) {
+                val f = e.field ?: return@LaunchedEffect
+                val layout = f.layout ?: return@LaunchedEffect
+                val line = layout.getLineForOffset(f.selectionEnd.coerceAtLeast(0))
+                val origin = boxOrigin(e.box)
+                val barTop = textBar[0]?.top ?: (viewportHeight - imeBottom)
+                val limit = minOf(barTop, viewportHeight - imeBottom) - with(density) { 8.dp.toPx() }
+                // The whole box when it fits between the bars, else the line being typed on.
+                val fits = layout.height <= limit - topPaddingPx
+                val bottom = origin.y + if (fits) layout.height.toFloat() else layout.getLineBottom(line).toFloat()
+                if (bottom > limit) listState.scrollBy(bottom - limit)
+            }
+        } ?: run { textBar[0] = null }
         // Where a hovering pen would draw or erase, and how wide (기획서 5.8.4).
         val hoverAt = hover
-        val hoverInk = ink
+        val hoverInk = ink?.takeIf { it.tool != InkTool.Text }
         if (hoverAt != null && hoverInk != null) {
             val size = if (hoverInk.tool == InkTool.Eraser) hoverInk.eraserSize else hoverInk.style.size
             val radius = (size / 2 * viewportWidth * zoom / INK_PAGE_WIDTH).coerceAtLeast(3f)
@@ -843,6 +1072,9 @@ private fun PageImage(
     renderWidth: Int,
     panX: () -> Float,
     strokes: List<InkStroke>,
+    texts: List<InkText>,
+    /** The text box being typed into: its editor shows it. */
+    skipText: String?,
     /** Search matches on this page, with their number among all matches. */
     found: List<IndexedValue<SearchMatch>>,
     currentMatch: Int,
@@ -901,13 +1133,13 @@ private fun PageImage(
                 if (i == currentMatch) drawRect(CURRENT_MATCH, topLeft, box, style = Stroke(width = 2 * pad))
             }
         }
-        if (strokes.isNotEmpty()) drawIntoCanvas { canvas ->
+        if (strokes.isNotEmpty() || texts.isNotEmpty()) drawIntoCanvas { canvas ->
             val native = canvas.nativeCanvas
             native.save()
             // A stroke that ran off the page is cut at its edge.
             native.clipRect(left, 0f, left + pageWidth, size.height)
             native.translate(left, 0f)
-            InkPainter.draw(native, strokes, pageWidth)
+            InkPainter.draw(native, strokes, texts, pageWidth, skipText)
             native.restore()
         }
     }

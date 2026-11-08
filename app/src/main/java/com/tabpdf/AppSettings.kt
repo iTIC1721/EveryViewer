@@ -98,6 +98,7 @@ class AppSettings(context: Context) {
             InkTool.Pen -> ToolStyle(Brushes.penColors[0], Brushes.penSizes[1])
             InkTool.Highlighter -> ToolStyle(Brushes.highlighterColors[0], Brushes.highlighterSizes[1])
             InkTool.Eraser -> ToolStyle(0, Brushes.eraserSizes[1])
+            InkTool.Text -> ToolStyle(Brushes.penColors[0], com.tabpdf.ink.DEFAULT_TEXT_SIZE)
         }
         return ToolStyle(
             prefs.getInt("ink_${tool.key}_color", default.color),

@@ -82,3 +82,23 @@ data class InkStrokeEntity(
     /** Stroke inputs (positions, times, pressure, tilt) in androidx.ink's storage format. */
     val inputs: ByteArray,
 )
+
+/**
+ * A typed text box on a page of a tab (기획서 5.8.6, 6장). Kept like [InkStrokeEntity]: no foreign
+ * key, deleted with the tab's strokes.
+ */
+@Entity(tableName = "ink_texts", indices = [Index("tabId")])
+data class InkTextEntity(
+    @PrimaryKey val id: String,
+    val tabId: String,
+    val page: Int,
+    val seq: Long,
+    /** Top-left corner in page units (a page is 1000 wide). */
+    val x: Float,
+    val y: Float,
+    /** Width in page units; 0 grows with the text. */
+    val width: Float,
+    val text: String,
+    /** Styles of runs of characters and paragraph alignments, as JSON (RichText.styleJson). */
+    val style: String,
+)

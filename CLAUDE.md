@@ -96,14 +96,18 @@ app/src/main/java/com/tabpdf/
                          문서 그림·이미지 파일 디코딩도 doc/Pictures를 거쳐 같은 프로세스에서 (HEIF만 앱에서)
   export/                PDF로 내보내기(PdfExport): PDF는 원본 뒤에 필기를 덧붙임(PdfFile: 구조 읽기, PdfAppend: 증분 업데이트,
                          PdfCrypt: 표준 보안 처리기), 흐르는 형식은 Document.drawPage로 글자 그대로, 이미지·묶음은 JpegPdfWriter.
-                         필기는 PdfInk(획 외곽선 → 경로). PDF 북마크(PdfOutline)도 같은 구조 읽기로 읽는다.
+                         필기는 PdfInk(획 외곽선 → 경로). 텍스트 상자는 PdfText(쓴 글자만 담은 Type 3 글꼴 + ToUnicode,
+                         찾기·복사 가능). PDF 북마크(PdfOutline)도 같은 구조 읽기로 읽는다.
                          목차: Document.tableOfContents → TocEntry. 흐르는 형식은 FlowBuilder.heading/anchor로 조판 위치를 기록
   ink/                   필기: 도구·브러시·획 저장 형식(Ink), 탭별 필기와 되돌리기(InkStore),
-                         입력 규칙과 그리는 중인 획 표시(InkInput: 창 위 InProgressStrokesView, 터치는 받지 않음)
+                         입력 규칙과 그리는 중인 획 표시(InkInput: 창 위 InProgressStrokesView, 터치는 받지 않음).
+                         텍스트 상자(InkText: 글자 구간별 서식 RichText, InkTextLayout: 페이지에 그릴 때와 입력란이
+                         같은 조판 설정·구간 표시를 써서 모양과 줄 바꿈이 같다)
   tabs/                  탭·그룹 구조(Session.kt), ViewModel, 읽던 위치, 파일 접근 권한·복사본 관리
   ui/                    화면: 뷰어(DocumentViewer)·스와이프 범위별 페이저·상단 바(TabsScreen), 탭 전환 화면·그룹 패널(TabSwitcher),
-                         대화상자, 카드 목록 제스처(ItemGestures)
-  ui/theme/              색(종이·책상·잉크)·글꼴(Pretendard, UI만)·모양·움직임 토큰, EveryViewerTheme (기획서 4.4).
+                         대화상자, 카드 목록 제스처(ItemGestures), 텍스트 상자 입력(TextBoxField: EditText 기반,
+                         TextBoxes: 편집 틀·손잡이·서식 막대)
+  ui/theme/              색(종이·책상·잉크)·글꼴(Pretendard, UI와 텍스트 상자)·모양·움직임 토큰, EveryViewerTheme (기획서 4.4).
                          화면에서 색·반경을 직접 적지 말고 여기 토큰을 쓴다 (그룹·펜·검색 색과 문서 색은 예외)
 app/schemas/             Room 스키마 (DB 버전마다 커밋)
 ```

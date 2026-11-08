@@ -24,7 +24,10 @@ const val INK_PAGE_WIDTH = 1000f
 enum class InkTool(val key: String) {
     Pen("pen"),
     Highlighter("highlighter"),
-    Eraser("eraser");
+    Eraser("eraser"),
+
+    /** Typed text boxes (기획서 5.8.6): draws nothing; its style is the colour and size of new text. */
+    Text("text");
 
     companion object {
         fun fromKey(key: String) = entries.firstOrNull { it.key == key } ?: Pen
@@ -70,18 +73,25 @@ object Brushes {
         InkTool.Pen -> 1f..30f
         InkTool.Highlighter -> 8f..80f
         InkTool.Eraser -> 6f..100f
+        InkTool.Text -> MIN_TEXT_SIZE..MAX_TEXT_SIZE
     }
+
+    val textSizes = listOf(16f, 24f, 40f)
 
     /** Highlighter colours are see-through; picking a solid colour for it keeps that see-through look. */
     fun highlighterAlpha(color: Int): Int = (color and 0x00FFFFFF) or 0x66000000
 }
 
-/** Draws [strokes] (all on one page) onto [canvas], where the page is [pageWidthPx] wide at the origin. */
+/**
+ * Draws [strokes] and [texts] (all on one page) onto [canvas], where the page is [pageWidthPx]
+ * wide at the origin: highlighter, then text, then pen (기획서 5.8.5). [skipText] is left out (the
+ * one being typed into, shown by its editor).
+ */
 object InkPainter {
     private val renderer by lazy { CanvasStrokeRenderer.create() }
 
-    fun draw(canvas: Canvas, strokes: List<InkStroke>, pageWidthPx: Float) {
-        if (strokes.isEmpty()) return
+    fun draw(canvas: Canvas, strokes: List<InkStroke>, texts: List<InkText>, pageWidthPx: Float, skipText: String? = null) {
+        if (strokes.isEmpty() && texts.isEmpty()) return
         val toCanvas = Matrix().apply {
             val scale = pageWidthPx / INK_PAGE_WIDTH
             setScale(scale, scale)
@@ -91,6 +101,7 @@ object InkPainter {
         canvas.concat(toCanvas)
         // Highlighter under the pen, as on paper: the ink is written over the marked text.
         for (s in strokes) if (s.tool == InkTool.Highlighter) renderer.draw(canvas, s.stroke, toCanvas)
+        InkTextLayout.draw(canvas, texts, skipText)
         for (s in strokes) if (s.tool != InkTool.Highlighter) renderer.draw(canvas, s.stroke, toCanvas)
         canvas.restore()
     }

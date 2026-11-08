@@ -15,6 +15,9 @@ import androidx.test.platform.app.InstrumentationRegistry
 import com.tabpdf.export.PdfExport
 import com.tabpdf.ink.Brushes
 import com.tabpdf.ink.InkStroke
+import com.tabpdf.ink.CharStyle
+import com.tabpdf.ink.InkText
+import com.tabpdf.ink.RichText
 import com.tabpdf.ink.InkTool
 import com.tabpdf.ink.ToolStyle
 import com.tabpdf.pdf.PdfDocument
@@ -48,9 +51,9 @@ class ExportTest {
         return InkStroke("s$page", page, page.toLong(), InkTool.Pen, Stroke(Brushes.forTool(InkTool.Pen, ToolStyle(color, 10f)), inputs.toImmutable()))
     }
 
-    private fun export(doc: Document, uri: Uri, strokes: List<InkStroke>): Pair<File, PdfExport.Method> = runBlocking {
+    private fun export(doc: Document, uri: Uri, strokes: List<InkStroke>, texts: List<InkText> = emptyList()): Pair<File, PdfExport.Method> = runBlocking {
         val out = File(dir, "out.pdf")
-        val method = PdfExport.export(context, uri, doc, strokes, out) { _, _ -> }
+        val method = PdfExport.export(context, uri, doc, strokes, texts, out) { _, _ -> }
         out to method
     }
 
@@ -162,5 +165,67 @@ class ExportTest {
         val c = page.getPixel(600, 500)
         assertTrue("the picture is there", Color.blue(c) > 230 && Color.red(c) in 180..220)
         doc.close()
+    }
+
+    /** A blue text box on page [page], its first line at y ≈ 500–550 from x = 100 (page units). */
+    private fun textBox(page: Int): InkText {
+        val style = CharStyle(40f, 0xFF1A73E8.toInt())
+        val content = RichText.empty(style).replace(0, 0, "상자 글 Box text", style)
+            .restyle(0, 2, { it.copy(bold = true) }).restyle(4, 5, { it.copy(italic = true, underline = true) })
+        return InkText("t$page", page, 100L, 100f, 500f, 0f, content)
+    }
+
+    private fun isBlue(c: Int) = Color.blue(c) > 150 && Color.blue(c) - Color.red(c) > 60
+
+    /** Blue pixels where the text box's first line is, and none well below it. */
+    private fun assertTextWhereShown(bmp: Bitmap, what: String) {
+        var inside = 0
+        for (x in 100 until 400 step 2) for (y in 505 until 550 step 2) if (isBlue(bmp.getPixel(x, y))) inside++
+        var below = 0
+        for (x in 100 until 400 step 2) for (y in 600 until 650 step 2) if (isBlue(bmp.getPixel(x, y))) below++
+        assertTrue("$what: text drawn at its place ($inside)", inside > 30)
+        assertEquals("$what: nothing below", 0, below)
+    }
+
+    /** Text boxes come out where shown in every kind of export, as text other apps can find (기획서 5.9). */
+    @Test
+    fun textBoxesComeOutAsTextWhereTheyShow() = runBlocking {
+        val check = File(context.filesDir, "export-check").apply { deleteRecursively(); mkdirs() }
+        val note = File(dir, "note.txt").apply { writeText((1..60).joinToString("\n") { "줄 $it" }) }
+        val png = File(dir, "plain.png")
+        Bitmap.createBitmap(800, 1100, Bitmap.Config.ARGB_8888).apply { eraseColor(Color.WHITE) }
+            .let { b -> png.outputStream().use { b.compress(Bitmap.CompressFormat.PNG, 100, it) } }
+        val cases = listOf(
+            "sample.pdf" to PdfExport.Method.Appended,
+            "note.txt" to PdfExport.Method.Drawn,
+            "plain.png" to PdfExport.Method.Pictures,
+        )
+        for ((name, expected) in cases) {
+            val file = when (name) {
+                "note.txt" -> note
+                "plain.png" -> png
+                else -> asset(name)
+            }
+            val doc = when (name) {
+                "note.txt" -> Documents.open(context, Uri.fromFile(file), name, FileFormat.Text)
+                "plain.png" -> Documents.open(context, Uri.fromFile(file), name, FileFormat.Image)
+                else -> PdfDocument.open(context, Uri.fromFile(file))
+            }
+            doc.awaitComplete()
+            val (out, method) = export(doc, Uri.fromFile(file), listOf(stroke(0)), listOf(textBox(0)))
+            assertEquals(name, expected, method)
+            assertEquals(name, doc.pageCount, pageCount(out))
+            val page = render(out, 0, 1000)
+            assertStrokeWhereShown(page, name)
+            assertTextWhereShown(page, name)
+            // Kept for checking on a PC (text extraction, opening without repair).
+            out.copyTo(File(check, "$name.pdf"), overwrite = true)
+            if (Build.VERSION.SDK_INT >= 35) {
+                val back = PdfDocument.open(context, Uri.fromFile(out))
+                assertTrue("$name: the box's text can be found", back.search("상자 글").isNotEmpty())
+                back.close()
+            }
+            doc.close()
+        }
     }
 }

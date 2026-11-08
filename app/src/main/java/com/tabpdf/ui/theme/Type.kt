@@ -10,7 +10,8 @@ import com.tabpdf.R
 
 /**
  * UI type: Pretendard Std (KS X 1001 hangul and latin; other syllables fall back to the system
- * font glyph by glyph). Only the app's own UI uses it — documents are laid out with their own fonts.
+ * font glyph by glyph). The app's own UI and typed text boxes (ink/InkFonts) use it — documents are laid
+ * out with their own fonts.
  */
 val Pretendard = FontFamily(
     Font(R.font.pretendard_regular, FontWeight.Normal),

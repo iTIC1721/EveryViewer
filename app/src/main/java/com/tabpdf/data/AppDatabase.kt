@@ -8,8 +8,8 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
-    entities = [GroupEntity::class, TabEntity::class, AppStateEntity::class, InkStrokeEntity::class],
-    version = 4,
+    entities = [GroupEntity::class, TabEntity::class, AppStateEntity::class, InkStrokeEntity::class, InkTextEntity::class],
+    version = 5,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -19,7 +19,7 @@ abstract class AppDatabase : RoomDatabase() {
     companion object {
         fun create(context: Context): AppDatabase =
             Room.databaseBuilder(context, AppDatabase::class.java, "tabpdf.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                 .build()
     }
 }
@@ -105,5 +105,17 @@ val MIGRATION_3_4 = object : Migration(3, 4) {
                 "`inputs` BLOB NOT NULL, PRIMARY KEY(`id`))"
         )
         db.execSQL("CREATE INDEX IF NOT EXISTS `index_ink_strokes_tabId` ON `ink_strokes` (`tabId`)")
+    }
+}
+
+/** v4 → v5: typed text boxes (기획서 5.8.6). */
+val MIGRATION_4_5 = object : Migration(4, 5) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS `ink_texts` (`id` TEXT NOT NULL, `tabId` TEXT NOT NULL, `page` INTEGER NOT NULL, " +
+                "`seq` INTEGER NOT NULL, `x` REAL NOT NULL, `y` REAL NOT NULL, `width` REAL NOT NULL, `text` TEXT NOT NULL, " +
+                "`style` TEXT NOT NULL, PRIMARY KEY(`id`))"
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_ink_texts_tabId` ON `ink_texts` (`tabId`)")
     }
 }

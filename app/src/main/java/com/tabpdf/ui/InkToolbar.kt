@@ -54,6 +54,8 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -160,6 +162,7 @@ private val InkTool.label get() = when (this) {
     InkTool.Pen -> "펜"
     InkTool.Highlighter -> "형광펜"
     InkTool.Eraser -> "지우개"
+    InkTool.Text -> "텍스트"
 }
 
 /** The tool itself, standing in the bar; the chosen one stands taller. Its name is for screen readers. */
@@ -220,6 +223,13 @@ private fun DrawScope.drawTool(tool: InkTool, ink: Color, body: Color, outline: 
             drawPath(barrel, body); drawPath(barrel, outline, style = line)
             drawRect(outline.copy(alpha = 0.6f), Offset(12f * u, 20f * u), Size(16f * u, 5f * u))
         }
+        InkTool.Text -> {
+            // A letter T on a key cap, its stroke in the colour typed text gets.
+            drawRoundRect(body, Offset(8f * u, 6f * u), Size(24f * u, 54f * u), CornerRadius(4f * u))
+            drawRoundRect(outline, Offset(8f * u, 6f * u), Size(24f * u, 54f * u), CornerRadius(4f * u), style = line)
+            drawRect(ink, Offset(12.5f * u, 11f * u), Size(15f * u, 3.6f * u))
+            drawRect(ink, Offset(18.2f * u, 11f * u), Size(3.6f * u, 17f * u))
+        }
     }
 }
 
@@ -227,7 +237,7 @@ private fun DrawScope.drawTool(tool: InkTool, ink: Color, body: Color, outline: 
 private const val SWATCHES_PER_ROW = 10
 
 /** A swatch's touch area; the circle drawn in it is a little smaller (24dp). */
-private val SwatchSize = 28.dp
+internal val SwatchSize = 28.dp
 
 /**
  * The tool's presets, colour swatches and the size, shown live (기획서 5.8.2). The swatches fill
@@ -271,7 +281,7 @@ private fun StylePanel(
                 }
             }
             HorizontalDivider(Modifier.padding(vertical = 10.dp))
-            val toolColors = if (tool == InkTool.Pen) Brushes.penColors else Brushes.highlighterColors
+            val toolColors = if (tool == InkTool.Highlighter) Brushes.highlighterColors else Brushes.penColors
             val picked = recent.filter { it !in toolColors }.take(SWATCHES_PER_ROW - 1 - toolColors.size)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 for (c in toolColors + picked) {
@@ -288,9 +298,10 @@ private fun StylePanel(
         Row(verticalAlignment = Alignment.CenterVertically) {
             Slider(
                 value = style.size.coerceIn(range),
-                onValueChange = { onStyle(style.copy(size = (it * 2).roundToInt() / 2f)) },
+                // Text sizes go in whole steps, line widths in halves.
+                onValueChange = { onStyle(style.copy(size = if (tool == InkTool.Text) it.roundToInt().toFloat() else (it * 2).roundToInt() / 2f)) },
                 valueRange = range,
-                modifier = Modifier.weight(1f).semantics { contentDescription = "굵기" },
+                modifier = Modifier.weight(1f).semantics { contentDescription = if (tool == InkTool.Text) "글자 크기" else "굵기" },
             )
             Text(
                 sizeLabel(style.size),
@@ -342,7 +353,7 @@ private fun PresetSwatch(
                 .clip(CircleShape)
                 .combinedClickable(onClick = onClick, onLongClick = { menu = true })
                 .semantics {
-                    contentDescription = "프리셋 ${index + 1}: 굵기 ${sizeLabel(preset.size)}"
+                    contentDescription = "프리셋 ${index + 1}: ${if (tool == InkTool.Text) "글자 크기" else "굵기"} ${sizeLabel(preset.size)}"
                     this.selected = selected
                 },
         ) {
@@ -365,7 +376,7 @@ private fun PresetSwatch(
 
 /** A colour to pick, on white so see-through highlighter colours look as they will on paper. */
 @Composable
-private fun Swatch(color: Color, selected: Boolean, onClick: () -> Unit) {
+internal fun Swatch(color: Color, selected: Boolean, onClick: () -> Unit) {
     val ring = MaterialTheme.colorScheme.primary
     val swatchEdge = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
     Box(
@@ -389,7 +400,7 @@ private fun Swatch(color: Color, selected: Boolean, onClick: () -> Unit) {
 
 /** The usual "any colour" button: a rainbow ring. */
 @Composable
-private fun CustomColorSwatch(onClick: () -> Unit) {
+internal fun CustomColorSwatch(onClick: () -> Unit) {
     Box(
         Modifier
             .size(SwatchSize)
@@ -421,6 +432,17 @@ private fun SizePreview(tool: InkTool, style: ToolStyle, modifier: Modifier) {
     val shape = MaterialTheme.shapes.small
     Canvas(modifier.clip(shape).background(Paper).border(1.dp, edge, shape)) {
         val width = style.size * unit
+        if (tool == InkTool.Text) {
+            // Sample letters at that size, as they will be typed.
+            drawIntoCanvas { canvas ->
+                val paint = com.tabpdf.ink.InkTextLayout.paint(com.tabpdf.ink.CharStyle(style.size, style.color), unit)
+                val sample = "가나다 Abc"
+                val fm = paint.fontMetrics
+                val x = (size.width - paint.measureText(sample)) / 2
+                canvas.nativeCanvas.drawText(sample, x.coerceAtLeast(8.dp.toPx()), (size.height - fm.ascent - fm.descent) / 2, paint)
+            }
+            return@Canvas
+        }
         if (tool == InkTool.Eraser) {
             drawCircle(reach, width / 2, center, style = Stroke(width = 1.5.dp.toPx()))
             return@Canvas
@@ -446,7 +468,7 @@ private fun SizePreview(tool: InkTool, style: ToolStyle, modifier: Modifier) {
  * a hue strip under it, with the old and new colour side by side. Icons only.
  */
 @Composable
-private fun ColorPickerDialog(initial: Int, onPick: (Int) -> Unit, onDismiss: () -> Unit) {
+internal fun ColorPickerDialog(initial: Int, onPick: (Int) -> Unit, onDismiss: () -> Unit) {
     val hsv = remember { FloatArray(3).also { android.graphics.Color.colorToHSV(initial or 0xFF000000.toInt(), it) } }
     var hue by remember { mutableFloatStateOf(hsv[0]) }
     var saturation by remember { mutableFloatStateOf(hsv[1]) }

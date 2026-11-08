@@ -9,6 +9,7 @@ import com.tabpdf.doc.Document
 import com.tabpdf.doc.awaitComplete
 import com.tabpdf.ink.InkPainter
 import com.tabpdf.ink.InkStroke
+import com.tabpdf.ink.InkText
 import com.tabpdf.pdf.PdfDocument
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -50,12 +51,13 @@ object PdfExport {
         uri: Uri,
         document: Document,
         strokes: List<InkStroke>,
+        texts: List<InkText>,
         target: File,
         onProgress: (done: Int, total: Int) -> Unit,
     ): Method = withContext(Dispatchers.IO) {
         try {
             document.awaitComplete()
-            val byPage = strokes.groupBy { it.page }
+            val byPage = Marks(strokes.groupBy { it.page }, texts.filter { it.content.text.isNotBlank() }.groupBy { it.page })
             when {
                 document is PdfDocument -> appended(context, uri, document, byPage, target, onProgress)
                     ?: pictures(document, byPage, target, onProgress)
@@ -68,12 +70,25 @@ object PdfExport {
         }
     }
 
+    /** A tab's handwriting by page: strokes and text boxes. */
+    private class Marks(val strokes: Map<Int, List<InkStroke>>, val texts: Map<Int, List<InkText>>) {
+        val pages get() = strokes.keys + texts.keys
+
+        /** Page [page]'s marks as PDF operators, its text drawn with [fonts]' glyphs. */
+        fun ink(page: Int, fonts: PdfText): PdfInk? {
+            val s = strokes[page].orEmpty()
+            val t = texts[page].orEmpty()
+            if (s.isEmpty() && t.isEmpty()) return null
+            return PdfInk(s, if (t.isEmpty()) null else fonts.page(t))
+        }
+    }
+
     /** The PDF with the strokes added after it, or null if its structure can't be followed. */
     private suspend fun appended(
         context: Context,
         uri: Uri,
         document: PdfDocument,
-        strokes: Map<Int, List<InkStroke>>,
+        marks: Marks,
         target: File,
         onProgress: (Int, Int) -> Unit,
     ): Method? {
@@ -83,12 +98,13 @@ object PdfExport {
             context.contentResolver.openInputStream(uri)?.use { input -> work.outputStream().use { input.copyTo(it) } }
                 ?: throw FileNotFoundException()
             coroutineContext.ensureActive()
-            val targets = strokes.mapNotNull { (page, list) ->
+            val fonts = PdfText()
+            val targets = marks.pages.sorted().mapNotNull { page ->
                 if (page !in 0 until document.pageCount) null
-                else PdfAppend.Target(page, PdfInk(list), document.pageSizes[page].width)
+                else marks.ink(page, fonts)?.let { PdfAppend.Target(page, it, document.pageSizes[page].width) }
             }
             fun append() {
-                target.outputStream().buffered().use { PdfAppend.write(work, document.pageCount, targets, it) }
+                target.outputStream().buffered().use { PdfAppend.write(work, document.pageCount, targets, it, fonts.takeIf { it.fontCount > 0 }) }
             }
             try {
                 append()
@@ -132,7 +148,7 @@ object PdfExport {
     /** Text and shapes with Android's PDF writer; false (nothing written) if a page only comes as a picture. */
     private suspend fun drawn(
         document: Document,
-        strokes: Map<Int, List<InkStroke>>,
+        marks: Marks,
         target: File,
         onProgress: (Int, Int) -> Unit,
     ): Boolean {
@@ -153,7 +169,8 @@ object PdfExport {
                     pdf.finishPage(page)
                     return false
                 }
-                strokes[i]?.let { InkPainter.draw(canvas, it, width) }
+                // Android's PDF writer keeps the text boxes' text as text.
+                InkPainter.draw(canvas, marks.strokes[i].orEmpty(), marks.texts[i].orEmpty(), width)
                 pdf.finishPage(page)
                 onProgress(i + 1, document.pageCount)
             }
@@ -167,12 +184,15 @@ object PdfExport {
     /** Each page as a JPEG picture with the strokes over it. */
     private suspend fun pictures(
         document: Document,
-        strokes: Map<Int, List<InkStroke>>,
+        marks: Marks,
         target: File,
         onProgress: (Int, Int) -> Unit,
     ): Method {
+        // Every page's text first: the fonts are written before the pages.
+        val fonts = PdfText()
+        val inks = (0 until document.pageCount).associateWith { marks.ink(it, fonts) }
         target.outputStream().buffered().use { out ->
-            val writer = JpegPdfWriter(out)
+            val writer = JpegPdfWriter(out, fonts.takeIf { it.fontCount > 0 })
             for (i in 0 until document.pageCount) {
                 coroutineContext.ensureActive()
                 val size = document.pageSizes[i]
@@ -183,7 +203,7 @@ object PdfExport {
                     .coerceIn(1, MAX_PICTURE_SIDE)
                 val bitmap = document.renderPage(i, px) ?: throw IOException("Page ${i + 1} could not be drawn")
                 val jpeg = ByteArrayOutputStream().also { bitmap.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, it) }.toByteArray()
-                writer.addPage(width, height, jpeg, bitmap.width, bitmap.height, strokes[i]?.let { PdfInk(it) })
+                writer.addPage(width, height, jpeg, bitmap.width, bitmap.height, inks[i])
                 bitmap.recycle()
                 onProgress(i + 1, document.pageCount)
             }
