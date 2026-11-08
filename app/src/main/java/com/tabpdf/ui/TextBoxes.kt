@@ -216,8 +216,10 @@ fun TextFormatBar(
         checkedContentColor = MaterialTheme.colorScheme.onPrimaryContainer,
     )
     Surface(modifier, color = MaterialTheme.colorScheme.bar, contentColor = MaterialTheme.colorScheme.onSurface) {
+        // Done stays in reach at the right; the styles scroll on narrow screens.
+        Row(Modifier.fillMaxWidth().height(52.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         Row(
-            Modifier.fillMaxWidth().height(52.dp).horizontalScroll(rememberScrollState()).padding(horizontal = 4.dp),
+            Modifier.weight(1f).horizontalScroll(rememberScrollState()),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             val bold = all { it.bold }
@@ -233,10 +235,10 @@ fun TextFormatBar(
             val align = field?.selectedAlign() ?: TextAlign.Left
             Box {
                 IconButton(onClick = { alignMenu = true }) { Icon(align.icon, contentDescription = "정렬") }
-                DropdownMenu(expanded = alignMenu, onDismissRequest = { alignMenu = false }) {
+                DropdownMenu(expanded = alignMenu, onDismissRequest = { alignMenu = false; field?.showKeyboard() }) {
                     Row(Modifier.padding(horizontal = 8.dp)) {
                         for (a in TextAlign.entries) {
-                            IconToggleButton(a == align, { field?.align(a); alignMenu = false }, colors = toggle) {
+                            IconToggleButton(a == align, { field?.align(a); alignMenu = false; field?.showKeyboard() }, colors = toggle) {
                                 Icon(a.icon, contentDescription = a.label)
                             }
                         }
@@ -250,11 +252,15 @@ fun TextFormatBar(
                 TextButton(onClick = { sizeMenu = true }, modifier = Modifier.semantics { contentDescription = "글자 크기" }) {
                     Text(sameSize?.let(::sizeLabel) ?: "–", style = MaterialTheme.typography.titleSmall)
                 }
-                DropdownMenu(expanded = sizeMenu, onDismissRequest = { sizeMenu = false }) {
+                DropdownMenu(expanded = sizeMenu, onDismissRequest = { sizeMenu = false; field?.showKeyboard() }) {
                     Column(Modifier.width(280.dp).padding(horizontal = 16.dp, vertical = 8.dp)) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Row(Modifier.fillMaxWidth()) {
                             for (s in TEXT_SIZE_STEPS) {
-                                TextButton(onClick = { style { it.copy(size = s) }; onDefault(first.copy(size = s)) }) {
+                                TextButton(
+                                    onClick = { style { it.copy(size = s) }; onDefault(first.copy(size = s)) },
+                                    modifier = Modifier.weight(1f),
+                                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp),
+                                ) {
                                     Text(sizeLabel(s), style = MaterialTheme.typography.bodyMedium)
                                 }
                             }
@@ -283,7 +289,7 @@ fun TextFormatBar(
                         drawCircle(Color.Black.copy(alpha = 0.25f), style = Stroke(width = 1.dp.toPx()))
                     }
                 }
-                DropdownMenu(expanded = colorMenu, onDismissRequest = { colorMenu = false }) {
+                DropdownMenu(expanded = colorMenu, onDismissRequest = { colorMenu = false; field?.showKeyboard() }) {
                     val picked = recentColors.filter { it !in Brushes.penColors }.take(TEXT_SWATCHES - 1 - Brushes.penColors.size)
                     Row(Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
                         for (c in Brushes.penColors + picked) {
@@ -291,6 +297,7 @@ fun TextFormatBar(
                                 style { it.copy(color = c) }
                                 onDefault(first.copy(color = c))
                                 colorMenu = false
+                                field?.showKeyboard()
                             }
                         }
                         CustomColorSwatch { picking = true; colorMenu = false }
@@ -305,13 +312,15 @@ fun TextFormatBar(
                         style { it.copy(color = c) }
                         onDefault(first.copy(color = c))
                         onCustomColor(c)
+                        field?.showKeyboard()
                     },
-                    onDismiss = { picking = false },
+                    onDismiss = { picking = false; field?.showKeyboard() },
                 )
             }
             Spacer(Modifier.width(4.dp))
             IconButton(onClick = onDelete) { Icon(Icons.Default.Delete, contentDescription = "텍스트 상자 삭제") }
-            IconButton(onClick = onDone) { Icon(Icons.Default.Check, contentDescription = "완료") }
+        }
+        IconButton(onClick = onDone) { Icon(Icons.Default.Check, contentDescription = "완료") }
         }
     }
 }

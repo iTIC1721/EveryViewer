@@ -149,6 +149,14 @@ class TextBoxField(context: Context, initial: RichText, scale: Float) : EditText
         onChange()
     }
 
+    /** Takes the keyboard again (after a menu took it). */
+    fun showKeyboard() {
+        post {
+            requestFocus()
+            (context.getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager).showSoftInput(this, 0)
+        }
+    }
+
     /** Puts the cursor where [offset] is in the text. */
     fun placeCursor(offset: Int) = setSelection(offset.coerceIn(0, length()))
 }
