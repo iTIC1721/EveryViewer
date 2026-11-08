@@ -1,6 +1,6 @@
 # <img src="docs/images/icon.png" width="44" alt="" align="top"> EveryViewer
 
-![version](https://img.shields.io/badge/version-0.15.2-blue)
+![version](https://img.shields.io/badge/version-1.0.0-blue)
 ![minSdk](https://img.shields.io/badge/Android-8.0%2B%20(API%2026)-3DDC84?logo=android&logoColor=white)
 ![Kotlin](https://img.shields.io/badge/Kotlin-Jetpack%20Compose-7F52FF?logo=kotlin&logoColor=white)
 
@@ -67,7 +67,7 @@ PDF의 검색·선택·링크는 Android 15 이상, 또는 시스템 업데이�
 
 ## 설치
 
-[GitHub Releases](https://github.com/iTIC1721/EveryViewer/releases)에서 APK를 받아 설치합니다. 지금은 개발 버전이라 사전 출시(pre-release)로 올립니다. 릴리스 노트 끝에 APK와 서명 인증서의 SHA-256이 있으니 받은 파일과 맞는지 확인할 수 있습니다.
+[GitHub Releases](https://github.com/iTIC1721/EveryViewer/releases)에서 APK를 받아 설치합니다. 릴리스 노트 끝에 APK와 서명 인증서의 SHA-256이 있으니 받은 파일과 맞는지 확인할 수 있습니다.
 
 ### 직접 빌드
 
