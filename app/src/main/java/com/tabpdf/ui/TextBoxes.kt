@@ -53,7 +53,6 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.Velocity
-import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
@@ -220,23 +219,13 @@ fun TextFormatBar(
         checkedContainerColor = MaterialTheme.colorScheme.primaryContainer,
         checkedContentColor = MaterialTheme.colorScheme.onPrimaryContainer,
     )
-    // Swipes on the bar stay on the bar: neither they nor what its scrolling leaves over at either
-    // end may reach the pager and turn the tab.
-    Surface(
-        modifier.pointerInput(Unit) {
-            awaitEachGesture {
-                do {
-                    val event = awaitPointerEvent()
-                    event.changes.forEach { it.consume() }
-                } while (event.changes.any { it.pressed })
-            }
-        },
-        color = MaterialTheme.colorScheme.bar,
-        contentColor = MaterialTheme.colorScheme.onSurface,
-    ) {
+    Surface(modifier, color = MaterialTheme.colorScheme.bar, contentColor = MaterialTheme.colorScheme.onSurface) {
         // Done stays in reach at the right; the styles scroll on narrow screens.
         Row(Modifier.fillMaxWidth().height(52.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         Row(
+            // Swipes on the bar stay on the bar: its own scrolling takes the drag (even with nothing to
+            // scroll), and what is left over at either end is kept here, not passed on to the pager.
+            // (Consuming the touches instead would also stop the bar's own scrolling.)
             Modifier.weight(1f).nestedScroll(KeepScroll).horizontalScroll(rememberScrollState()),
             verticalAlignment = Alignment.CenterVertically,
         ) {
