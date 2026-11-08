@@ -16,8 +16,8 @@ android {
         applicationId = "io.github.itic1721.everyviewer"
         minSdk = 26
         targetSdk = 37
-        versionCode = 20
-        versionName = "0.15.2"
+        versionCode = 21
+        versionName = "1.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
