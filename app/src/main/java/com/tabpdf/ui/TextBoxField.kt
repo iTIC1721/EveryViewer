@@ -149,12 +149,28 @@ class TextBoxField(context: Context, initial: RichText, scale: Float) : EditText
         onChange()
     }
 
-    /** Takes the keyboard again (after a menu took it). */
+    /** Set when the keyboard is wanted back once this window has focus again. */
+    private var keyboardWanted = false
+
+    /**
+     * Takes the keyboard again after a menu took it. The menu's window gives focus back only after it
+     * is gone: until then the keyboard can't be asked for, so it waits for that.
+     */
     fun showKeyboard() {
-        post {
-            requestFocus()
-            (context.getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager).showSoftInput(this, 0)
-        }
+        keyboardWanted = true
+        if (hasWindowFocus()) post { takeKeyboard() }
+    }
+
+    override fun onWindowFocusChanged(hasWindowFocus: Boolean) {
+        super.onWindowFocusChanged(hasWindowFocus)
+        if (hasWindowFocus && keyboardWanted) post { takeKeyboard() }
+    }
+
+    private fun takeKeyboard() {
+        if (!keyboardWanted || !isAttachedToWindow) return
+        keyboardWanted = false
+        requestFocus()
+        (context.getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager).showSoftInput(this, 0)
     }
 
     /** Puts the cursor where [offset] is in the text. */

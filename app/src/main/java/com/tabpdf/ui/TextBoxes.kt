@@ -32,7 +32,12 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ime
+import kotlinx.coroutines.delay
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -205,8 +210,31 @@ fun TextFormatBar(
     onDefault: (CharStyle) -> Unit,
     onDelete: () -> Unit,
     onDone: () -> Unit,
+    /** Told whether the bar is on screen (it goes away with the keyboard). */
+    onShown: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    var alignMenu by remember { mutableStateOf(false) }
+    var sizeMenu by remember { mutableStateOf(false) }
+    var colorMenu by remember { mutableStateOf(false) }
+    var picking by remember { mutableStateOf(false) }
+    // Above the keyboard, so it goes when the keyboard is put away (as keyboard toolbars do), but
+    // stays while one of its menus is open (they take the keyboard away) and a moment after, while
+    // the keyboard comes back. With a hardware keyboard no keyboard shows on screen: it always stays.
+    val config = androidx.compose.ui.platform.LocalConfiguration.current
+    val hardKeyboard = config.keyboard != android.content.res.Configuration.KEYBOARD_NOKEYS &&
+        config.hardKeyboardHidden == android.content.res.Configuration.HARDKEYBOARDHIDDEN_NO
+    val keyboard = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    val wanted = keyboard || hardKeyboard || alignMenu || sizeMenu || colorMenu || picking
+    var shown by remember { mutableStateOf(true) }
+    LaunchedEffect(wanted) {
+        if (!wanted) delay(KEYBOARD_GRACE_MS)
+        shown = wanted
+    }
+    val currentOnShown by rememberUpdatedState(onShown)
+    LaunchedEffect(shown) { currentOnShown(shown) }
+    if (!shown) return
+
     @Suppress("UNUSED_VARIABLE") val changed = editing.version // read so the bar follows the selection
     val field = editing.field
     val styles = field?.selectedStyles().orEmpty()
@@ -238,7 +266,6 @@ fun TextFormatBar(
             val strike = all { it.strike }
             IconToggleButton(strike, { on -> style { it.copy(strike = on) } }, colors = toggle) { Icon(StrikeIcon, contentDescription = "취소선") }
 
-            var alignMenu by remember { mutableStateOf(false) }
             val align = field?.selectedAlign() ?: TextAlign.Left
             Box {
                 IconButton(onClick = { alignMenu = true }) { Icon(align.icon, contentDescription = "정렬") }
@@ -253,7 +280,6 @@ fun TextFormatBar(
                 }
             }
 
-            var sizeMenu by remember { mutableStateOf(false) }
             val sameSize = styles.map { it.size }.distinct().singleOrNull()
             Box {
                 TextButton(onClick = { sizeMenu = true }, modifier = Modifier.semantics { contentDescription = "글자 크기" }) {
@@ -286,8 +312,6 @@ fun TextFormatBar(
                 }
             }
 
-            var colorMenu by remember { mutableStateOf(false) }
-            var picking by remember { mutableStateOf(false) }
             val sameColor = styles.map { it.color }.distinct().singleOrNull()
             Box {
                 IconButton(onClick = { colorMenu = true }, modifier = Modifier.semantics { contentDescription = "글자 색상" }) {
@@ -338,6 +362,9 @@ private val KeepScroll = object : NestedScrollConnection {
 
     override suspend fun onPostFling(consumed: Velocity, available: Velocity) = available
 }
+
+/** How long the bar waits for the keyboard to come back before it goes too. */
+private const val KEYBOARD_GRACE_MS = 400L
 
 private const val TEXT_SWATCHES = 10
 private val TEXT_SIZE_STEPS = listOf(12f, 16f, 24f, 32f, 48f)

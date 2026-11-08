@@ -1002,6 +1002,7 @@ private fun DocumentPages(
                         finishTyping()
                     },
                     onDone = ::finishTyping,
+                    onShown = { if (!it) textBar[0] = null },
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .windowInsetsPadding(WindowInsets.ime.union(WindowInsets.navigationBars))
