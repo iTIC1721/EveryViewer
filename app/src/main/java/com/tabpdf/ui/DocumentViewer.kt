@@ -1015,9 +1015,11 @@ private fun DocumentPages(
                 val layout = f.layout ?: return@LaunchedEffect
                 val line = layout.getLineForOffset(f.selectionEnd.coerceAtLeast(0))
                 val origin = boxOrigin(e.box)
-                val bottom = origin.y + layout.getLineBottom(line)
                 val barTop = textBar[0]?.top ?: (viewportHeight - imeBottom)
                 val limit = minOf(barTop, viewportHeight - imeBottom) - with(density) { 8.dp.toPx() }
+                // The whole box when it fits between the bars, else the line being typed on.
+                val fits = layout.height <= limit - topPaddingPx
+                val bottom = origin.y + if (fits) layout.height.toFloat() else layout.getLineBottom(line).toFloat()
                 if (bottom > limit) listState.scrollBy(bottom - limit)
             }
         } ?: run { textBar[0] = null }
