@@ -107,6 +107,16 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
     private val _inkMode = MutableStateFlow(false)
     val inkMode: StateFlow<Boolean> = _inkMode.asStateFlow()
 
+    /** The look chosen for each tab's document (기획서 5.10): dark or not; tabs left out follow the app's theme. */
+    private val _darkLooks = MutableStateFlow<Map<String, Boolean>>(emptyMap())
+    val darkLooks: StateFlow<Map<String, Boolean>> = _darkLooks.asStateFlow()
+
+    /** Shows tab [tabId]'s document [dark] or not; null goes back to following the app's theme. */
+    fun setDarkLook(tabId: String, dark: Boolean?) {
+        _darkLooks.value = if (dark == null) _darkLooks.value - tabId else _darkLooks.value + (tabId to dark)
+        app.enqueueWrite { repository.setDarkLook(tabId, dark) }
+    }
+
     private val viewerStates = mutableMapOf<String, ViewerState>()
     private val unsavedStates = mutableMapOf<String, ViewerState>()
     private val pageCounts = mutableMapOf<String, Int>()
@@ -115,6 +125,7 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
     private val loadJob = viewModelScope.launch {
         val (saved, states) = repository.load()
         viewerStates += states
+        _darkLooks.value = repository.darkLooks()
         // Groups are never empty (as in Chrome), and something should be on screen if any tab is open.
         val cleaned = saved.copy(top = saved.top.filter { it !is TabGroup || saved.tabsOf(it.id).isNotEmpty() })
             .withValidCurrent(null, 0)
@@ -317,6 +328,12 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         commit(restored)
+        // The tabs come back as new rows: with the looks chosen for them.
+        val ids = when (closed) {
+            is Closed.Tab -> listOf(closed.tab.id)
+            is Closed.Group -> closed.tabs.map { it.id }
+        }
+        for (id in ids) _darkLooks.value[id]?.let { dark -> app.enqueueWrite { repository.setDarkLook(id, dark) } }
     }
 
     /** The undo offer is gone: free the closed tabs' files if no other tab uses them. */
@@ -329,6 +346,7 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
             is Closed.Group -> closed.tabs
         }
         tabs.forEach { viewerStates -= it.id }
+        _darkLooks.value -= tabs.map { it.id }.toSet()
         ink.forget(tabs.map { it.id })
         app.enqueueWrite {
             for (tab in tabs) releaseIfUnused(tab)

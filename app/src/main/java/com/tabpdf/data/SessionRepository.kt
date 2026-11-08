@@ -54,6 +54,11 @@ class SessionRepository(private val dao: SessionDao) {
     /** Every saved tab's file and format. */
     suspend fun tabFiles(): List<Pair<Uri, FileFormat>> = dao.tabFiles().map { Uri.parse(it.uri) to FileFormat.fromKey(it.format) }
 
+    /** The looks chosen for tabs' documents (기획서 5.10), by tab; tabs that follow the theme are left out. */
+    suspend fun darkLooks(): Map<String, Boolean> = dao.darkLooks().associate { it.id to (it.darkLook == true) }
+
+    suspend fun setDarkLook(tabId: String, dark: Boolean?) = dao.setDarkLook(tabId, dark)
+
     suspend fun saveViewerStates(states: Map<String, ViewerState>) = dao.updateViewerStates(states)
 
     private fun TabEntity.toTab() = DocTab(id, groupId, Uri.parse(uri), displayName, isInternalCopy, FileFormat.fromKey(format))

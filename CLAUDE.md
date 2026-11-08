@@ -87,6 +87,8 @@ app/src/main/java/com/tabpdf/
                          (도형·연결선·그림을 슬라이드 위치에 그림, 글상자·표는 OfficeLayout.box로 조판, TableStyles: 기본 표 스타일)
                          xlsx: XlsxReader(시트는 XmlPullParser로 흘려 읽음, 스타일·테마 색) → Workbook → WorkbookDocument
                          (시트 폭 쪽, 셀 글 넘침, 테두리, 그림), 표시 형식은 NumberFormat
+                         어두운 화면(Look: DocLook·LookColorSpan 등, 기획서 5.10): 한 번 조판에 두 화면의 색을 함께 넣고
+                         그릴 때 고른다. HTML·epub은 다크 모드 CSS의 색만(HtmlStyle의 dark 값), 텍스트·마크다운은 앱이 정한 색
   doc/html/              HTML: jsoup으로 DOM → CSS 적용(Css: 선택자·@media, HtmlStyle: 계산된 스타일·기본 스타일 시트)
                          → 오피스 공통 모델(HtmlReader: 문단·목록·표·상자 Box) → OfficeLayout.flow(고정 폭, 페이지 간격 없음).
                          epub: EpubDocument(spine 순서로 장마다 HtmlDocument.render, 첫 장 뒤는 백그라운드 조판 — progress)
@@ -106,7 +108,7 @@ app/src/main/java/com/tabpdf/
   tabs/                  탭·그룹 구조(Session.kt), ViewModel, 읽던 위치, 파일 접근 권한·복사본 관리
   ui/                    화면: 뷰어(DocumentViewer)·스와이프 범위별 페이저·상단 바(TabsScreen), 탭 전환 화면·그룹 패널(TabSwitcher),
                          대화상자, 카드 목록 제스처(ItemGestures), 텍스트 상자 입력(TextBoxField: EditText 기반,
-                         TextBoxes: 편집 틀·손잡이·서식 막대)
+                         TextBoxes: 편집 틀·손잡이·서식 막대), 문서 어두운 화면 버튼(LookButton)
   ui/theme/              색(종이·책상·잉크)·글꼴(Pretendard, UI와 텍스트 상자)·모양·움직임 토큰, EveryViewerTheme (기획서 4.4).
                          화면에서 색·반경을 직접 적지 말고 여기 토큰을 쓴다 (그룹·펜·검색 색과 문서 색은 예외)
 app/schemas/             Room 스키마 (DB 버전마다 커밋)

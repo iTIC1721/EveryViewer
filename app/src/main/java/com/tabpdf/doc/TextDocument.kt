@@ -31,8 +31,11 @@ object TextDocument {
     suspend fun open(context: Context, uri: Uri, name: String, notice: String? = null): Document =
         StreamedTextDocument.open(context, uri, name.substringAfterLast('.', "").lowercase() in proseExtensions, notice)
 
-    /** Paints are not thread-safe: one per thread laying out. */
-    fun paint(prose: Boolean): TextPaint = if (prose) flowPaint(PROSE_SIZE) else flowPaint(CODE_SIZE, Typeface.MONOSPACE)
+    /** Paints are not thread-safe: one per thread laying out. Black text, light grey in the dark look. */
+    fun paint(prose: Boolean): TextPaint = LookTextPaint(FLOW_PAINT_FLAGS, android.graphics.Color.BLACK, DocLook.TEXT).apply {
+        textSize = if (prose) PROSE_SIZE else CODE_SIZE
+        if (!prose) typeface = Typeface.MONOSPACE
+    }
 
     /** One chunk of text (from [chunkEnd]) laid out to the page width inside the margins. */
     fun chunkLayout(text: String, prose: Boolean, paint: TextPaint): StaticLayout =
@@ -51,7 +54,7 @@ object TextDocument {
             space(MARGIN)
             blocks.forEach { add(it, MARGIN) }
             space(MARGIN)
-        }.build(MAX_PAGE_HEIGHT, pageGaps = false)
+        }.build(MAX_PAGE_HEIGHT, pageGaps = false, darkPaper = DocLook.PAPER)
     }
 
     /** [text] cut into chunks by [chunkEnd]. */

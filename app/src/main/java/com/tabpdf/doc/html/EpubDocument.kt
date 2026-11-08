@@ -126,8 +126,15 @@ class EpubDocument private constructor(
 
     override val pageGaps: Boolean get() = false
 
+    /** A book's style sheets are shared by its chapters; one with a dark look gives the book one. */
+    override val hasDarkLook: Boolean get() = laid.chapters.any { it.hasDarkLook }
+
+    @Volatile
+    override var dark = false
+
     override suspend fun renderPage(index: Int, widthPx: Int): Bitmap? {
         val (c, p) = locate(index)
+        c.dark = dark
         return c.renderPage(p, widthPx)
     }
 

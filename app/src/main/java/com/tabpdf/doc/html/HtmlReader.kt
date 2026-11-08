@@ -1,5 +1,6 @@
 package com.tabpdf.doc.html
 
+import com.tabpdf.doc.DocLook
 import com.tabpdf.doc.Pictures
 import com.tabpdf.doc.toFiniteFloatOrNull
 import android.util.Base64
@@ -25,8 +26,12 @@ import org.jsoup.nodes.Element
 import org.jsoup.nodes.TextNode
 import kotlin.math.max
 
-/** A page read from HTML: its blocks (lengths in points), the page's background, and room left at the bottom. */
-class HtmlPage(val blocks: List<OfficeBlock>, val background: Int, val bottom: Float)
+/**
+ * A page read from HTML: its blocks (lengths in points), the page's background, and room left at
+ * the bottom. [darkPaper]: the page in its dark look (기획서 5.10), null if it has none; then
+ * [darkBackground] is the page's own background there.
+ */
+class HtmlPage(val blocks: List<OfficeBlock>, val background: Int, val bottom: Float, val darkBackground: Int = 0, val darkPaper: Int? = null)
 
 /**
  * Turns parsed HTML into the blocks the office layout draws (기획서 5.7): elements become
@@ -60,25 +65,37 @@ class HtmlReader private constructor(
             // Style sheets in document order, inline or linked.
             for (style in doc.select("style, link")) {
                 val media = style.attr("media")
-                if (media.isNotBlank() && !Stylesheet.mediaMatches(media)) continue
+                val looks = if (media.isBlank()) Stylesheet.BOTH else Stylesheet.mediaLooks(media)
+                if (looks == 0) continue
                 if (style.normalName() == "style") {
-                    sheet.add(style.data())
+                    sheet.add(style.data(), looks)
                 } else if (style.attr("rel").split(' ').any { it.equals("stylesheet", true) }) {
                     val css = style.attr("href").takeIf { it.isNotBlank() }?.let { resources?.invoke(it) } ?: continue
-                    sheet.add(String(css, Charsets.UTF_8).removePrefix("\uFEFF"))
+                    sheet.add(String(css, Charsets.UTF_8).removePrefix("\uFEFF"), looks)
                 }
             }
-            val reader = HtmlReader(StyleResolver(sheet), resources)
+            val resolver = StyleResolver(sheet)
+            resolver.schemeDark = doc.select("meta[name=color-scheme]").any { m ->
+                m.attr("content").lowercase().let { "dark" in it && "only light" !in it }
+            }
+            val reader = HtmlReader(resolver, resources)
             val root = doc.child(0)
-            val htmlStyle = reader.resolver.compute(root, Style.root())
             val body = doc.body()
-            val bodyStyle = reader.resolver.compute(body, htmlStyle)
+            // The root and body may say the page suits dark screens (color-scheme): then, or with
+            // rules for one look only, the page has a dark look and is read with both looks' colours.
+            resolver.compute(body, resolver.compute(root, Style.root()))
+            resolver.dual = sheet.hasDarkRules || resolver.schemeDark
+            val htmlStyle = resolver.compute(root, Style.root())
+            val bodyStyle = resolver.compute(body, htmlStyle)
             // A background on the page (html or body) is the whole page's, as in a browser.
             val background = htmlStyle.background.takeIf { it != 0 } ?: bodyStyle.background
+            val darkBackground = htmlStyle.darkBackground.takeIf { it != 0 } ?: bodyStyle.darkBackground
             val out = Out()
             val ctx = Ctx(margin, margin, VIEWPORT_PX, htmlStyle, null, 0)
             reader.block(root, htmlStyle, ctx, out, pageRoot = true)
-            return HtmlPage(out.blocks, background, out.take() * PT)
+            // Without a background of its own, the page is a browser's: dark if it says it suits that.
+            val darkPaper = if (!resolver.dual) null else if (resolver.schemeDark) DocLook.CANVAS else android.graphics.Color.WHITE
+            return HtmlPage(out.blocks, background, out.take() * PT, darkBackground, darkPaper)
         }
 
         private val BULLETS = mapOf("disc" to "•", "circle" to "◦", "square" to "▪")
@@ -162,8 +179,8 @@ class HtmlReader private constructor(
 
     private class ListState(var next: Int, val step: Int)
 
-    /** Inline state passed down to text: the link it is in and the background behind it. */
-    private data class InlineState(val link: String?, val background: Int)
+    /** Inline state passed down to text: the link it is in and the background behind it (in each look). */
+    private data class InlineState(val link: String?, val background: Int, val darkBackground: Int = 0)
 
     /** The runs of the paragraph being built. Whitespace is collapsed as it comes in. */
     private inner class Inline(private val dropFirstNewline: Boolean) {
@@ -190,7 +207,7 @@ class HtmlReader private constructor(
             }
             started = true
             spaceBefore = s.whiteSpace != WhiteSpace.Pre && (text.endsWith(' ') || text.endsWith('\n'))
-            runs += Run.Text(text, textStyle(s, state.background), state.link)
+            runs += Run.Text(text, textStyle(s, state.background, state.darkBackground), state.link)
         }
 
         fun lineBreak(s: Style) {
@@ -246,7 +263,10 @@ class HtmlReader private constructor(
         }
     }
 
-    private fun textStyle(s: Style, background: Int) = TextStyle(
+    /** Whether colours are read for both looks ([StyleResolver.dual]). */
+    private val dual get() = resolver.dual
+
+    private fun textStyle(s: Style, background: Int, darkBackground: Int = 0) = TextStyle(
         size = s.fontSize * PT,
         bold = s.bold,
         italic = s.italic,
@@ -254,10 +274,15 @@ class HtmlReader private constructor(
         strike = s.strike,
         color = s.color,
         background = background,
+        darkColor = if (dual) s.darkColor else null,
+        darkBackground = if (dual) darkBackground else null,
         font = s.font,
         superscript = s.superscript,
         subscript = s.subscript,
     )
+
+    /** A border side in points, with its dark colour when the page has a dark look. */
+    private fun border(side: Side?): Border? = side?.let { Border(it.width * PT, it.color, if (dual) it.darkColor else null) }
 
     /** A block element (or the page root) and everything in it. */
     private fun block(e: Element, s: Style, ctx: Ctx, out: Out, pageRoot: Boolean = false) {
@@ -290,9 +315,10 @@ class HtmlReader private constructor(
         val list = if (tag in LISTS) ListState(start(e), if (e.hasAttr("reversed")) -1 else 1) else ctx.list
         // The page background is drawn under the whole page, not as a box.
         val fill = if (pageRoot || tag == "body") 0 else s.background
+        val darkFill = if (pageRoot || tag == "body" || !dual) 0 else s.darkBackground
         val level = HEADINGS.indexOf(tag).takeIf { it >= 0 }
         val id = e.id().trim()
-        if (fill != 0 || borders.any { it != null }) {
+        if (fill != 0 || darkFill != 0 || borders.any { it != null }) {
             val inner = Out()
             inner.label = label
             inner.heading = level
@@ -306,12 +332,8 @@ class HtmlReader private constructor(
             out.blocks += Box(
                 blocks = inner.blocks,
                 fill = fill,
-                borders = Borders(
-                    borders[3]?.let { Border(it.width * PT, it.color) },
-                    borders[0]?.let { Border(it.width * PT, it.color) },
-                    borders[1]?.let { Border(it.width * PT, it.color) },
-                    borders[2]?.let { Border(it.width * PT, it.color) },
-                ),
+                darkFill = if (dual) darkFill else null,
+                borders = Borders(border(borders[3]), border(borders[0]), border(borders[1]), border(borders[2])),
                 padding = Insets(padding[3] * PT, padding[0] * PT, padding[1] * PT, (padding[2] + bottom) * PT),
                 indentLeft = (ctx.left + left) * PT,
                 indentRight = (ctx.right + right) * PT,
@@ -372,7 +394,11 @@ class HtmlReader private constructor(
             e.id().trim().takeIf { it.isNotEmpty() }?.let { out.anchors += it }
             val href = e.attr("href").trim()
             val link = if (e.normalName() == "a" && isWebLink(href)) href else state.link
-            val inner = InlineState(link, if (s.background != 0) s.background else state.background)
+            val inner = InlineState(
+                link,
+                if (s.background != 0) s.background else state.background,
+                if (s.darkBackground != 0) s.darkBackground else state.darkBackground,
+            )
             children(e, s, ctx.copy(depth = ctx.depth + 1), out, inline, inner)
         }
     }
@@ -510,7 +536,7 @@ class HtmlReader private constructor(
         val borderAttr = e.attr("border").trim().let { if (e.hasAttr("border")) it.toFiniteFloatOrNull() ?: 1f else 0f }
         val attrBorder = if (borderAttr > 0f) Border(PT, 0xFF808080.toInt()) else null
         val cellPadding = e.attr("cellpadding").trim().toFiniteFloatOrNull()
-        val tableBorders = Array(4) { s.border(it)?.let { b -> Border(b.width * PT, b.color) } ?: attrBorder }
+        val tableBorders = Array(4) { border(s.border(it)) ?: attrBorder }
 
         val taken = HashMap<Int, java.util.BitSet>()
         fun isTaken(r: Int, c: Int) = taken[r]?.get(c) == true
@@ -545,7 +571,7 @@ class HtmlReader private constructor(
                 }
                 val bottom = content.take()
                 val cellBorder = { side: Int ->
-                    cs.border(side)?.let { Border(it.width * PT, it.color) } ?: attrBorder ?: when {
+                    border(cs.border(side)) ?: attrBorder ?: when {
                         side == 0 && r == 0 -> tableBorders[0]
                         side == 2 && r + rowSpan == rows.size -> tableBorders[2]
                         side == 3 && col == 0 -> tableBorders[3]
@@ -560,6 +586,8 @@ class HtmlReader private constructor(
                     blocks = content.blocks,
                     fill = cs.background.takeIf { it != 0 } ?: source.style.background.takeIf { it != 0 }
                         ?: source.group?.background?.takeIf { it != 0 } ?: s.background,
+                    darkFill = if (!dual) null else cs.darkBackground.takeIf { it != 0 } ?: source.style.darkBackground.takeIf { it != 0 }
+                        ?: source.group?.darkBackground?.takeIf { it != 0 } ?: s.darkBackground,
                     borders = Borders(cellBorder(3), cellBorder(0), cellBorder(1), cellBorder(2)),
                     padding = Insets(pad[3] * PT, pad[0] * PT, pad[1] * PT, (pad[2] + bottom) * PT),
                     verticalAlign = when (cs.verticalAlign) {
@@ -579,7 +607,7 @@ class HtmlReader private constructor(
         val lastColumn = columns - 1
         val withRight = cells.map { c ->
             if (c.column + c.columnSpan - 1 == lastColumn && c.borders.right == null && tableBorders[1] != null) {
-                TableCell(c.row, c.column, c.rowSpan, c.columnSpan, c.blocks, c.fill, c.borders.copy(right = tableBorders[1]), c.padding, c.verticalAlign)
+                TableCell(c.row, c.column, c.rowSpan, c.columnSpan, c.blocks, c.fill, c.borders.copy(right = tableBorders[1]), c.padding, c.verticalAlign, c.darkFill)
             } else c
         }
         if (columns > 0 && withRight.isNotEmpty()) {

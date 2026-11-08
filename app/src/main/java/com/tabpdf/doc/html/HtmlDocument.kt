@@ -49,8 +49,13 @@ object HtmlDocument {
 
     private fun renderNow(html: String, resources: ((String) -> ByteArray?)?, margin: Float): FlowDocument {
         val page = HtmlReader.read(Jsoup.parse(html), resources, margin)
-        val blocks = if (page.background != 0) listOf(Box(page.blocks, fill = page.background, padding = com.tabpdf.doc.office.Insets(0f, 0f, 0f, page.bottom))) else page.blocks
-        return OfficeLayout.flow(blocks, HtmlReader.PAGE_WIDTH, if (page.background != 0) 0f else page.bottom, MAX_PAGE_HEIGHT)
+        val boxed = page.background != 0 || page.darkBackground != 0
+        val blocks = if (boxed) {
+            listOf(Box(page.blocks, fill = page.background, darkFill = page.darkBackground.takeIf { page.darkPaper != null }, padding = com.tabpdf.doc.office.Insets(0f, 0f, 0f, page.bottom)))
+        } else {
+            page.blocks
+        }
+        return OfficeLayout.flow(blocks, HtmlReader.PAGE_WIDTH, if (boxed) 0f else page.bottom, MAX_PAGE_HEIGHT, page.darkPaper)
     }
 
     /**

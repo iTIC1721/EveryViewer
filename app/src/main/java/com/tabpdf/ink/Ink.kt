@@ -83,14 +83,42 @@ object Brushes {
 }
 
 /**
+ * Ink on a page shown dark (기획서 5.10): black shows white and white shows black, so what was
+ * written stays readable in both looks. Only what is shown changes; strokes and text keep the
+ * colour they were written in, and export draws that.
+ */
+object InkOnDark {
+    fun color(argb: Int, dark: Boolean): Int {
+        if (!dark) return argb
+        val alpha = argb and 0xFF000000.toInt()
+        return when (argb and 0x00FFFFFF) {
+            0x000000 -> alpha or 0x00FFFFFF
+            0xFFFFFF -> alpha
+            else -> argb
+        }
+    }
+
+    /** Strokes drawn in their swapped colour, kept while the stroke is. */
+    private val swapped = java.util.Collections.synchronizedMap(java.util.WeakHashMap<Stroke, Stroke>())
+
+    /** [stroke] as shown on a dark page. */
+    fun stroke(stroke: Stroke): Stroke {
+        val color = stroke.brush.colorIntArgb
+        val shown = color(color, true)
+        if (shown == color) return stroke
+        return swapped[stroke] ?: stroke.copy(stroke.brush.copyWithColorIntArgb(shown)).also { swapped[stroke] = it }
+    }
+}
+
+/**
  * Draws [strokes] and [texts] (all on one page) onto [canvas], where the page is [pageWidthPx]
  * wide at the origin: highlighter, then text, then pen (기획서 5.8.5). [skipText] is left out (the
- * one being typed into, shown by its editor).
+ * one being typed into, shown by its editor). On a [dark] page, black and white ink swap ([InkOnDark]).
  */
 object InkPainter {
     private val renderer by lazy { CanvasStrokeRenderer.create() }
 
-    fun draw(canvas: Canvas, strokes: List<InkStroke>, texts: List<InkText>, pageWidthPx: Float, skipText: String? = null) {
+    fun draw(canvas: Canvas, strokes: List<InkStroke>, texts: List<InkText>, pageWidthPx: Float, skipText: String? = null, dark: Boolean = false) {
         if (strokes.isEmpty() && texts.isEmpty()) return
         val toCanvas = Matrix().apply {
             val scale = pageWidthPx / INK_PAGE_WIDTH
@@ -100,9 +128,10 @@ object InkPainter {
         canvas.save()
         canvas.concat(toCanvas)
         // Highlighter under the pen, as on paper: the ink is written over the marked text.
-        for (s in strokes) if (s.tool == InkTool.Highlighter) renderer.draw(canvas, s.stroke, toCanvas)
-        InkTextLayout.draw(canvas, texts, skipText)
-        for (s in strokes) if (s.tool != InkTool.Highlighter) renderer.draw(canvas, s.stroke, toCanvas)
+        fun shown(s: InkStroke) = if (dark) InkOnDark.stroke(s.stroke) else s.stroke
+        for (s in strokes) if (s.tool == InkTool.Highlighter) renderer.draw(canvas, shown(s), toCanvas)
+        com.tabpdf.doc.DocLook.drawing(dark) { InkTextLayout.draw(canvas, texts, skipText) }
+        for (s in strokes) if (s.tool != InkTool.Highlighter) renderer.draw(canvas, shown(s), toCanvas)
         canvas.restore()
     }
 }

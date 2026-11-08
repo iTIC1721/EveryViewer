@@ -9,7 +9,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
     entities = [GroupEntity::class, TabEntity::class, AppStateEntity::class, InkStrokeEntity::class, InkTextEntity::class],
-    version = 5,
+    version = 6,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -19,7 +19,7 @@ abstract class AppDatabase : RoomDatabase() {
     companion object {
         fun create(context: Context): AppDatabase =
             Room.databaseBuilder(context, AppDatabase::class.java, "tabpdf.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
                 .build()
     }
 }
@@ -105,6 +105,13 @@ val MIGRATION_3_4 = object : Migration(3, 4) {
                 "`inputs` BLOB NOT NULL, PRIMARY KEY(`id`))"
         )
         db.execSQL("CREATE INDEX IF NOT EXISTS `index_ink_strokes_tabId` ON `ink_strokes` (`tabId`)")
+    }
+}
+
+/** v5 → v6: the look chosen for each tab's document (기획서 5.10); none yet, so every tab follows the theme. */
+val MIGRATION_5_6 = object : Migration(5, 6) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE `tabs` ADD COLUMN `darkLook` INTEGER")
     }
 }
 

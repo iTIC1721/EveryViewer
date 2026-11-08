@@ -87,6 +87,8 @@ class InkBinding(
     val onCustomTextColor: (Int) -> Unit = {},
     /** While a box is open: how to close it (before undoing, say); null once closed. */
     val onTyping: ((() -> Unit)?) -> Unit = {},
+    /** The page is shown dark (기획서 5.10): black and white ink show swapped ([InkOnDark]). */
+    val darkPage: Boolean = false,
 )
 
 /** Where a point falls in the document: page [index], whose top-left is at ([left], [top]) in viewer pixels. */
@@ -167,10 +169,14 @@ fun Modifier.inkInput(
                             }
                         } else {
                             val brush = Brushes.forTool(ink.tool, ink.style)
+                            // On a dark page the line shows in the colour it will be seen in, and is kept in its own.
+                            val shown = if (ink.darkPage) InkOnDark.color(ink.style.color, true) else ink.style.color
+                            val drawn = if (shown == ink.style.color) brush else brush.copyWithColorIntArgb(shown)
                             val tool = ink.tool
                             val page = hit.index
-                            val id = surface.start(motion, pointerId, brush, hit.motionToPage(motionOffset)) { stroke ->
-                                ink.onStroke(splitAcrossPages(stroke, page, pages()), tool)
+                            val id = surface.start(motion, pointerId, drawn, hit.motionToPage(motionOffset)) { stroke ->
+                                val kept = if (drawn === brush) stroke else stroke.copy(brush)
+                                ink.onStroke(splitAcrossPages(kept, page, pages()), tool)
                             }
                             Active(down.id, pointerId, down.isPen, id, hit, down.position, 0)
                         }

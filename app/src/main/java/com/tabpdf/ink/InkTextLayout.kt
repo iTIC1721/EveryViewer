@@ -68,9 +68,10 @@ class InkSizeSpan(val px: Float) : MetricAffectingSpan() {
     }
 }
 
+/** Drawn swapped on a page shown dark ([InkOnDark]: drawing in [com.tabpdf.doc.DocLook] dark). */
 class InkColorSpan(val color: Int) : CharacterStyle(), UpdateAppearance {
     override fun updateDrawState(paint: TextPaint) {
-        paint.color = color
+        paint.color = InkOnDark.color(color, com.tabpdf.doc.DocLook.isDark)
     }
 }
 

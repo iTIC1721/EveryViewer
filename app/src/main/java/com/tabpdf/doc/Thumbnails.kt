@@ -40,37 +40,48 @@ object Thumbnails {
 
     /**
      * Thumbnail of [page] of [tab]'s file with the tab's handwriting on it (기획서 5.8.5), or null if
-     * the file can't be read. Only the page itself is cached; the strokes are drawn over a copy.
+     * the file can't be read; in the document's dark look if [dark] and it has one (기획서 5.10).
+     * Only the page itself is cached; the strokes are drawn over a copy.
      */
-    suspend fun load(context: Context, tab: DocTab, page: Int, strokes: List<InkStroke>, texts: List<InkText> = emptyList()): Bitmap? {
-        val base = loadPage(context, tab, page) ?: return null
+    suspend fun load(context: Context, tab: DocTab, page: Int, strokes: List<InkStroke>, texts: List<InkText> = emptyList(), dark: Boolean = false): Bitmap? {
+        val (base, look) = loadPage(context, tab, page, dark) ?: return null
         val onPage = strokes.filter { it.page == page }
         val textsOnPage = texts.filter { it.page == page }
         if (onPage.isEmpty() && textsOnPage.isEmpty()) return base
         return withContext(Dispatchers.Default) {
-            base.copy(Bitmap.Config.ARGB_8888, true)?.also { InkPainter.draw(Canvas(it), onPage, textsOnPage, it.width.toFloat()) } ?: base
+            base.copy(Bitmap.Config.ARGB_8888, true)?.also { InkPainter.draw(Canvas(it), onPage, textsOnPage, it.width.toFloat(), dark = look == DARK) } ?: base
         }
     }
 
-    private suspend fun loadPage(context: Context, tab: DocTab, page: Int): Bitmap? {
+    /**
+     * Which look a cached page is in, the end of its name: [DARK] or [LIGHT] for a document with a
+     * dark look, [PLAIN] (either look) for one without.
+     */
+    private const val DARK = "dark"
+    private const val LIGHT = "light"
+    private const val PLAIN = "plain"
+
+    private suspend fun loadPage(context: Context, tab: DocTab, page: Int, dark: Boolean): Pair<Bitmap, String>? {
         val tabId = tab.id
         val uri = tab.uri
         // The URI is part of the key so a tab pointed at another file ("파일 다시 선택") gets a new image.
-        val key = "$tabId-${uri.toString().hashCode().toUInt()}-$page"
-        memory.get(key)?.let { return it }
+        val base = "$tabId-${uri.toString().hashCode().toUInt()}-$page"
+        val looks = listOf(if (dark) DARK else LIGHT, PLAIN)
+        for (look in looks) memory.get("$base-$look")?.let { return it to look }
         return withContext(Dispatchers.IO) {
             val dir = File(context.cacheDir, DIR).apply { mkdirs() }
-            val file = File(dir, "$key.png")
-            val bitmap = file.takeIf { it.exists() }?.let { BitmapFactory.decodeFile(it.path) }
-                ?: render(context, tab, page)?.let { (rendered, locked) ->
-                    // One file per tab: drop thumbnails of pages it no longer shows.
-                    dir.listFiles { f -> f.name.startsWith("$tabId-") }?.forEach { it.delete() }
-                    // A file opened with a password stays off the disk, its pictures too.
-                    if (!locked) file.outputStream().use { rendered.compress(Bitmap.CompressFormat.PNG, 100, it) }
-                    rendered
-                }
+            val cached = looks.firstNotNullOfOrNull { look ->
+                File(dir, "$base-$look.png").takeIf { it.exists() }?.let { BitmapFactory.decodeFile(it.path) }?.let { it to look }
+            }
+            val found = cached ?: render(context, tab, page, dark)?.let { (rendered, locked, look) ->
+                // One file per tab: drop thumbnails of pages (or looks) it no longer shows.
+                dir.listFiles { f -> f.name.startsWith("$tabId-") }?.forEach { it.delete() }
+                // A file opened with a password stays off the disk, its pictures too.
+                if (!locked) File(dir, "$base-$look.png").outputStream().use { rendered.compress(Bitmap.CompressFormat.PNG, 100, it) }
+                rendered to look
+            }
             // One cached by an older version can be larger than Android will draw.
-            bitmap?.takeIf { it.allocationByteCount <= MAX_DRAWN_BYTES }?.also { memory.put(key, it) }
+            found?.takeIf { it.first.allocationByteCount <= MAX_DRAWN_BYTES }?.also { memory.put("$base-${it.second}", it.first) }
         }
     }
 
@@ -88,8 +99,8 @@ object Thumbnails {
         File(context.cacheDir, DIR).listFiles()?.forEach { if (!keep(it.name)) it.delete() }
     }
 
-    /** The page, and whether its file was opened with a password. */
-    private suspend fun render(context: Context, tab: DocTab, page: Int): Pair<Bitmap, Boolean>? = renders.withPermit {
+    /** The page, whether its file was opened with a password, and the look it is in. */
+    private suspend fun render(context: Context, tab: DocTab, page: Int, dark: Boolean): Triple<Bitmap, Boolean, String>? = renders.withPermit {
         // Not a file that ended the app while opening last time: it waits for the reader. This
         // opening is marked as well, since a crash here would come back with each overview (OpenGuard).
         if (tab.id in OpenGuard.held.value) return@withPermit null
@@ -100,7 +111,9 @@ object Thumbnails {
                 document.awaitPages(page + 1)
                 val index = page.coerceIn(0, document.pageCount - 1)
                 val width = minOf(WIDTH_PX.toFloat(), sqrt(MAX_PIXELS / document.pageSizes[index].aspect)).roundToInt().coerceAtLeast(1)
-                document.renderPage(index, width)?.let { it to document.locked }
+                val look = if (!document.hasDarkLook) PLAIN else if (dark) DARK else LIGHT
+                document.dark = dark
+                document.renderPage(index, width)?.let { Triple(it, document.locked, look) }
             } finally {
                 document.close()
             }

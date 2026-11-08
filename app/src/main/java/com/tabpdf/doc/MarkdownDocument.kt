@@ -12,8 +12,6 @@ import android.text.Layout
 import android.text.SpannableStringBuilder
 import android.text.Spanned
 import android.text.StaticLayout
-import android.text.style.BackgroundColorSpan
-import android.text.style.ForegroundColorSpan
 import android.text.style.RelativeSizeSpan
 import android.text.style.StrikethroughSpan
 import android.text.style.StyleSpan
@@ -122,6 +120,20 @@ private object Md {
     const val CODE_BG = 0xFFF2F4F7.toInt()
     const val HEADER_BG = 0xFFF6F8FA.toInt()
 
+    /** The same in the dark look (기획서 5.10), on [DocLook.PAPER]. */
+    const val TEXT_DARK = DocLook.TEXT
+    const val MUTED_DARK = DocLook.MUTED
+    const val LINK_DARK = DocLook.LINK
+    const val RULE_DARK = 0xFF3E3F45.toInt()
+    const val CODE_BG_DARK = 0xFF2C2D32.toInt()
+    const val HEADER_BG_DARK = 0xFF27282C.toInt()
+
+    /** Text in [TEXT], in either look. */
+    fun paint(size: Float, typeface: Typeface = Typeface.DEFAULT) = LookTextPaint(FLOW_PAINT_FLAGS, TEXT, TEXT_DARK).apply {
+        textSize = size
+        this.typeface = typeface
+    }
+
     val HEADING_SCALE = floatArrayOf(1.9f, 1.5f, 1.25f, 1.1f, 1f, 0.9f)
     val BULLETS = listOf("•", "◦", "▪")
 }
@@ -139,7 +151,7 @@ private class MarkdownRenderer {
         out.space(Md.MARGIN)
         blocks(root, Ctx(Md.MARGIN, FLOW_WIDTH - 2 * Md.MARGIN, emptyList()), gap = Md.BLOCK_GAP)
         out.space(Md.MARGIN)
-        return out.build(Md.MAX_PAGE_HEIGHT, pageGaps = false)
+        return out.build(Md.MAX_PAGE_HEIGHT, pageGaps = false, darkPaper = DocLook.PAPER)
     }
 
     /** Lays out [parent]'s block children with [gap] between them. */
@@ -178,7 +190,7 @@ private class MarkdownRenderer {
 
     private fun heading(node: Heading, ctx: Ctx) {
         val level = node.level.coerceIn(1, 6)
-        val paint = flowPaint(Md.BODY * Md.HEADING_SCALE[level - 1], Typeface.DEFAULT_BOLD, Md.TEXT)
+        val paint = Md.paint(Md.BODY * Md.HEADING_SCALE[level - 1], Typeface.DEFAULT_BOLD)
         val text = inlines(node)
         val layout = staticLayout(text, paint, ctx.width, lineSpacing = 1.25f)
         out.heading(level - 1, text.toString())
@@ -194,8 +206,8 @@ private class MarkdownRenderer {
         emitText(inlines(node), ctx)
     }
 
-    private fun emitText(text: CharSequence, ctx: Ctx, size: Float = Md.BODY, color: Int = Md.TEXT) {
-        emit(TextBlock(staticLayout(text, flowPaint(size, color = color), ctx.width, Md.LINE_SPACING)), ctx)
+    private fun emitText(text: CharSequence, ctx: Ctx, size: Float = Md.BODY) {
+        emit(TextBlock(staticLayout(text, Md.paint(size), ctx.width, Md.LINE_SPACING)), ctx)
     }
 
     private fun list(node: ListBlock, ctx: Ctx) {
@@ -228,7 +240,7 @@ private class MarkdownRenderer {
 
     private fun code(literal: String, ctx: Ctx) {
         val text = literal.removeSuffix("\n")
-        val paint = flowPaint(Md.CODE, Typeface.MONOSPACE, Md.TEXT)
+        val paint = Md.paint(Md.CODE, Typeface.MONOSPACE)
         emit(CodeBlock(staticLayout(text, paint, ctx.width - 2 * Md.CELL_PAD, 1.3f), ctx.width), ctx)
     }
 
@@ -257,7 +269,7 @@ private class MarkdownRenderer {
         val texts = cells.map { row -> row.map { inlines(it) } }
         val paints = cells.map { row ->
             val header = row.firstOrNull()?.isHeader == true
-            flowPaint(Md.BODY * 0.92f, if (header) Typeface.DEFAULT_BOLD else Typeface.DEFAULT, Md.TEXT)
+            Md.paint(Md.BODY * 0.92f, if (header) Typeface.DEFAULT_BOLD else Typeface.DEFAULT)
         }
         val natural = FloatArray(columns)
         texts.forEachIndexed { r, row ->
@@ -343,7 +355,7 @@ private class MarkdownRenderer {
                 sb.append(' ').append(node.literal).append(' ')
                 sb.span(TypefaceSpan("monospace"), start)
                 sb.span(RelativeSizeSpan(0.88f), start)
-                sb.span(BackgroundColorSpan(Md.CODE_BG), start)
+                sb.span(LookBackgroundSpan(Md.CODE_BG, Md.CODE_BG_DARK), start)
             }
             is Emphasis -> {
                 appendInlines(node, sb)
@@ -359,14 +371,14 @@ private class MarkdownRenderer {
             }
             is Link -> {
                 appendInlines(node, sb)
-                sb.span(ForegroundColorSpan(Md.LINK), start)
+                sb.span(LookColorSpan(Md.LINK, Md.LINK_DARK), start)
                 if (isWebLink(node.destination)) sb.span(LinkSpan(node.destination), start)
             }
             is Image -> {
                 // Only an image alone in its paragraph is drawn (embeddedImage); inline ones are named.
                 val alt = inlines(node).toString().ifBlank { node.destination.substringAfterLast('/').take(40) }
                 sb.append("[이미지: ").append(alt).append(']')
-                sb.span(ForegroundColorSpan(Md.MUTED), start)
+                sb.span(LookColorSpan(Md.MUTED, Md.MUTED_DARK), start)
             }
             is HtmlInline -> if (node.literal.matches(Regex("(?i)<br\\s*/?>"))) sb.append('\n')
             else -> appendInlines(node, sb)
@@ -383,7 +395,7 @@ private class MarkdownRenderer {
             val start = spanned.getSpanStart(span)
             val end = spanned.getSpanEnd(span)
             spanned.removeSpan(span)
-            spanned.setSpan(ForegroundColorSpan(Md.LINK), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            spanned.setSpan(LookColorSpan(Md.LINK, Md.LINK_DARK), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
             if (isWebLink(span.url)) spanned.setSpan(LinkSpan(span.url), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         }
         // Images become object replacement characters; there is nothing to show for them.
@@ -420,21 +432,21 @@ private class Decorated(
     override val breaks get() = inner.breaks
 
     override fun draw(canvas: Canvas) {
-        for (x in bars) canvas.drawRect(x, 0f, x + 6f, height, barPaint)
+        for (x in bars) canvas.drawRect(x, 0f, x + 6f, height, barPaint.now)
         canvas.save()
         canvas.translate(innerX, 0f)
         inner.draw(canvas)
         canvas.restore()
         when (marker) {
             is Marker.Label -> {
-                val paint = markerPaint
+                val paint = markerPaint.now
                 canvas.drawText(marker.text, innerX - 14f - paint.measureText(marker.text), firstBaseline(), paint)
             }
             is Marker.Check -> {
                 val size = Md.BODY * 0.8f
                 val bottom = firstBaseline() + 2f
                 val box = RectF(innerX - 14f - size, bottom - size, innerX - 14f, bottom)
-                canvas.drawRoundRect(box, 5f, 5f, if (marker.checked) checkFill else checkBox)
+                canvas.drawRoundRect(box, 5f, 5f, if (marker.checked) checkFill.now else checkBox.now)
                 if (marker.checked) {
                     canvas.drawLine(box.left + size * 0.22f, box.centerY(), box.left + size * 0.42f, box.bottom - size * 0.25f, checkMark)
                     canvas.drawLine(box.left + size * 0.42f, box.bottom - size * 0.25f, box.right - size * 0.2f, box.top + size * 0.25f, checkMark)
@@ -456,10 +468,10 @@ private class Decorated(
     override fun collectText(sink: TextSink) = inner.collectText(sink.offset(innerX, 0f))
 
     private companion object {
-        val barPaint = Paint().apply { color = Md.RULE }
-        val markerPaint = flowPaint(Md.BODY, color = Md.TEXT)
-        val checkBox = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Md.MUTED; style = Paint.Style.STROKE; strokeWidth = 3f }
-        val checkFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Md.LINK }
+        val barPaint = Looked.paints(Md.RULE, Md.RULE_DARK) { Paint() }
+        val markerPaint = Looked.paints(Md.TEXT, Md.TEXT_DARK) { flowPaint(Md.BODY) }
+        val checkBox = Looked.paints(Md.MUTED, Md.MUTED_DARK) { Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 3f } }
+        val checkFill = Looked.paints(Md.LINK, Md.LINK_DARK) { Paint(Paint.ANTI_ALIAS_FLAG) }
         val checkMark = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = android.graphics.Color.WHITE; strokeWidth = 4f; strokeCap = Paint.Cap.ROUND
         }
@@ -472,21 +484,21 @@ private class RuledTextBlock(layout: StaticLayout, private val width: Float) : T
 
     override fun draw(canvas: Canvas) {
         super.draw(canvas)
-        canvas.drawRect(0f, height - 3f, width, height, rulePaint)
+        canvas.drawRect(0f, height - 3f, width, height, rulePaint.now)
     }
 
     private companion object {
-        val rulePaint = Paint().apply { color = Md.RULE }
+        val rulePaint = Looked.paints(Md.RULE, Md.RULE_DARK) { Paint() }
     }
 }
 
 private class RuleBlock(private val width: Float) : FlowBlock() {
     override val height = 30f
 
-    override fun draw(canvas: Canvas) = canvas.drawRect(0f, 13f, width, 17f, paint)
+    override fun draw(canvas: Canvas) = canvas.drawRect(0f, 13f, width, 17f, paint.now)
 
     private companion object {
-        val paint = Paint().apply { color = Md.RULE }
+        val paint = Looked.paints(Md.RULE, Md.RULE_DARK) { Paint() }
     }
 }
 
@@ -496,10 +508,10 @@ private class CodeBlock(private val layout: StaticLayout, private val width: Flo
     override val breaks = FloatArray((layout.lineCount - 1).coerceAtLeast(0)) { Md.CELL_PAD + layout.getLineTop(it + 1) }
 
     override fun draw(canvas: Canvas) {
-        canvas.drawRoundRect(RectF(0f, 0f, width, height), 10f, 10f, background)
+        canvas.drawRoundRect(RectF(0f, 0f, width, height), 10f, 10f, background.now)
         canvas.save()
         canvas.translate(Md.CELL_PAD, Md.CELL_PAD)
-        layout.draw(canvas)
+        layout.drawLooked(canvas)
         canvas.restore()
     }
 
@@ -508,7 +520,7 @@ private class CodeBlock(private val layout: StaticLayout, private val width: Flo
     override fun collectText(sink: TextSink) = collectLayoutText(layout, sink, Md.CELL_PAD, Md.CELL_PAD)
 
     private companion object {
-        val background = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Md.CODE_BG }
+        val background = Looked.paints(Md.CODE_BG, Md.CODE_BG_DARK) { Paint(Paint.ANTI_ALIAS_FLAG) }
     }
 }
 
@@ -537,17 +549,18 @@ private class TableGridBlock(
     override fun draw(canvas: Canvas) {
         for (r in cells.indices) {
             val top = rowTops[r]
-            if (r < headerRows) canvas.drawRect(0f, top, totalWidth, top + rowHeights[r], headerFill)
+            if (r < headerRows) canvas.drawRect(0f, top, totalWidth, top + rowHeights[r], headerFill.now)
             var x = 0f
             cells[r].forEachIndexed { c, layout ->
                 canvas.save()
                 canvas.translate(x + Md.CELL_PAD, top + Md.CELL_PAD)
-                layout.draw(canvas)
+                layout.drawLooked(canvas)
                 canvas.restore()
                 x += widths[c]
             }
         }
         // Grid lines on top of the cell fills.
+        val linePaint = linePaint.now
         for (top in rowTops) canvas.drawRect(0f, top - 1f, totalWidth, top + 1f, linePaint)
         var x = 0f
         for (w in listOf(0f) + widths.toList()) {
@@ -589,7 +602,7 @@ private class TableGridBlock(
     }
 
     private companion object {
-        val headerFill = Paint().apply { color = Md.HEADER_BG }
-        val linePaint = Paint().apply { color = Md.RULE }
+        val headerFill = Looked.paints(Md.HEADER_BG, Md.HEADER_BG_DARK) { Paint() }
+        val linePaint = Looked.paints(Md.RULE, Md.RULE_DARK) { Paint() }
     }
 }

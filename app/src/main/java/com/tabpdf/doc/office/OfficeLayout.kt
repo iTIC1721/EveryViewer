@@ -13,6 +13,9 @@ import android.text.Spanned
 import android.text.StaticLayout
 import android.text.TextPaint
 import android.text.style.BackgroundColorSpan
+import com.tabpdf.doc.DocLook
+import com.tabpdf.doc.LookBackgroundSpan
+import com.tabpdf.doc.LookColorSpan
 import android.text.style.ForegroundColorSpan
 import android.text.style.LeadingMarginSpan
 import android.text.style.LineHeightSpan
@@ -111,12 +114,13 @@ class OfficeLayout private constructor(private val unit: Float) {
          * [body] as one flowing sheet [pageWidth] points wide, cut into pages only for drawing
          * (HTML: the page has no paper size), with [bottom] points of room after the last block.
          */
-        fun flow(body: List<OfficeBlock>, pageWidth: Float, bottom: Float, maxPageHeight: Float): FlowDocument {
+        /** [darkPaper]: the paper of the content's dark look (기획서 5.10), null if it has none. */
+        fun flow(body: List<OfficeBlock>, pageWidth: Float, bottom: Float, maxPageHeight: Float, darkPaper: Int? = null): FlowDocument {
             val layout = OfficeLayout(FLOW_WIDTH / pageWidth)
             val out = FlowBuilder()
             layout.blocks(body, FLOW_WIDTH, 0f, out)
             out.space(bottom * layout.unit)
-            return out.build(maxPageHeight, pageGaps = false)
+            return out.build(maxPageHeight, pageGaps = false, darkPaper = darkPaper)
         }
 
         /** No break is allowed between two of these (Korean words kept whole, like both editors). */
@@ -305,8 +309,15 @@ class OfficeLayout private constructor(private val unit: Float) {
                         if (text.length == start) return
                     }
                     sizes += s.size
-                    text.setSpan(ForegroundColorSpan(s.color), start, text.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-                    if (s.background != 0) text.setSpan(BackgroundColorSpan(s.background), start, text.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    text.setSpan(
+                        if (s.darkColor != null) LookColorSpan(s.color, s.darkColor) else ForegroundColorSpan(s.color),
+                        start, text.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
+                    )
+                    if (s.darkBackground != null) {
+                        if (s.background != 0 || s.darkBackground != 0) text.setSpan(LookBackgroundSpan(s.background, s.darkBackground), start, text.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    } else if (s.background != 0) {
+                        text.setSpan(BackgroundColorSpan(s.background), start, text.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    }
                     if (s.underline) text.setSpan(UnderlineSpan(), start, text.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
                     if (s.strike) text.setSpan(StrikethroughSpan(), start, text.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
                     run.link?.let { text.setSpan(LinkSpan(it), start, text.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE) }
@@ -590,7 +601,10 @@ class OfficeLayout private constructor(private val unit: Float) {
         }
 
         override fun draw(canvas: Canvas) {
-            for ((c, _) in cells) if (c.fill != 0) canvas.drawRect(rect(c), fillPaint.apply { color = c.fill })
+            for ((c, _) in cells) {
+                val fill = DocLook.pick(c.fill, c.darkFill)
+                if (fill != 0) canvas.drawRect(rect(c), fillPaint.apply { color = fill })
+            }
             // Long tables span many pages; only the cells on this one are drawn.
             val clip = canvas.clipBounds
             for ((c, content) in cells) {
@@ -648,7 +662,8 @@ class OfficeLayout private constructor(private val unit: Float) {
         override val pageEnds: FloatArray = content.pageEnds.map { top + it }.toFloatArray()
 
         override fun draw(canvas: Canvas) {
-            if (box.fill != 0) canvas.drawRect(0f, 0f, width, height, fillPaint.apply { color = box.fill })
+            val fill = DocLook.pick(box.fill, box.darkFill)
+            if (fill != 0) canvas.drawRect(0f, 0f, width, height, fillPaint.apply { color = fill })
             canvas.save()
             canvas.translate(left, top)
             content.draw(canvas)
@@ -667,7 +682,7 @@ class OfficeLayout private constructor(private val unit: Float) {
     }
 
     private fun line(canvas: Canvas, border: Border, x0: Float, y0: Float, x1: Float, y1: Float) {
-        linePaint.color = border.color
+        linePaint.color = DocLook.pick(border.color, border.darkColor)
         // Hairlines (0.1 mm) would vanish at normal zoom; keep every border visible.
         linePaint.strokeWidth = max(border.width * unit, 0.9f)
         canvas.drawLine(x0, y0, x1, y1, linePaint)
@@ -851,6 +866,7 @@ private class LabelSpan(private val label: Run.Text, unit: Float, private val ha
         max(hanging, this.paint.measureText(label.text) + this.paint.textSize * 0.3f).roundToInt()
 
     override fun draw(canvas: Canvas, text: CharSequence?, start: Int, end: Int, x: Float, top: Int, y: Int, bottom: Int, paint: Paint) {
+        this.paint.color = DocLook.pick(label.style.color, label.style.darkColor)
         // Bullet dots and squares as shapes: the system font's are much smaller than Office fonts' ones.
         val shape = SHAPES[label.text]
         if (shape == null) {

@@ -69,6 +69,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.tabpdf.ink.Brushes
 import com.tabpdf.ink.CharStyle
 import com.tabpdf.ink.INK_PAGE_WIDTH
+import com.tabpdf.ink.InkOnDark
 import com.tabpdf.ink.InkText
 import com.tabpdf.ink.InkTextLayout
 import com.tabpdf.ink.MAX_TEXT_SIZE
@@ -111,6 +112,8 @@ fun TextBoxEditor(
     scale: Float,
     onMoveBy: (Offset) -> Unit,
     onWidthBy: (Float) -> Unit,
+    /** The page is shown dark (기획서 5.10). */
+    darkPage: Boolean = false,
 ) {
     val density = LocalDensity.current
     val box = editing.box
@@ -144,7 +147,10 @@ fun TextBoxEditor(
                 }
             }
         },
-        update = { it.rescale(scale) },
+        update = {
+            it.rescale(scale)
+            it.darkPage = darkPage
+        },
         modifier = Modifier
             .offset { origin().let { IntOffset(it.x.roundToInt(), it.y.roundToInt()) } }
             .then(widthModifier)
@@ -213,7 +219,10 @@ fun TextFormatBar(
     /** Told whether the bar is on screen (it goes away with the keyboard). */
     onShown: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
+    /** The page is shown dark (기획서 5.10): colours show as they look there; black and white swap. */
+    darkPage: Boolean = false,
 ) {
+    fun shown(c: Int) = InkOnDark.color(c, darkPage)
     var alignMenu by remember { mutableStateOf(false) }
     var sizeMenu by remember { mutableStateOf(false) }
     var colorMenu by remember { mutableStateOf(false) }
@@ -316,7 +325,7 @@ fun TextFormatBar(
             Box {
                 IconButton(onClick = { colorMenu = true }, modifier = Modifier.semantics { contentDescription = "글자 색상" }) {
                     Canvas(Modifier.size(22.dp)) {
-                        drawCircle(Color(sameColor ?: first.color))
+                        drawCircle(Color(shown(sameColor ?: first.color)))
                         drawCircle(Color.Black.copy(alpha = 0.25f), style = Stroke(width = 1.dp.toPx()))
                     }
                 }
@@ -324,7 +333,7 @@ fun TextFormatBar(
                     val picked = recentColors.filter { it !in Brushes.penColors }.take(TEXT_SWATCHES - 1 - Brushes.penColors.size)
                     Row(Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
                         for (c in Brushes.penColors + picked) {
-                            Swatch(Color(c), selected = c == sameColor) {
+                            Swatch(Color(shown(c)), selected = c == sameColor, paper = if (darkPage) DarkPaper else com.tabpdf.ui.theme.Paper) {
                                 style { it.copy(color = c) }
                                 onDefault(first.copy(color = c))
                                 colorMenu = false
@@ -337,8 +346,10 @@ fun TextFormatBar(
             }
             if (picking) {
                 ColorPickerDialog(
-                    initial = sameColor ?: first.color,
-                    onPick = { c ->
+                    initial = shown(sameColor ?: first.color),
+                    onPick = { picked ->
+                        // Picked as it is to look on this page; kept as it looks on a light one.
+                        val c = shown(picked)
                         picking = false
                         style { it.copy(color = c) }
                         onDefault(first.copy(color = c))
