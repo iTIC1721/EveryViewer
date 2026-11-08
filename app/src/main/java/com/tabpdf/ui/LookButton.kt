@@ -83,6 +83,8 @@ fun LookButton(
             color = MaterialTheme.colorScheme.floating,
             contentColor = MaterialTheme.colorScheme.onFloating,
             shadowElevation = 2.dp,
+            // A faint ring keeps it apart from a dark page as well as a light one.
+            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.onFloating.copy(alpha = 0.35f)),
             modifier = Modifier
                 .onGloballyPositioned { if (shown) onBounds(it.boundsInRoot()) }
                 .size(40.dp).semantics { contentDescription = if (dark) "밝게 보기" else "어둡게 보기" },
