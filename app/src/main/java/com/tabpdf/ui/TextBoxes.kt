@@ -48,7 +48,12 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.addPathNodes
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.unit.Velocity
+import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
@@ -215,11 +220,24 @@ fun TextFormatBar(
         checkedContainerColor = MaterialTheme.colorScheme.primaryContainer,
         checkedContentColor = MaterialTheme.colorScheme.onPrimaryContainer,
     )
-    Surface(modifier, color = MaterialTheme.colorScheme.bar, contentColor = MaterialTheme.colorScheme.onSurface) {
+    // Swipes on the bar stay on the bar: neither they nor what its scrolling leaves over at either
+    // end may reach the pager and turn the tab.
+    Surface(
+        modifier.pointerInput(Unit) {
+            awaitEachGesture {
+                do {
+                    val event = awaitPointerEvent()
+                    event.changes.forEach { it.consume() }
+                } while (event.changes.any { it.pressed })
+            }
+        },
+        color = MaterialTheme.colorScheme.bar,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+    ) {
         // Done stays in reach at the right; the styles scroll on narrow screens.
         Row(Modifier.fillMaxWidth().height(52.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         Row(
-            Modifier.weight(1f).horizontalScroll(rememberScrollState()),
+            Modifier.weight(1f).nestedScroll(KeepScroll).horizontalScroll(rememberScrollState()),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             val bold = all { it.bold }
@@ -323,6 +341,13 @@ fun TextFormatBar(
         IconButton(onClick = onDone) { Icon(Icons.Default.Check, contentDescription = "완료") }
         }
     }
+}
+
+/** Takes whatever scrolling is left over, so none of it goes on to the pager. */
+private val KeepScroll = object : NestedScrollConnection {
+    override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource) = available
+
+    override suspend fun onPostFling(consumed: Velocity, available: Velocity) = available
 }
 
 private const val TEXT_SWATCHES = 10
