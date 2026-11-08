@@ -5,7 +5,7 @@ description: EveryViewer(옛 가칭 TabPDF) 저장소의 Git 관리 규약(브�
 
 # EveryViewer Git 관리 규약
 
-원격 저장소: `origin` = https://github.com/iTIC1721/EveryViewer (비공개).
+원격 저장소: `origin` = https://github.com/iTIC1721/EveryViewer (공개). 커밋·태그·릴리스 노트를 누구나 볼 수 있다.
 
 - 올리는 것은 `main`과 버전 태그다. 머지 뒤 `git push origin main`, 태그를 붙이면 `git push origin <태그>`.
 - 작업 브랜치는 사용자가 원할 때만 올린다.
@@ -89,7 +89,7 @@ git commit -F <메시지파일 경로>
 
 ## 4. 버전과 태그
 
-- [SemVer](https://semver.org/lang/ko/) `vMAJOR.MINOR.PATCH`. 지금은 `v0.x.y`이고, 앞자리는 사용자가 정할 때만 올린다.
+- [SemVer](https://semver.org/lang/ko/) `vMAJOR.MINOR.PATCH`. `v1.0.0`부터 정식 릴리스다. 앞자리는 사용자가 정할 때만 올린다.
 - 기획서 개발 단계를 마칠 때 `main`에 태그를 붙인다 (사용자 확인 후).
 
 | 태그 | 시점 |
@@ -114,6 +114,7 @@ git commit -F <메시지파일 경로>
 | `v0.15.0` | 시각 디자인 정비: 종이·책상 테마(ui/theme 토큰), UI 글꼴 Pretendard, 움직임 정리 |
 | `v0.15.1` | 실기기 피드백: 쪽을 넘는 획, 빠른 스크롤 바 순간이동 수정, 파일 하나짜리 탭의 묶음 편집 |
 | `v0.15.2` | docx 쪽 맞춤: Word 글꼴 치수로 줄·쪽 끝 맞춤, 표 스타일·머리글 행 반복, 첫 쪽 머리글·떠 있는 그림 |
+| `v1.0.0` | 정식 릴리스: PDF·그림 디코딩 격리 프로세스, 보안 점검, 화면 다듬기(중립 회색 테마, 전문 용어 문구) |
 
 - 태그는 주석 태그로: `git tag -a v0.1.0 -m "v0.1.0: <요약>"`
 - 태그를 붙일 때 `app/build.gradle.kts`의 `versionName`도 같은 값으로, `versionCode`는 1씩 올린다 (별도 `build:` 커밋).
