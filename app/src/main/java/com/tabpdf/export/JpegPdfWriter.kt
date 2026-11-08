@@ -7,7 +7,7 @@ import java.io.OutputStream
  * For pages that only come as pictures (PDFs whose structure can't be followed, photos, bundles).
  * Android's own PDF writer stores pictures uncompressed (a photo page ≈ 5 MB); JPEG keeps it small.
  */
-class JpegPdfWriter(out: OutputStream) {
+class JpegPdfWriter(out: OutputStream, private val text: PdfText? = null) {
     private val out = Counting(out)
     private val offsets = mutableListOf<Long>() // by object number - 1
     private val pages = mutableListOf<Int>()
@@ -19,6 +19,21 @@ class JpegPdfWriter(out: OutputStream) {
         // 1 = catalog, 2 = page tree; written at the end, once the pages are known.
         offsets += 0L
         offsets += 0L
+        // Then the text boxes' fonts, shared by every page.
+        if (text != null) {
+            for ((dict, data) in text.objects(FONTS_FROM)) {
+                begin()
+                if (data != null) {
+                    val packed = deflate(data)
+                    this.out.ascii("<</Length ${packed.size}/Filter/FlateDecode>>\nstream\n")
+                    this.out.write(packed)
+                    this.out.ascii("\nendstream")
+                } else {
+                    this.out.ascii(dict)
+                }
+                end()
+            }
+        }
     }
 
     private fun begin(): Int {
@@ -53,9 +68,13 @@ class JpegPdfWriter(out: OutputStream) {
         end()
 
         val states = ink?.alphas.orEmpty().joinToString("") { "/${PdfInk.stateName(it)} ${PdfInk.state(it)}" }
+        val fonts = if (text == null) "" else ink?.fonts.orEmpty().joinToString("") { "/${PdfText.fontName(it)} ${text.fontObject(FONTS_FROM, it)} 0 R" }
         pages += begin()
         out.ascii("<</Type/Page/Parent 2 0 R/MediaBox[0 0 $w $h]/Contents $contents 0 R")
-        out.ascii("/Resources<</XObject<</Im0 $image 0 R>>" + (if (states.isEmpty()) "" else "/ExtGState<<$states>>") + ">>>>")
+        out.ascii(
+            "/Resources<</XObject<</Im0 $image 0 R>>" + (if (states.isEmpty()) "" else "/ExtGState<<$states>>") +
+                (if (fonts.isEmpty()) "" else "/Font<<$fonts>>") + ">>>>"
+        )
         end()
     }
 
@@ -72,6 +91,25 @@ class JpegPdfWriter(out: OutputStream) {
         out.ascii(table.toString())
         out.ascii("trailer\n<</Size ${offsets.size + 1}/Root 1 0 R>>\nstartxref\n$start\n%%EOF\n")
         out.flush()
+    }
+
+    private companion object {
+        /** The fonts' first object number: right after the catalog and the page tree. */
+        const val FONTS_FROM = 3
+
+        fun deflate(data: ByteArray): ByteArray {
+            val deflater = java.util.zip.Deflater(java.util.zip.Deflater.BEST_COMPRESSION)
+            try {
+                deflater.setInput(data)
+                deflater.finish()
+                val out = java.io.ByteArrayOutputStream()
+                val buf = ByteArray(16 * 1024)
+                while (!deflater.finished()) out.write(buf, 0, deflater.deflate(buf))
+                return out.toByteArray()
+            } finally {
+                deflater.end()
+            }
+        }
     }
 
     private class Counting(private val out: OutputStream) {

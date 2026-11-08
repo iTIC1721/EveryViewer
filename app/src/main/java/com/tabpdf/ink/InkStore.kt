@@ -17,17 +17,19 @@ import kotlinx.coroutines.withContext
 class InkStore(private val app: TabPdfApp, private val scope: CoroutineScope) {
     private class TabInk {
         val strokes = MutableStateFlow<List<InkStroke>>(emptyList())
+        val texts = MutableStateFlow<List<InkText>>(emptyList())
         val undo = ArrayDeque<Edit>()
         val redo = ArrayDeque<Edit>()
     }
 
     private sealed interface Edit {
-        val strokes: List<InkStroke>
-
-        data class Added(override val strokes: List<InkStroke>) : Edit
+        data class Added(val strokes: List<InkStroke>) : Edit
 
         /** [gesture] lets one eraser drag that wipes several strokes undo as one. */
-        data class Erased(override val strokes: List<InkStroke>, val gesture: Long) : Edit
+        data class Erased(val strokes: List<InkStroke>, val gesture: Long) : Edit
+
+        /** A text box made ([before] null), changed, or removed ([after] null). */
+        data class Text(val before: InkText?, val after: InkText?) : Edit
     }
 
     private val tabs = mutableMapOf<String, TabInk>()
@@ -41,13 +43,20 @@ class InkStore(private val app: TabPdfApp, private val scope: CoroutineScope) {
     /** Tab [tabId]'s strokes, all pages, in drawing order. Starts loading them on first use. */
     fun strokes(tabId: String): StateFlow<List<InkStroke>> = tab(tabId).strokes.asStateFlow()
 
+    /** Tab [tabId]'s text boxes, all pages, in the order they were made. */
+    fun texts(tabId: String): StateFlow<List<InkText>> = tab(tabId).texts.asStateFlow()
+
     private fun tab(tabId: String): TabInk = tabs.getOrPut(tabId) {
         TabInk().also { ink ->
             scope.launch {
-                val loaded = withContext(Dispatchers.Default) { dao.strokesOf(tabId).map { it.toInkStroke() } }
+                val (strokes, texts) = withContext(Dispatchers.Default) {
+                    dao.strokesOf(tabId).map { it.toInkStroke() } to dao.textsOf(tabId).map { it.toInkText(defaultTextStyle) }
+                }
                 // Strokes drawn while loading come after the saved ones.
                 val drawn = ink.strokes.value
-                ink.strokes.value = loaded + drawn.filter { d -> loaded.none { it.id == d.id } }
+                ink.strokes.value = strokes + drawn.filter { d -> strokes.none { it.id == d.id } }
+                val typed = ink.texts.value
+                ink.texts.value = texts.filter { t -> typed.none { it.id == t.id } } + typed
             }
         }
     }
@@ -83,6 +92,24 @@ class InkStore(private val app: TabPdfApp, private val scope: CoroutineScope) {
         delete(gone)
     }
 
+    /**
+     * Text box [before] became [after] (기획서 5.8.6): made when [before] is null, removed when
+     * [after] is null. One undo step.
+     */
+    fun changeText(tabId: String, before: InkText?, after: InkText?) {
+        if (before == after) return
+        val ink = tab(tabId)
+        replaceText(tabId, ink, before, after)
+        record(ink, Edit.Text(before, after))
+    }
+
+    private fun replaceText(tabId: String, ink: TabInk, gone: InkText?, new: InkText?) {
+        val list = ink.texts.value.filterNot { it.id == gone?.id || it.id == new?.id }
+        ink.texts.value = if (new == null) list else (list + new).sortedBy { it.seq }
+        if (new != null) app.enqueueWrite { dao.insertTexts(listOf(new.toEntity(tabId))) }
+        else if (gone != null) app.enqueueWrite { dao.deleteTexts(listOf(gone.id)) }
+    }
+
     fun canUndo(tabId: String) = tabs[tabId]?.undo?.isNotEmpty() == true
     fun canRedo(tabId: String) = tabs[tabId]?.redo?.isNotEmpty() == true
 
@@ -103,14 +130,22 @@ class InkStore(private val app: TabPdfApp, private val scope: CoroutineScope) {
     }
 
     private fun apply(tabId: String, ink: TabInk, edit: Edit, forward: Boolean) {
+        val strokes = when (edit) {
+            is Edit.Added -> edit.strokes
+            is Edit.Erased -> edit.strokes
+            is Edit.Text -> {
+                if (forward) replaceText(tabId, ink, edit.before, edit.after) else replaceText(tabId, ink, edit.after, edit.before)
+                return
+            }
+        }
         val adds = (edit is Edit.Added) == forward
         if (adds) {
-            ink.strokes.value = (ink.strokes.value + edit.strokes).sortedBy { it.seq }
-            save(tabId, edit.strokes)
+            ink.strokes.value = (ink.strokes.value + strokes).sortedBy { it.seq }
+            save(tabId, strokes)
         } else {
-            val ids = edit.strokes.map { it.id }.toSet()
+            val ids = strokes.map { it.id }.toSet()
             ink.strokes.value = ink.strokes.value.filterNot { it.id in ids }
-            delete(edit.strokes)
+            delete(strokes)
         }
     }
 
@@ -135,11 +170,21 @@ class InkStore(private val app: TabPdfApp, private val scope: CoroutineScope) {
         }
         val movedIds = moved.associateBy { it.id }
         ink.strokes.value = ink.strokes.value.filterNot { s -> gone.any { it.id == s.id } }.map { movedIds[it.id] ?: it }
+        val movedTexts = mutableListOf<InkText>()
+        val goneTexts = mutableListOf<InkText>()
+        for (t in ink.texts.value) {
+            val page = move(t.page)
+            if (page == null) goneTexts += t else if (page != t.page) movedTexts += t.copy(page = page)
+        }
+        val movedTextIds = movedTexts.associateBy { it.id }
+        ink.texts.value = ink.texts.value.filterNot { t -> goneTexts.any { it.id == t.id } }.map { movedTextIds[it.id] ?: it }
         ink.undo.clear()
         ink.redo.clear()
         _history.value++
         if (gone.isNotEmpty()) delete(gone)
         if (moved.isNotEmpty()) save(tabId, moved)
+        if (goneTexts.isNotEmpty()) app.enqueueWrite { dao.deleteTexts(goneTexts.map { it.id }) }
+        if (movedTexts.isNotEmpty()) app.enqueueWrite { dao.insertTexts(movedTexts.map { it.toEntity(tabId) }) }
     }
 
     /** The tabs are gone for good (their undo offer ended): drop their strokes. */
@@ -163,5 +208,8 @@ class InkStore(private val app: TabPdfApp, private val scope: CoroutineScope) {
 
     private companion object {
         const val MAX_UNDO = 200
+
+        /** For a stored text box whose style can't be read. */
+        val defaultTextStyle = CharStyle(DEFAULT_TEXT_SIZE, 0xFF000000.toInt())
     }
 }

@@ -375,6 +375,7 @@ private fun ContextPager(
             ) { page ->
                 val tab = tabs[page]
                 val strokes by remember(tab.id) { viewModel.ink.strokes(tab.id) }.collectAsState()
+                val texts by remember(tab.id) { viewModel.ink.texts(tab.id) }.collectAsState()
                 val ink = if (!inkMode) null else InkBinding(
                     tool = inkTool,
                     style = toolStyles.getValue(inkTool),
@@ -386,6 +387,12 @@ private fun ContextPager(
                     onStylusSeen = viewModel.settings::markStylusSeen,
                     onStroke = { parts, tool -> viewModel.addStroke(tab.id, parts, tool) },
                     onErase = { ids, gesture -> viewModel.eraseStrokes(tab.id, ids, gesture) },
+                    onTextChange = { before, after -> viewModel.changeText(tab.id, before, after) },
+                    nextSeq = viewModel.ink::nextSeq,
+                    onTextStyle = { viewModel.settings.setToolStyle(InkTool.Text, it) },
+                    recentTextColors = recentColors[InkTool.Text].orEmpty(),
+                    onCustomTextColor = { viewModel.settings.addRecentColor(InkTool.Text, it) },
+                    onTyping = viewModel::setTypingFinisher,
                 )
                 DocumentViewer(
                     uri = tab.uri,
@@ -404,6 +411,7 @@ private fun ContextPager(
                     onDocumentOpened = { viewModel.onDocumentOpened(tab.id, it) },
                     onDocument = { viewModel.onDocument(tab.id, it) },
                     strokes = strokes,
+                    texts = texts,
                     ink = ink,
                     searchQuery = searchQuery.takeIf { searchOpen && tab.id == session.currentTabId },
                     searchIndex = searchIndex,

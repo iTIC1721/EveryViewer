@@ -169,6 +169,7 @@ class MainActivity : ComponentActivity() {
     override fun onStop() {
         super.onStop()
         // Last chance to save reading positions before the process may be killed (기획서 5.3).
+        tabsViewModel.finishTyping()
         tabsViewModel.flush()
     }
 

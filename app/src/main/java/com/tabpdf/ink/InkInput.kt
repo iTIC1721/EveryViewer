@@ -78,6 +78,15 @@ class InkBinding(
     /** A finished line: its parts on the pages it crossed (one, unless it went on to other pages). */
     val onStroke: (parts: List<Pair<Int, Stroke>>, tool: InkTool) -> Unit,
     val onErase: (ids: Set<String>, gesture: Long) -> Unit,
+    /** Text boxes (기획서 5.8.6): one made ([before] null), changed, or removed ([after] null). */
+    val onTextChange: (before: InkText?, after: InkText?) -> Unit = { _, _ -> },
+    val nextSeq: () -> Long = { 0L },
+    /** A size or colour chosen while typing: new boxes start with it. */
+    val onTextStyle: (ToolStyle) -> Unit = {},
+    val recentTextColors: List<Int> = emptyList(),
+    val onCustomTextColor: (Int) -> Unit = {},
+    /** While a box is open: how to close it (before undoing, say); null once closed. */
+    val onTyping: ((() -> Unit)?) -> Unit = {},
 )
 
 /** Where a point falls in the document: page [index], whose top-left is at ([left], [top]) in viewer pixels. */
@@ -144,10 +153,13 @@ fun Modifier.inkInput(
                             (change.isPen || (ink.fingerDraws && fingersDown == 1 && !claimed))
                     }
                     val hit = down?.let { pageAt(it.position) }
-                    if (down != null && hit != null) {
-                        val pointerId = motion.getPointerId(motion.actionIndex)
-                        val erasing = ink.tool == InkTool.Eraser || down.type == PointerType.Eraser ||
+                    val erasing = down != null && (
+                        ink.tool == InkTool.Eraser || down.type == PointerType.Eraser ||
                             (down.isPen && ink.sideButton == SideButton.Eraser && motion.buttonState and STYLUS_SIDE_BUTTONS != 0)
+                        )
+                    // The text tool draws nothing: its taps and drags are the viewer's (기획서 5.8.6).
+                    if (down != null && hit != null && (erasing || ink.tool != InkTool.Text)) {
+                        val pointerId = motion.getPointerId(motion.actionIndex)
                         val motionOffset = Offset(motion.getX(motion.actionIndex), motion.getY(motion.actionIndex)) - down.position
                         active = if (erasing) {
                             Active(down.id, pointerId, down.isPen, null, hit, down.position, ++gestures).also {

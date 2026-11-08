@@ -21,7 +21,7 @@ object PdfAppend {
      * Copies [source] to [out] with [targets] added. Throws [PdfSyntaxException] if the file's
      * structure can't be followed, is encrypted, or has another number of pages than [pageCount].
      */
-    fun write(source: File, pageCount: Int, targets: List<Target>, out: OutputStream) {
+    fun write(source: File, pageCount: Int, targets: List<Target>, out: OutputStream, text: PdfText? = null) {
         RandomAccessFile(source, "r").use { raf ->
             val pdf = PdfFile(raf)
             // Encrypted without a password (only limits on printing, copying…): additions are
@@ -47,12 +47,27 @@ object PdfAppend {
                 offsets[num] = counter.count to gen
                 counter.ascii("$num $gen obj\n")
             }
-            fun stream(num: Int, content: String) {
-                val data = deflate(content.toByteArray(Charsets.ISO_8859_1)).let { crypt?.encryptStream(num, 0, it) ?: it }
+            fun stream(num: Int, content: ByteArray) {
+                val data = deflate(content).let { crypt?.encryptStream(num, 0, it) ?: it }
                 begin(num, 0)
                 counter.ascii("<</Length ${data.size}/Filter/FlateDecode>>\nstream\n")
                 counter.write(data)
                 counter.ascii("\nendstream\nendobj\n")
+            }
+            fun stream(num: Int, content: String) = stream(num, content.toByteArray(Charsets.ISO_8859_1))
+
+            // Text boxes' fonts, shared by every page (their dictionaries hold only names and numbers).
+            val fontsFrom = next
+            if (text != null) {
+                for ((dict, data) in text.objects(fontsFrom)) {
+                    val num = next++
+                    if (data != null) stream(num, data)
+                    else {
+                        begin(num, 0)
+                        counter.ascii(dict)
+                        counter.ascii("\nendobj\n")
+                    }
+                }
             }
 
             for (t in targets) {
@@ -77,12 +92,19 @@ object PdfAppend {
                     else -> emptyList()
                 }
                 dict["Contents"] = mutableListOf<Any>(PdfRef(before, 0)).apply { addAll(contents); add(PdfRef(after, 0)) }
-                if (t.ink.alphas.isNotEmpty()) {
-                    // Resources may be inherited or shared: this page gets its own copy with the new states.
+                if (t.ink.alphas.isNotEmpty() || t.ink.fonts.isNotEmpty()) {
+                    // Resources may be inherited or shared: this page gets its own copy with the new states and fonts.
                     val resources = PdfDict((pdf.resolve(page.resources) as? Map<*, *>)?.let { copy(it) } ?: emptyMap())
-                    val states = PdfDict((pdf.resolve(resources["ExtGState"]) as? Map<*, *>)?.let { copy(it) } ?: emptyMap())
-                    for (a in t.ink.alphas) states[PdfInk.stateName(a)] = PdfInk.state(a)
-                    resources["ExtGState"] = states
+                    if (t.ink.alphas.isNotEmpty()) {
+                        val states = PdfDict((pdf.resolve(resources["ExtGState"]) as? Map<*, *>)?.let { copy(it) } ?: emptyMap())
+                        for (a in t.ink.alphas) states[PdfInk.stateName(a)] = PdfInk.state(a)
+                        resources["ExtGState"] = states
+                    }
+                    if (t.ink.fonts.isNotEmpty() && text != null) {
+                        val fonts = PdfDict((pdf.resolve(resources["Font"]) as? Map<*, *>)?.let { copy(it) } ?: emptyMap())
+                        for (f in t.ink.fonts) fonts[PdfText.fontName(f)] = PdfRef(text.fontObject(fontsFrom, f), 0)
+                        resources["Font"] = fonts
+                    }
                     dict["Resources"] = resources
                 } else if (page.resources != null && !page.dict.containsKey("Resources")) {
                     dict["Resources"] = page.resources

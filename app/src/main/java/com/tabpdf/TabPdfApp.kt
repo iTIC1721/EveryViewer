@@ -26,6 +26,7 @@ class TabPdfApp : Application() {
     override fun onCreate() {
         super.onCreate()
         com.tabpdf.pdf.RenderProcess.app = this
+        com.tabpdf.ink.InkFonts.init(this)
         appScope.launch {
             for (write in writes) {
                 try {

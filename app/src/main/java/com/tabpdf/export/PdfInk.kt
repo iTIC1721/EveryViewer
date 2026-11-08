@@ -8,8 +8,12 @@ import com.tabpdf.ink.InkTool
  * Handwriting as PDF drawing operators: each stroke filled along its outline, in its colour, the
  * see-through ones (highlighter) through a graphics state with that opacity. Coordinates are the
  * strokes' own page space (INK_PAGE_WIDTH wide, y down); the caller sets the matrix to the page.
+ * [text] (the page's text boxes, [PdfText]) goes between the highlighter and the pen, as on screen;
+ * it uses the fonts [fonts].
  */
-class PdfInk(strokes: List<InkStroke>) {
+class PdfInk(strokes: List<InkStroke>, text: PdfText.Page? = null) {
+    val fonts: Set<Int> = text?.fonts.orEmpty()
+
     /** The operators, highlighter under pen as on screen ([com.tabpdf.ink.InkPainter]). */
     val operators: String
 
@@ -20,8 +24,10 @@ class PdfInk(strokes: List<InkStroke>) {
         val out = StringBuilder()
         val used = sortedSetOf<Int>()
         val point = MutableVec()
-        val ordered = strokes.filter { it.tool == InkTool.Highlighter } + strokes.filter { it.tool != InkTool.Highlighter }
-        for (s in ordered) {
+        val highlighter = strokes.filter { it.tool == InkTool.Highlighter }
+        val ordered = highlighter + strokes.filter { it.tool != InkTool.Highlighter }
+        for ((index, s) in ordered.withIndex()) {
+            if (index == highlighter.size && text != null) out.append(text.operators)
             val color = s.stroke.brush.colorIntArgb
             val alpha = (color ushr 24) and 0xFF
             if (alpha == 0) continue
@@ -50,6 +56,7 @@ class PdfInk(strokes: List<InkStroke>) {
             out.append(if (any) "f\n" else "n\n")
             out.append("Q\n")
         }
+        if (ordered.size == highlighter.size && text != null) out.append(text.operators)
         operators = out.toString()
         alphas = used
     }

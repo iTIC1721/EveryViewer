@@ -6,6 +6,7 @@ import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import com.tabpdf.ink.InkPainter
 import com.tabpdf.ink.InkStroke
+import com.tabpdf.ink.InkText
 import com.tabpdf.tabs.DocTab
 import com.tabpdf.tabs.OpenGuard
 import android.util.LruCache
@@ -41,12 +42,13 @@ object Thumbnails {
      * Thumbnail of [page] of [tab]'s file with the tab's handwriting on it (기획서 5.8.5), or null if
      * the file can't be read. Only the page itself is cached; the strokes are drawn over a copy.
      */
-    suspend fun load(context: Context, tab: DocTab, page: Int, strokes: List<InkStroke>): Bitmap? {
+    suspend fun load(context: Context, tab: DocTab, page: Int, strokes: List<InkStroke>, texts: List<InkText> = emptyList()): Bitmap? {
         val base = loadPage(context, tab, page) ?: return null
         val onPage = strokes.filter { it.page == page }
-        if (onPage.isEmpty()) return base
+        val textsOnPage = texts.filter { it.page == page }
+        if (onPage.isEmpty() && textsOnPage.isEmpty()) return base
         return withContext(Dispatchers.Default) {
-            base.copy(Bitmap.Config.ARGB_8888, true)?.also { InkPainter.draw(Canvas(it), onPage, it.width.toFloat()) } ?: base
+            base.copy(Bitmap.Config.ARGB_8888, true)?.also { InkPainter.draw(Canvas(it), onPage, textsOnPage, it.width.toFloat()) } ?: base
         }
     }
 
