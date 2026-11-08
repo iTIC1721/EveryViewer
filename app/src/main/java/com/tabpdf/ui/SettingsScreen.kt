@@ -79,12 +79,12 @@ fun SettingsScreen(settings: AppSettings, onDismiss: () -> Unit) {
                 Divider()
                 Section("탭")
                 Toggle(
-                    "다음 그룹으로 넘기기",
-                    "그룹의 마지막 탭에서 밀면 다음 그룹의 탭으로 넘어갑니다.",
+                    "그룹 간 연속 이동",
+                    "그룹의 첫 탭이나 마지막 탭에서 스와이프하면 이웃 그룹의 탭으로 이동합니다.",
                     crossGroupSwipe,
                     settings::setCrossGroupSwipe,
                 )
-                Toggle("여러 파일은 새 그룹으로 열기", null, openManyAsGroup, settings::setOpenManyAsGroup)
+                Toggle("여러 파일을 새 그룹으로 열기", null, openManyAsGroup, settings::setOpenManyAsGroup)
 
                 Divider()
                 Section("필기")
@@ -120,7 +120,7 @@ private fun Section(title: String) {
         title,
         Modifier.padding(start = 24.dp, end = 24.dp, top = 20.dp, bottom = 4.dp),
         style = MaterialTheme.typography.titleSmall,
-        color = MaterialTheme.colorScheme.primary,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
 }
 

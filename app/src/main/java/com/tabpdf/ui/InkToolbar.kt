@@ -147,11 +147,11 @@ fun InkToolbar(
                         checkedContentColor = MaterialTheme.colorScheme.onPrimaryContainer,
                     ),
                 ) {
-                    Icon(FingerIcon, contentDescription = "손가락으로 그리기")
+                    Icon(FingerIcon, contentDescription = "손가락 필기")
                 }
             }
-            IconButton(onClick = onUndo, enabled = canUndo) { Icon(UndoIcon, contentDescription = "필기 되돌리기") }
-            IconButton(onClick = onRedo, enabled = canRedo) { Icon(RedoIcon, contentDescription = "필기 다시 하기") }
+            IconButton(onClick = onUndo, enabled = canUndo) { Icon(UndoIcon, contentDescription = "필기 실행 취소") }
+            IconButton(onClick = onRedo, enabled = canRedo) { Icon(RedoIcon, contentDescription = "필기 다시 실행") }
         }
     }
 }
@@ -264,7 +264,7 @@ private fun StylePanel(
                 ) {
                     Icon(
                         Icons.Default.Add,
-                        contentDescription = "지금 스타일을 프리셋에 추가",
+                        contentDescription = "현재 스타일을 프리셋에 추가",
                         tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = if (canAdd) 1f else 0.38f),
                         modifier = Modifier.size(20.dp),
                     )
@@ -395,7 +395,7 @@ private fun CustomColorSwatch(onClick: () -> Unit) {
             .size(SwatchSize)
             .clip(CircleShape)
             .clickable(onClick = onClick)
-            .semantics { contentDescription = "색 직접 고르기" },
+            .semantics { contentDescription = "사용자 지정 색상" },
     ) {
         Canvas(Modifier.size(SwatchSize)) {
             val r = 12.dp.toPx()
@@ -472,7 +472,7 @@ private fun ColorPickerDialog(initial: Int, onPick: (Int) -> Unit, onDismiss: ()
                     IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, contentDescription = "취소") }
                     Spacer(Modifier.width(8.dp))
                     FilledIconButton(onClick = { onPick(picked.toArgb()) }) {
-                        Icon(Icons.Default.Check, contentDescription = "이 색 쓰기")
+                        Icon(Icons.Default.Check, contentDescription = "이 색상 적용")
                     }
                 }
             }
@@ -522,7 +522,7 @@ private fun HueStrip(hue: Float, onChange: (Float) -> Unit) {
                     drag(down.id) { set(it.position); it.consume() }
                 }
             }
-            .semantics { contentDescription = "색상" },
+            .semantics { contentDescription = "색조" },
     ) {
         drawRoundRect(Brush.horizontalGradient(HueColors), cornerRadius = CornerRadius(size.height / 2))
         thumb(Offset(hue / 360f * size.width, size.height / 2))

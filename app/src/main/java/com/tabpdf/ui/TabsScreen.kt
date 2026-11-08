@@ -355,7 +355,7 @@ private fun ContextPager(
 
     Box(Modifier.fillMaxSize()) {
         if (tabs.isEmpty()) {
-            Button(onClick = { onOpenFiles(groupId) }, modifier = Modifier.align(Alignment.Center)) {
+            Button(onClick = { onOpenFiles(groupId) }, modifier = Modifier.align(Alignment.Center), shape = MaterialTheme.shapes.small) {
                 Icon(Icons.Default.Add, contentDescription = null)
                 Text("파일 열기", Modifier.padding(start = 8.dp))
             }
@@ -648,7 +648,7 @@ private fun SearchBar(
                 modifier = Modifier
                     .weight(1f)
                     .focusRequester(focus)
-                    .semantics { contentDescription = "찾을 내용" },
+                    .semantics { contentDescription = "검색어" },
                 decorationBox = { field ->
                     Box(contentAlignment = Alignment.CenterStart) {
                         if (query.isEmpty()) Icon(Icons.Default.Search, contentDescription = null, tint = colors.onSurfaceVariant)
@@ -673,7 +673,7 @@ private fun SearchBar(
                 Icon(Icons.Default.KeyboardArrowDown, contentDescription = "다음 결과")
             }
             IconButton(onClick = onClose) {
-                Icon(Icons.Default.Close, contentDescription = "찾기 닫기")
+                Icon(Icons.Default.Close, contentDescription = "검색 닫기")
             }
         }
     }
@@ -692,7 +692,7 @@ private fun ViewerMenu(
     dismiss: () -> Unit,
 ) {
     DropdownMenuItem(
-        text = { Text("찾기") },
+        text = { Text("검색") },
         enabled = canJump,
         onClick = { dismiss(); onSearch() },
     )

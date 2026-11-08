@@ -153,7 +153,7 @@ fun SelectionToolbar(
                 }
                 clipboard.setPrimaryClip(clip)
                 // Android 13+ shows its own confirmation.
-                if (Build.VERSION.SDK_INT < 33) Toast.makeText(context, "복사했습니다", Toast.LENGTH_SHORT).show()
+                if (Build.VERSION.SDK_INT < 33) Toast.makeText(context, "클립보드에 복사했습니다", Toast.LENGTH_SHORT).show()
                 onDone()
             }) { Text("복사") }
             TextButton(onClick = {
