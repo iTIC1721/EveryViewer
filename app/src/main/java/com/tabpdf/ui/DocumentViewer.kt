@@ -892,10 +892,15 @@ private fun DocumentPages(
         }
         // On the light desk a page needs an edge; on the dark one a white page already stands out.
         val pageEdge = MaterialTheme.colorScheme.let { if (it.desk.luminance() > 0.5f) it.onSurface else null }
+        // While a text box is open, room below the last page to bring it above the keyboard.
+        val typingRoom = if (editing != null) with(density) { (WindowInsets.ime.getBottom(this) + (textBar[0]?.height ?: 0f)).toDp() } else 0.dp
         LazyColumn(
             state = listState,
             modifier = Modifier.fillMaxSize(),
-            contentPadding = contentPadding,
+            contentPadding = PaddingValues(
+                top = contentPadding.calculateTopPadding(),
+                bottom = contentPadding.calculateBottomPadding() + typingRoom,
+            ),
             verticalArrangement = Arrangement.spacedBy(with(density) { (gapPx * zoom).toDp() }),
         ) {
             items(progress.pages) { index ->
