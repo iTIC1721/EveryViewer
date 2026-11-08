@@ -122,7 +122,8 @@ private const val MAX_LENGTH_CHARS = 32
 /** Rules without a tag, class or id to look them up by are tried on every element: their number is limited. */
 private const val MAX_UNIVERSAL_RULES = 1_000
 
-private class Rule(val selector: Selector, val declarations: List<Declaration>, val order: Int)
+/** [looks]: which looks the rule is for ([Stylesheet.LIGHT], [Stylesheet.DARK] or both), by the media it is in. */
+private class Rule(val selector: Selector, val declarations: List<Declaration>, val order: Int, val looks: Int)
 
 /** The rules of a page's style sheets, found for an element by the last compound of each selector. */
 class Stylesheet {
@@ -132,21 +133,28 @@ class Stylesheet {
     private val universal = mutableListOf<Rule>()
     private var order = 0
 
-    /** Reads [css]; what it can't understand is skipped. */
-    fun add(css: String) = parseRules(stripComments(css))
+    /** Whether some rules are for one look only (`prefers-color-scheme`): the page has a dark one. */
+    var hasDarkRules = false
+        private set
+
+    /** Reads [css] for the [looks] given (a style sheet's media); what it can't understand is skipped. */
+    fun add(css: String, looks: Int = BOTH) {
+        if (looks != 0) parseRules(stripComments(css), looks = looks)
+    }
 
     /**
      * The declarations that apply to [e], in increasing priority: normal ones by specificity and
      * order, then the [inline] style attribute, then !important ones the same way. [steps] counts
      * the work for the page [e] is in.
      */
-    fun declarationsFor(e: Element, inline: List<Declaration>, steps: MatchSteps = MatchSteps()): List<Declaration> {
+    fun declarationsFor(e: Element, inline: List<Declaration>, steps: MatchSteps = MatchSteps(), dark: Boolean = false): List<Declaration> {
+        val look = if (dark) DARK else LIGHT
         val candidates = ArrayList<Rule>()
         byId[e.id()]?.let { candidates += it }
         for (name in e.classNames()) byClass[name]?.let { candidates += it }
         byTag[e.normalName()]?.let { candidates += it }
         candidates += universal
-        val matched = candidates.filter { it.selector.matches(e, steps) }
+        val matched = candidates.filter { it.looks and look != 0 && it.selector.matches(e, steps) }
             .distinct()
             .sortedWith(compareBy({ it.selector.specificity }, { it.order }))
         val normal = ArrayList<Declaration>()
@@ -161,7 +169,7 @@ class Stylesheet {
      * [depth]: how many @media and @supports blocks this is inside. Each level copies its body, so
      * thousands of them nested in a large style sheet would never finish (or run out of stack).
      */
-    private fun parseRules(css: String, depth: Int = 0) {
+    private fun parseRules(css: String, depth: Int = 0, looks: Int = BOTH) {
         var i = 0
         while (i < css.length) {
             val c = css[i]
@@ -180,8 +188,8 @@ class Stylesheet {
                     val body = css.substring(end + 1, close)
                     when {
                         depth >= MAX_NESTING -> Unit
-                        name == "media" && mediaMatches(prelude.substring(5)) -> parseRules(body, depth + 1)
-                        name == "supports" -> parseRules(body, depth + 1)
+                        name == "media" -> (looks and mediaLooks(prelude.substring(5))).let { if (it != 0) parseRules(body, depth + 1, it) }
+                        name == "supports" -> parseRules(body, depth + 1, looks)
                     }
                     i = close + 1
                 }
@@ -195,7 +203,8 @@ class Stylesheet {
                     if (declarations.isNotEmpty()) {
                         for (text in splitTopLevel(selectors, ',')) {
                             val selector = parseSelector(text.trim()) ?: continue
-                            val rule = Rule(selector, declarations, order++)
+                            val rule = Rule(selector, declarations, order++, looks)
+                            if (looks != BOTH) hasDarkRules = true
                             val key = selector.key
                             when {
                                 key.id != null -> byId.getOrPut(key.id) { mutableListOf() } += rule
@@ -212,6 +221,15 @@ class Stylesheet {
     }
 
     companion object {
+        /** Looks a rule is for: bits of [Rule.looks]. */
+        const val LIGHT = 1
+        const val DARK = 2
+        const val BOTH = LIGHT or DARK
+
+        /** The looks ([LIGHT], [DARK]) a media query list matches in. */
+        fun mediaLooks(query: String): Int =
+            (if (mediaMatches(query, dark = false)) LIGHT else 0) or (if (mediaMatches(query, dark = true)) DARK else 0)
+
         fun stripComments(css: String): String {
             if (!css.contains("/*")) return css
             val out = StringBuilder(css.length)
@@ -286,10 +304,10 @@ class Stylesheet {
         }
 
         /**
-         * A media query list, for a phone-wide colour screen in portrait and light mode. Unknown
-         * features don't match, so rules meant for other devices stay out.
+         * A media query list, for a phone-wide colour screen in portrait, in light mode or [dark].
+         * Unknown features don't match, so rules meant for other devices stay out.
          */
-        fun mediaMatches(query: String): Boolean = splitTopLevel(query, ',').any { one ->
+        fun mediaMatches(query: String, dark: Boolean = false): Boolean = splitTopLevel(query, ',').any { one ->
             var q = one.trim().lowercase()
             val negate = q.startsWith("not ")
             if (negate) q = q.removePrefix("not ").trim()
@@ -297,11 +315,11 @@ class Stylesheet {
             val type = q.substringBefore('(').substringBefore(" and").trim()
             val typeOk = type.isEmpty() || type == "all" || type == "screen"
             val features = Regex("""\(([^)]*)\)""").findAll(q).map { it.groupValues[1].trim() }.toList()
-            val ok = typeOk && features.all { featureMatches(it) }
+            val ok = typeOk && features.all { featureMatches(it, dark) }
             ok != negate
         }
 
-        private fun featureMatches(feature: String): Boolean {
+        private fun featureMatches(feature: String, dark: Boolean): Boolean {
             val name = feature.substringBefore(':').trim()
             val value = feature.substringAfter(':', "").trim()
             fun px(): Float? = CssValues.length(value, 16f, 16f, null)
@@ -309,7 +327,7 @@ class Stylesheet {
                 "min-width" -> px()?.let { VIEWPORT_PX >= it } ?: false
                 "max-width" -> px()?.let { VIEWPORT_PX <= it } ?: false
                 "orientation" -> value == "portrait"
-                "prefers-color-scheme" -> value == "light"
+                "prefers-color-scheme" -> value == if (dark) "dark" else "light"
                 "color", "hover", "pointer" -> name == "color" || value == "none" || value == "coarse"
                 else -> false
             }

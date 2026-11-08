@@ -716,6 +716,9 @@ fun CloseBadge(description: String, onClick: () -> Unit, modifier: Modifier) {
     }
 }
 
+/** Whether a tab's document is to be shown dark (기획서 5.10): the look chosen for it, else the app's theme. */
+val LocalDarkLook = androidx.compose.runtime.staticCompositionLocalOf<(String) -> Boolean> { { false } }
+
 @Composable
 fun Thumbnail(tab: DocTab, page: Int, modifier: Modifier) {
     val context = LocalContext.current
@@ -723,8 +726,10 @@ fun Thumbnail(tab: DocTab, page: Int, modifier: Modifier) {
     val inkStore = LocalInkStore.current
     val strokes by remember(tab.id, inkStore) { inkStore?.strokes(tab.id) ?: MutableStateFlow(emptyList()) }.collectAsState()
     val texts by remember(tab.id, inkStore) { inkStore?.texts(tab.id) ?: MutableStateFlow(emptyList()) }.collectAsState()
-    val result by produceState<Result<Bitmap>?>(null, tab.id, tab.uri, page, strokes, texts) {
-        val bitmap = Thumbnails.load(context.applicationContext, tab, page, strokes, texts)
+    // In the look the tab's document is shown in (기획서 5.10).
+    val dark = LocalDarkLook.current(tab.id)
+    val result by produceState<Result<Bitmap>?>(null, tab.id, tab.uri, page, strokes, texts, dark) {
+        val bitmap = Thumbnails.load(context.applicationContext, tab, page, strokes, texts, dark)
         value = if (bitmap != null) Result.success(bitmap) else Result.failure(IllegalStateException())
     }
     val image = remember(result) { result?.getOrNull()?.asImageBitmap() }
@@ -732,7 +737,7 @@ fun Thumbnail(tab: DocTab, page: Int, modifier: Modifier) {
     when {
         // Text is read from the top at full width, however short its page; other pages fill the card.
         image != null && (tab.format == FileFormat.Text || tab.format == FileFormat.Markdown) -> Image(
-            image, contentDescription = null, modifier.background(Paper).graphicsLayer { alpha = appear },
+            image, contentDescription = null, modifier.background(if (dark) DarkPaper else Paper).graphicsLayer { alpha = appear },
             contentScale = ContentScale.FillWidth, alignment = Alignment.TopCenter,
         )
         image != null ->

@@ -112,6 +112,20 @@ interface Document {
     val pageGaps: Boolean get() = true
 
     /**
+     * Whether the document has a dark look besides its usual one (기획서 5.10): a page that defines
+     * one in its CSS, or text whose colours the viewer picks. Both looks share one layout.
+     */
+    val hasDarkLook: Boolean get() = false
+
+    /**
+     * Pages are rendered in the dark look ([hasDarkLook] only). [drawPage] (export) always draws
+     * the usual one.
+     */
+    var dark: Boolean
+        get() = false
+        set(_) {}
+
+    /**
      * Renders page [index] at [widthPx] wide (height follows the page's aspect ratio). Returns null
      * if the document was closed meanwhile or there wasn't memory for the bitmap.
      */

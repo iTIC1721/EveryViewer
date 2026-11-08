@@ -50,6 +50,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.text.input.ImeAction
 import com.tabpdf.doc.TextSearch
 import androidx.compose.material3.Button
@@ -70,6 +71,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -184,7 +186,10 @@ fun TabsScreen(
         onDispose { view.keepScreenOn = false }
     }
 
-    CompositionLocalProvider(LocalInkStore provides viewModel.ink) {
+    val tabLooks by viewModel.darkLooks.collectAsState()
+    val themeDark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
+    val lookOf: (String) -> Boolean = remember(tabLooks, themeDark) { { id -> tabLooks[id] ?: themeDark } }
+    CompositionLocalProvider(LocalInkStore provides viewModel.ink, LocalDarkLook provides lookOf) {
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.desk)) {
         // Swiping stays within the current tab's group, or among ungrouped tabs (기획서 5.2) —
         // unless set to go on across groups, through every tab in the switcher's order.
@@ -314,6 +319,11 @@ private fun ContextPager(
     val presets by viewModel.settings.presets.collectAsState()
     val inkHistory by viewModel.ink.history.collectAsState()
     val recentColors by viewModel.settings.recentColors.collectAsState()
+    // Documents' looks (기획서 5.10): the one chosen for a tab, else the app's theme.
+    val darkLooks by viewModel.darkLooks.collectAsState()
+    val appDark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
+    // Tabs whose pages are shown dark now (their document has a dark look): ink shows for those.
+    val darkPages = remember { mutableStateMapOf<String, Boolean>() }
     val fingerDraws = when (fingerDrawing) {
         FingerDrawing.Always -> true
         FingerDrawing.Never -> false
@@ -393,6 +403,7 @@ private fun ContextPager(
                     recentTextColors = recentColors[InkTool.Text].orEmpty(),
                     onCustomTextColor = { viewModel.settings.addRecentColor(InkTool.Text, it) },
                     onTyping = viewModel::setTypingFinisher,
+                    darkPage = darkPages[tab.id] == true,
                 )
                 DocumentViewer(
                     uri = tab.uri,
@@ -421,6 +432,11 @@ private fun ContextPager(
                     onReopen = { viewModel.reopen(tab.id) },
                     onOpening = { viewModel.opening(tab.id) },
                     onOpened = { viewModel.opened(tab.id) },
+                    dark = darkLooks[tab.id] ?: appDark,
+                    // Back to the app's theme is back to following it.
+                    onDarkChange = { dark -> viewModel.setDarkLook(tab.id, dark.takeIf { it != appDark }) },
+                    onPageLook = { darkPages[tab.id] = it },
+                    barsVisible = barsVisible || inkMode,
                 )
             }
         }
@@ -481,6 +497,7 @@ private fun ContextPager(
                     // Only where a pen decides: with the pen put away, fingers can draw again.
                     fingerDraws = fingersToo.takeIf { fingerDrawing == FingerDrawing.Auto && stylusSeen },
                     onFingerDraws = viewModel.settings::setFingersToo,
+                    darkPage = currentId != null && darkPages[currentId] == true,
                 )
             }
             }

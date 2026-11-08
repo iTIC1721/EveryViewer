@@ -69,7 +69,7 @@ open class TextBlock(val layout: StaticLayout) : FlowBlock() {
 
     override val breaks: FloatArray = FloatArray((layout.lineCount - 1).coerceAtLeast(0)) { layout.getLineTop(it + 1).toFloat() }
 
-    override fun draw(canvas: Canvas) = layout.draw(canvas)
+    override fun draw(canvas: Canvas) = layout.drawLooked(canvas)
 
     override fun find(query: String): List<Found> = TextSearch.find(layout, query)
 
@@ -184,8 +184,8 @@ class FlowBuilder {
      * The finished document, cut into pages of at most [maxPageHeight] at the nearest place a
      * page may end: between blocks or between lines.
      */
-    fun build(maxPageHeight: Float, pageGaps: Boolean): FlowDocument =
-        FlowDocument(placed.toList(), paginate(y, breaks(), maxPageHeight, pageBreaks()), pageGaps, headings.toList(), anchors.toMap())
+    fun build(maxPageHeight: Float, pageGaps: Boolean, darkPaper: Int? = null): FlowDocument =
+        FlowDocument(placed.toList(), paginate(y, breaks(), maxPageHeight, pageBreaks()), pageGaps, headings.toList(), anchors.toMap(), darkPaper)
 
     private companion object {
         val SPACES = Regex("\\s+")
@@ -276,9 +276,19 @@ class FlowDocument(
     override val pageGaps: Boolean,
     private val headings: List<FlowHeading> = emptyList(),
     private val anchors: Map<String, Float> = emptyMap(),
+    /** The paper in the dark look; null: the document has none ([Document.hasDarkLook]). */
+    private val darkPaper: Int? = null,
 ) : Document {
     private val mutex = Mutex()
     private var closed = false
+
+    override val hasDarkLook: Boolean get() = darkPaper != null
+
+    @Volatile
+    override var dark = false
+        set(value) {
+            field = value && darkPaper != null
+        }
 
     override val pageSizes: List<PageSize> =
         (0 until boundaries.size - 1).map { PageSize(FLOW_WIDTH, boundaries[it + 1] - boundaries[it]) }
@@ -305,10 +315,11 @@ class FlowDocument(
                 android.util.Log.w("EveryViewer", "No memory for page $index at ${widthPx}x$heightPx", e)
                 return@withLock null
             }
-            bitmap.eraseColor(Color.WHITE)
+            val dark = dark
+            bitmap.eraseColor(if (dark) darkPaper ?: Color.WHITE else Color.WHITE)
             val canvas = Canvas(bitmap)
             canvas.scale(scale, scale)
-            draw(index, canvas)
+            DocLook.drawing(dark) { draw(index, canvas) }
             bitmap
         }
     }
@@ -316,7 +327,7 @@ class FlowDocument(
     override suspend fun drawPage(index: Int, canvas: Canvas): Boolean = withContext(Dispatchers.Default) {
         mutex.withLock {
             if (closed) return@withLock false
-            draw(index, canvas)
+            DocLook.drawing(false) { draw(index, canvas) }
             true
         }
     }

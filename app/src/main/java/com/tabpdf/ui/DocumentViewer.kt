@@ -9,6 +9,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.layout.boundsInParent
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import com.tabpdf.doc.TextSelection
@@ -62,6 +63,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -229,6 +231,14 @@ fun DocumentViewer(
     /** Told before the file is opened, and once its first page is drawn or it failed to open ([com.tabpdf.tabs.OpenGuard]). */
     onOpening: suspend () -> Unit = {},
     onOpened: suspend () -> Unit = {},
+    /** Show the document in its dark look, if it has one (기획서 5.10). */
+    dark: Boolean = false,
+    /** The look button was pressed: show the document [dark] or not. Null: no button. */
+    onDarkChange: ((Boolean) -> Unit)? = null,
+    /** Told whether the pages are shown dark (the document has a dark look and [dark] is set). */
+    onPageLook: (Boolean) -> Unit = {},
+    /** The bars are on screen: the look button shows with them. */
+    barsVisible: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -346,6 +356,10 @@ fun DocumentViewer(
                 searchIndex = searchIndex,
                 onSearchResults = onSearchResults,
                 onPageDrawn = { drawn.value = true },
+                dark = dark,
+                onDarkChange = onDarkChange,
+                onPageLook = onPageLook,
+                barsVisible = barsVisible,
             ) }
         }
     }
@@ -370,12 +384,23 @@ private fun DocumentPages(
     searchIndex: Int,
     onSearchResults: (Int?) -> Unit,
     onPageDrawn: () -> Unit,
+    dark: Boolean,
+    onDarkChange: ((Boolean) -> Unit)?,
+    onPageLook: (Boolean) -> Unit,
+    barsVisible: Boolean,
 ) {
     val density = LocalDensity.current
     // Pages laid out so far: a document laid out in the background grows (기획서 5.7).
     val progress by (document.progress ?: remember(document) { MutableStateFlow(LayoutProgress(document.pageCount, complete = true)) })
         .collectAsState()
     val strokesByPage = remember(strokes) { strokes.groupBy { it.page } }
+    // The dark look (기획서 5.10): a book's may only show once chapters with one are laid out.
+    val canBeDark = remember(document, progress.pages) { document.hasDarkLook }
+    val shownDark = dark && canBeDark
+    // Set before the pages' renders start (they are launched after this is applied).
+    SideEffect { document.dark = shownDark }
+    val currentOnPageLook by rememberUpdatedState(onPageLook)
+    LaunchedEffect(shownDark) { currentOnPageLook(shownDark) }
     val currentInk by rememberUpdatedState(ink)
     var hover by remember { mutableStateOf<Offset?>(null) }
     // Handwriting has the current gesture: no panning, zooming or tapping for it. Read by the
@@ -391,6 +416,9 @@ private fun DocumentPages(
     if (ink != null) lastInk[0] = ink
     // Where the format bar is, so touches on it stay its own.
     val textBar = remember { arrayOfNulls<Rect>(1) }
+    // Where the look button is while shown, likewise.
+    val lookBounds = remember { arrayOfNulls<Rect>(1) }
+    val viewerOrigin = remember { arrayOf(Offset.Zero) }
     // Read by the gesture handlers, which keep the first composition's functions.
     val currentTexts by rememberUpdatedState(texts)
     val scope = rememberCoroutineScope()
@@ -612,6 +640,9 @@ private fun DocumentPages(
         }
     }
 
+    /** On the look button: its touches are its own. */
+    fun onLookButton(position: Offset) = lookBounds[0]?.contains(position) == true
+
     fun onEditorChrome(position: Offset): Boolean {
         val e = editing ?: return false
         return e.chrome(boxOrigin(e.box), density.density).any { it.contains(position) } || textBar[0]?.contains(position) == true
@@ -707,8 +738,9 @@ private fun DocumentPages(
     Box(
         Modifier
             .fillMaxSize()
+            .onGloballyPositioned { viewerOrigin[0] = it.positionInRoot() }
             // Handwriting first: a pointer that draws is consumed before anything below sees it.
-            .inkInput(LocalInkSurface.current, { currentInk }, ::pageAt, { inkPages() }, onClaim = { inkClaimed[0] = it }) { hover = it }
+            .inkInput(LocalInkSurface.current, { currentInk }, { p -> if (onLookButton(p)) null else pageAt(p) }, { inkPages() }, onClaim = { inkClaimed[0] = it }) { hover = it }
             // Text tool (기획서 5.8.6): a tap makes or opens a box, dragging a box moves it; other
             // drags scroll as ever. The open box and its handles take their own touches.
             .pointerInput(Unit) {
@@ -716,7 +748,7 @@ private fun DocumentPages(
                     val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
                     textClaimed[0] = false
                     val binding = currentInk
-                    if (binding == null || binding.tool != InkTool.Text || inkClaimed[0] || onEditorChrome(down.position)) return@awaitEachGesture
+                    if (binding == null || binding.tool != InkTool.Text || inkClaimed[0] || onEditorChrome(down.position) || onLookButton(down.position)) return@awaitEachGesture
                     val hit = pageAt(down.position)
                     val box = hit?.let { textBoxAt(it, down.position) }
                     val slop = viewConfiguration.touchSlop
@@ -785,7 +817,7 @@ private fun DocumentPages(
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
                     selectionClaimed[0] = false
-                    if (currentInk != null || onHandle(down.position)) return@awaitEachGesture
+                    if (currentInk != null || onHandle(down.position) || onLookButton(down.position)) return@awaitEachGesture
                     val slop = viewConfiguration.touchSlop
                     val letGo = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
                         while (true) {
@@ -828,7 +860,7 @@ private fun DocumentPages(
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
                         // The selection handles and the open text box move themselves.
-                        if (onHandle(down.position) || onEditorChrome(down.position)) return@awaitEachGesture
+                        if (onHandle(down.position) || onEditorChrome(down.position) || onLookButton(down.position)) return@awaitEachGesture
                         var total = Offset.Zero
                         var decided = false
                         var panning = false
@@ -890,8 +922,9 @@ private fun DocumentPages(
             val moving = movingText
             (if (moving == null) texts else texts.map { if (it.id == moving.id) moving else it }).groupBy { it.page }
         }
-        // On the light desk a page needs an edge; on the dark one a white page already stands out.
-        val pageEdge = MaterialTheme.colorScheme.let { if (it.desk.luminance() > 0.5f) it.onSurface else null }
+        // On the light desk a page needs an edge; on the dark one a white page already stands out,
+        // a dark one (기획서 5.10) gets a faint light edge.
+        val pageEdge = MaterialTheme.colorScheme.let { if (it.desk.luminance() > 0.5f) it.onSurface else if (shownDark) Color.White else null }
         // While a text box is open, room below the last page to bring it above the keyboard.
         val typingRoom = if (editing != null) with(density) { (WindowInsets.ime.getBottom(this) + (textBar[0]?.height ?: 0f)).toDp() } else 0.dp
         LazyColumn(
@@ -921,6 +954,7 @@ private fun DocumentPages(
                     currentMatch = searchIndex,
                     edge = pageEdge,
                     onDrawn = onPageDrawn,
+                    dark = shownDark,
                 )
             }
         }
@@ -933,6 +967,15 @@ private fun DocumentPages(
             modifier = Modifier.align(Alignment.TopEnd),
         )
         PageIndicator(listState, progress.pages, progress.complete, active = fastScrolling, Modifier.align(Alignment.BottomEnd))
+        if (onDarkChange != null && canBeDark && editing == null) LookButton(
+            dark = shownDark,
+            onClick = { onDarkChange(!shownDark) },
+            listState = listState,
+            barsVisible = barsVisible,
+            onBounds = { lookBounds[0] = it?.translate(-viewerOrigin[0]) },
+            // Below the bars: the handwriting tools sit under the top bar while drawing.
+            modifier = Modifier.padding(start = 12.dp, top = contentPadding.calculateTopPadding() + if (ink != null) INK_TOOLBAR_HEIGHT else 0.dp),
+        ) else lookBounds[0] = null
         if (selection.isNotEmpty()) {
             val first = selection.first()
             val last = selection.last()
@@ -990,6 +1033,7 @@ private fun DocumentPages(
                         val now = if (e.box.width > 0f) e.box.width else e.size.width / k
                         e.box = e.box.copy(width = (now + dx / k).coerceIn(InkTextLayout.MIN_WIDTH, INK_PAGE_WIDTH - e.box.x))
                     },
+                    darkPage = shownDark,
                 )
                 val binding = ink
                 if (binding != null) TextFormatBar(
@@ -1003,6 +1047,7 @@ private fun DocumentPages(
                     },
                     onDone = ::finishTyping,
                     onShown = { if (!it) textBar[0] = null },
+                    darkPage = shownDark,
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .windowInsetsPadding(WindowInsets.ime.union(WindowInsets.navigationBars))
@@ -1085,11 +1130,16 @@ private fun PageImage(
     edge: Color?,
     /** Told each time the page has been drawn (or found not drawable). */
     onDrawn: () -> Unit,
+    /** Drawn in the document's dark look (기획서 5.10); handwriting's black and white swap with it. */
+    dark: Boolean,
 ) {
     var bitmap by remember { mutableStateOf<Bitmap?>(null) }
-    LaunchedEffect(renderWidth) {
+    // The look the bitmap was drawn in: a new look is drawn at once, a new zoom after a moment.
+    val drawnDark = remember { booleanArrayOf(dark) }
+    LaunchedEffect(renderWidth, dark) {
         // Keep showing the previous (blurrier) bitmap while a sharper one renders.
-        if (bitmap != null) delay(150)
+        if (bitmap != null && drawnDark[0] == dark) delay(150)
+        drawnDark[0] = dark
         // A page that can't be drawn stays blank; the rest of the document is still readable.
         guarded(null) { document.renderPage(index, renderWidth) }?.takeIf { it.allocationByteCount <= MAX_DRAWN_BYTES }?.let { bitmap = it }
         onDrawn()
@@ -1112,7 +1162,7 @@ private fun PageImage(
                 androidx.compose.ui.geometry.Size(pageWidth + 1f, size.height + 1f), style = Stroke(width = 1f),
             )
         }
-        if (image == null || appear < 1f) drawRect(Paper, topLeft = Offset(left, 0f), size = dstSize.toSize())
+        if (image == null || appear < 1f) drawRect(if (dark) DarkPaper else Paper, topLeft = Offset(left, 0f), size = dstSize.toSize())
         if (image != null) drawImage(image, dstOffset = IntOffset(left.roundToInt(), 0), dstSize = dstSize, alpha = appear)
         for (r in selected) {
             drawRect(
@@ -1128,7 +1178,8 @@ private fun PageImage(
             for (r in match.rects) {
                 val topLeft = Offset(left + r.left * pageWidth - pad, r.top * size.height - pad)
                 val box = androidx.compose.ui.geometry.Size(r.width() * pageWidth + 2 * pad, r.height() * size.height + 2 * pad)
-                drawRect(color, topLeft, box, blendMode = BlendMode.Multiply)
+                // Multiplying darkens, which shows nothing on a page shown dark: there, see-through on top.
+                if (dark) drawRect(color.copy(alpha = 0.45f), topLeft, box) else drawRect(color, topLeft, box, blendMode = BlendMode.Multiply)
                 // Multiplying vanishes on dark or coloured backgrounds; outline the current match too.
                 if (i == currentMatch) drawRect(CURRENT_MATCH, topLeft, box, style = Stroke(width = 2 * pad))
             }
@@ -1139,7 +1190,7 @@ private fun PageImage(
             // A stroke that ran off the page is cut at its edge.
             native.clipRect(left, 0f, left + pageWidth, size.height)
             native.translate(left, 0f)
-            InkPainter.draw(native, strokes, texts, pageWidth, skipText)
+            InkPainter.draw(native, strokes, texts, pageWidth, skipText, dark)
             native.restore()
         }
     }

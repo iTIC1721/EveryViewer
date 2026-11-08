@@ -75,6 +75,12 @@ class StreamedTextDocument private constructor(
 
     override val pageGaps: Boolean get() = false
 
+    /** Text has no colours of its own: the viewer's dark look suits any (기획서 5.10). */
+    override val hasDarkLook: Boolean get() = true
+
+    @Volatile
+    override var dark = false
+
     override val pageSizes: List<PageSize> = object : AbstractList<PageSize>() {
         override val size: Int get() = pages.size - 1
         override fun get(index: Int) = PageSize(FLOW_WIDTH, (pages[index + 1] - pages[index]).toFloat())
@@ -214,10 +220,11 @@ class StreamedTextDocument private constructor(
                 android.util.Log.w("EveryViewer", "No memory for page $index at ${widthPx}x$heightPx", e)
                 return@withLock null
             }
-            bitmap.eraseColor(Color.WHITE)
+            val dark = dark
+            bitmap.eraseColor(if (dark) DocLook.PAPER else Color.WHITE)
             val canvas = Canvas(bitmap)
             canvas.scale(scale, scale)
-            draw(index, canvas)
+            DocLook.drawing(dark) { draw(index, canvas) }
             bitmap
         }
     }
@@ -225,7 +232,7 @@ class StreamedTextDocument private constructor(
     override suspend fun drawPage(index: Int, canvas: Canvas): Boolean = withContext(Dispatchers.Default) {
         mutex.withLock {
             if (closed || index >= pageCount) return@withLock false
-            draw(index, canvas)
+            DocLook.drawing(false) { draw(index, canvas) }
             true
         }
     }
@@ -241,7 +248,7 @@ class StreamedTextDocument private constructor(
             canvas.save()
             // Relative to the page, so far down a long file nothing is lost to float precision.
             canvas.translate(TextDocument.MARGIN, (c.top - top).toFloat())
-            layout(i).draw(canvas)
+            layout(i).drawLooked(canvas)
             canvas.restore()
         }
         canvas.restore()

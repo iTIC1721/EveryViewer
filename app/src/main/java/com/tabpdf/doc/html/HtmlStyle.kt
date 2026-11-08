@@ -1,5 +1,6 @@
 package com.tabpdf.doc.html
 
+import com.tabpdf.doc.DocLook
 import com.tabpdf.doc.toFiniteFloatOrNull
 import com.tabpdf.doc.office.Align
 import com.tabpdf.doc.office.FontKind
@@ -17,8 +18,8 @@ class Len(val px: Float, val percent: Float = 0f, val auto: Boolean = false) {
 
 enum class WhiteSpace { Normal, Pre, PreLine }
 
-/** A border side in CSS pixels. */
-class Side(val width: Float, val color: Int)
+/** A border side in CSS pixels, its colour in the usual look and the dark one. */
+class Side(val width: Float, val color: Int, val darkColor: Int)
 
 /**
  * An element's computed style, the part of CSS this viewer uses. Lengths are CSS pixels. The
@@ -46,6 +47,9 @@ class Style private constructor() {
     var subscript = false
     /** Custom properties (`--name`), inherited like the rest of this group. */
     var vars: Map<String, String> = emptyMap()
+    /** [color] and [vars] in the dark look (기획서 5.10): only colours differ between the looks. */
+    var darkColor = 0xFF000000.toInt()
+    var darkVars: Map<String, String> = emptyMap()
 
     var display = "inline"
     var background = 0
@@ -54,6 +58,8 @@ class Style private constructor() {
     val borderWidth = floatArrayOf(3f, 3f, 3f, 3f)
     val borderStyle = arrayOf("none", "none", "none", "none")
     val borderColor = arrayOfNulls<Int>(4)
+    var darkBackground = 0
+    val darkBorderColor = arrayOfNulls<Int>(4)
     var width: Len? = null
     var maxWidth: Len? = null
     var height: Len? = null
@@ -64,7 +70,7 @@ class Style private constructor() {
     /** Border side [i] (top, right, bottom, left), or null if none is drawn. */
     fun border(i: Int): Side? {
         if (borderStyle[i] == "none" || borderStyle[i] == "hidden" || borderWidth[i] <= 0f) return null
-        return Side(borderWidth[i], borderColor[i] ?: color)
+        return Side(borderWidth[i], borderColor[i] ?: color, darkBorderColor[i] ?: darkColor)
     }
 
     val hasBorder: Boolean get() = (0..3).any { border(it) != null }
@@ -94,6 +100,8 @@ class Style private constructor() {
         it.superscript = superscript
         it.subscript = subscript
         it.vars = vars
+        it.darkColor = darkColor
+        it.darkVars = darkVars
     }
 
     companion object {
@@ -110,6 +118,19 @@ class Style private constructor() {
 class StyleResolver(private val author: Stylesheet) {
     private var rootFontSize = 16f
 
+    /**
+     * Work out the dark look's colours too ([Style.darkColor] and the rest), for a page that has
+     * one; otherwise they are left as they come.
+     */
+    var dual = false
+
+    /**
+     * The page says it suits dark screens (`color-scheme: dark` or `light dark`, in a meta tag or
+     * on the root): in the dark look, text and links not coloured by the page take a browser's
+     * dark defaults. Found while computing the root and body, or set beforehand from the meta tag.
+     */
+    var schemeDark = false
+
     /** Selector matching done for this page, which has a limit. */
     private val steps = MatchSteps()
 
@@ -121,14 +142,14 @@ class StyleResolver(private val author: Stylesheet) {
         val inline = e.attr("style").takeIf { it.isNotBlank() }?.let { Stylesheet.parseDeclarations(it) } ?: emptyList()
         declarations += author.declarationsFor(e, inline, steps)
 
-        // Later declarations win; shorthands are spread into the properties they set.
-        val values = LinkedHashMap<String, String>()
+        // Later declarations win; shorthands are spread into the properties they set, after
+        // custom properties are put in (`background: var(--bg)` is a colour only once it is).
         val vars = LinkedHashMap<String, String>()
-        for (d in declarations) {
-            if (d.property.startsWith("--")) vars[d.property] = d.value else expand(d.property, d.value, values)
-        }
+        for (d in declarations) if (d.property.startsWith("--")) vars[d.property] = d.value
         if (vars.isNotEmpty()) s.vars = s.vars + vars
-        val resolved = values.mapValues { (_, v) -> substitute(v, s.vars, 0) }
+        val values = LinkedHashMap<String, String>()
+        for (d in declarations) if (!d.property.startsWith("--")) expand(d.property, substitute(d.value, s.vars, 0), values)
+        val resolved: Map<String, String> = values
 
         resolved["font-size"]?.let { v -> fontSize(v, parent.fontSize)?.let { s.fontSize = it.coerceIn(1f, 500f) } }
         if (e.parent() == null || e.normalName() == "html") rootFontSize = s.fontSize
@@ -209,7 +230,43 @@ class StyleResolver(private val author: Stylesheet) {
             }
         }
         if (e.hasAttr("hidden")) s.display = "none"
+        val root = e.parent() == null || e.normalName() == "html" || e.normalName() == "body"
+        if (root) resolved["color-scheme"]?.lowercase()?.let { if ("dark" in it && "only light" !in it) schemeDark = true }
+        if (dual) darkColors(e, s, parent, inline, root)
         return s
+    }
+
+    /**
+     * The dark look's colours of [e]: the same cascade with the rules for the dark look, of which
+     * only colours are taken, so the page is laid out the same in both looks.
+     */
+    private fun darkColors(e: Element, s: Style, parent: Style, inline: List<Declaration>, root: Boolean) {
+        val declarations = ArrayList<Declaration>()
+        declarations += USER_AGENT.declarationsFor(e, emptyList(), steps)
+        if (schemeDark) declarations += USER_AGENT_DARK.declarationsFor(e, emptyList(), steps)
+        declarations += presentational(e)
+        declarations += author.declarationsFor(e, inline, steps, dark = true)
+        val vars = LinkedHashMap<String, String>()
+        for (d in declarations) if (d.property.startsWith("--")) vars[d.property] = d.value
+        s.darkVars = if (vars.isEmpty()) parent.darkVars else parent.darkVars + vars
+        val values = LinkedHashMap<String, String>()
+        for (d in declarations) if (!d.property.startsWith("--")) expand(d.property, substitute(d.value, s.darkVars, 0), values)
+        s.darkColor = parent.darkColor
+        // A browser's dark text where the page leaves it.
+        if (root && schemeDark && "color" !in values && parent.darkColor == parent.color) s.darkColor = DocLook.CANVAS_TEXT
+        for ((property, value) in values) {
+            val v = value.trim()
+            val lower = v.lowercase()
+            if (lower == "inherit" || lower == "unset" || lower == "revert") continue
+            when (property) {
+                "color" -> CssValues.color(v, s.darkColor)?.let { s.darkColor = it }
+                "background-color" -> CssValues.color(v, s.darkColor)?.let { s.darkBackground = it }
+                else -> if (property.matches(BORDER_PART) && property.endsWith("-color")) {
+                    val i = SIDES.indexOf(property.split('-')[1])
+                    s.darkBorderColor[i] = if (lower == "currentcolor") null else CssValues.color(v, s.darkColor)
+                }
+            }
+        }
     }
 
     private fun fontSize(value: String, parent: Float): Float? {
@@ -374,6 +431,11 @@ class StyleResolver(private val author: Stylesheet) {
                 "word-wrap", "overflow-wrap" -> Unit
                 else -> out[property] = value
             }
+        }
+
+        /** A browser's defaults that differ in the dark look of a page made for it ([schemeDark]). */
+        private val USER_AGENT_DARK = Stylesheet().apply {
+            add("a:link { color: #9e9eff }")
         }
 
         /** What a browser does with no CSS (the parts of its default style sheet that matter here). */

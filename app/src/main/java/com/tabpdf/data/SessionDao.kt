@@ -62,6 +62,12 @@ abstract class SessionDao {
     @Query("UPDATE tabs SET lastOpenedAt = :time WHERE id = :id")
     abstract suspend fun touchTab(id: String, time: Long)
 
+    @Query("UPDATE tabs SET darkLook = :dark WHERE id = :id")
+    abstract suspend fun setDarkLook(id: String, dark: Boolean?)
+
+    @Query("SELECT id, darkLook FROM tabs WHERE darkLook IS NOT NULL")
+    abstract suspend fun darkLooks(): List<TabLook>
+
     @Query(
         "UPDATE tabs SET page = :page, pageOffset = :pageOffset, zoom = :zoom, panX = :panX WHERE id = :id"
     )
@@ -111,3 +117,6 @@ abstract class SessionDao {
 
 /** A tab's file and what kind of file it is (for [SessionDao.tabFiles]). */
 data class TabFile(val uri: String, val format: String)
+
+/** The look chosen for a tab's document (for [SessionDao.darkLooks]). */
+data class TabLook(val id: String, val darkLook: Boolean?)

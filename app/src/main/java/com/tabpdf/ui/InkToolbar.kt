@@ -71,6 +71,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import com.tabpdf.ink.Brushes
 import com.tabpdf.ink.INK_PAGE_WIDTH
+import com.tabpdf.ink.InkOnDark
 import com.tabpdf.ink.InkTool
 import com.tabpdf.ink.ToolStyle
 import kotlin.math.roundToInt
@@ -108,11 +109,16 @@ fun InkToolbar(
     /** Whether fingers draw too, when a pen is in use; null hides the switch. */
     fingerDraws: Boolean?,
     onFingerDraws: (Boolean) -> Unit,
+    /**
+     * The page is shown dark (기획서 5.10): colours show as they look there, on that page's
+     * colour, black and white swapped ([InkOnDark]); colours are still kept as on a light page.
+     */
+    darkPage: Boolean = false,
 ) {
     var panelFor by remember { mutableStateOf<InkTool?>(null) }
     Surface(Modifier.barEdge(), color = MaterialTheme.colorScheme.bar, contentColor = MaterialTheme.colorScheme.onSurface) {
         Row(
-            Modifier.fillMaxWidth().height(52.dp).padding(horizontal = 12.dp),
+            Modifier.fillMaxWidth().height(INK_TOOLBAR_HEIGHT).padding(horizontal = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             for (t in InkTool.entries) {
@@ -133,6 +139,7 @@ fun InkToolbar(
                             onAddPreset = { onAddPreset(t, styles.getValue(t)) },
                             onRemovePreset = { onRemovePreset(t, it) },
                             onCustomColor = { onCustomColor(t, it) },
+                            darkPage = darkPage,
                         )
                     }
                 }
@@ -233,6 +240,9 @@ private fun DrawScope.drawTool(tool: InkTool, ink: Color, body: Color, outline: 
     }
 }
 
+/** The tool bar's height, under the top bar while handwriting. */
+internal val INK_TOOLBAR_HEIGHT = 52.dp
+
 /** Swatches in one row: the panel's inner width (288dp) holds this many. */
 private const val SWATCHES_PER_ROW = 10
 
@@ -254,8 +264,11 @@ private fun StylePanel(
     onCustomColor: (Int) -> Unit,
     onAddPreset: () -> Unit,
     onRemovePreset: (index: Int) -> Unit,
+    darkPage: Boolean,
 ) {
     var picking by remember { mutableStateOf(false) }
+    fun shown(c: Int) = InkOnDark.color(c, darkPage)
+    val paper = if (darkPage) DarkPaper else Paper
     Column(Modifier.width(320.dp).padding(horizontal = 16.dp, vertical = 12.dp)) {
         if (tool != InkTool.Eraser) {
             Row {
@@ -263,6 +276,8 @@ private fun StylePanel(
                     PresetSwatch(
                         tool, preset, index,
                         selected = preset == style,
+                        paper = paper,
+                        shown = ::shown,
                         onClick = { onStyle(preset) },
                         onRemove = { onRemovePreset(index) },
                     )
@@ -285,7 +300,7 @@ private fun StylePanel(
             val picked = recent.filter { it !in toolColors }.take(SWATCHES_PER_ROW - 1 - toolColors.size)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 for (c in toolColors + picked) {
-                    Swatch(Color(c), selected = c == style.color) { onStyle(style.copy(color = c)) }
+                    Swatch(Color(shown(c)), selected = c == style.color, paper = paper) { onStyle(style.copy(color = c)) }
                 }
                 CustomColorSwatch { picking = true }
                 // Fewer than a row: the empty places go at the end, so the swatches stay evenly spaced.
@@ -293,7 +308,7 @@ private fun StylePanel(
             }
             Spacer(Modifier.height(12.dp))
         }
-        SizePreview(tool, style, Modifier.fillMaxWidth().height(64.dp))
+        SizePreview(tool, style.copy(color = shown(style.color)), paper, Modifier.fillMaxWidth().height(64.dp))
         val range = Brushes.sizeRange(tool)
         Row(verticalAlignment = Alignment.CenterVertically) {
             Slider(
@@ -313,10 +328,11 @@ private fun StylePanel(
     }
     if (picking) {
         ColorPickerDialog(
-            initial = style.color,
+            initial = shown(style.color),
             onPick = {
                 picking = false
-                val color = if (tool == InkTool.Highlighter) Brushes.highlighterAlpha(it) else it
+                // Picked as it is to look on this page; kept as it looks on a light one.
+                val color = shown(if (tool == InkTool.Highlighter) Brushes.highlighterAlpha(it) else it)
                 onStyle(style.copy(color = color))
                 onCustomColor(color)
             },
@@ -339,6 +355,8 @@ private fun PresetSwatch(
     preset: ToolStyle,
     index: Int,
     selected: Boolean,
+    paper: Color,
+    shown: (Int) -> Int,
     onClick: () -> Unit,
     onRemove: () -> Unit,
 ) {
@@ -362,10 +380,10 @@ private fun PresetSwatch(
                 val r = 12.dp.toPx()
                 if (selected) drawCircle(ring, r, style = Stroke(width = 2.dp.toPx()))
                 val inner = if (selected) r - 4.dp.toPx() else r - 1.dp.toPx()
-                drawCircle(Paper, inner)
+                drawCircle(paper, inner)
                 drawCircle(swatchEdge, inner, style = Stroke(width = 1.dp.toPx()))
                 val dot = 2.dp.toPx() + share * (inner - 4.dp.toPx())
-                drawCircle(Color(preset.color), dot)
+                drawCircle(Color(shown(preset.color)), dot)
             }
         }
         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
@@ -374,9 +392,9 @@ private fun PresetSwatch(
     }
 }
 
-/** A colour to pick, on white so see-through highlighter colours look as they will on paper. */
+/** A colour to pick, on the page's colour so see-through highlighter colours look as they will there. */
 @Composable
-internal fun Swatch(color: Color, selected: Boolean, onClick: () -> Unit) {
+internal fun Swatch(color: Color, selected: Boolean, paper: Color = Paper, onClick: () -> Unit) {
     val ring = MaterialTheme.colorScheme.primary
     val swatchEdge = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
     Box(
@@ -391,7 +409,7 @@ internal fun Swatch(color: Color, selected: Boolean, onClick: () -> Unit) {
             val r = 12.dp.toPx()
             if (selected) drawCircle(ring, r, style = Stroke(width = 2.dp.toPx()))
             val inner = if (selected) r - 4.dp.toPx() else r - 1.dp.toPx()
-            drawCircle(Paper, inner)
+            drawCircle(paper, inner)
             drawCircle(color, inner)
             drawCircle(swatchEdge, inner, style = Stroke(width = 1.dp.toPx()))
         }
@@ -416,6 +434,9 @@ internal fun CustomColorSwatch(onClick: () -> Unit) {
     }
 }
 
+/** A page in the dark look of text and Markdown ([com.tabpdf.doc.DocLook.PAPER]), behind swatches for such a page. */
+internal val DarkPaper = Color(com.tabpdf.doc.DocLook.PAPER)
+
 private val HueColors = listOf(Color.Red, Color.Yellow, Color.Green, Color.Cyan, Color.Blue, Color.Magenta, Color.Red)
 
 /**
@@ -423,14 +444,14 @@ private val HueColors = listOf(Color.Red, Color.Yellow, Color.Green, Color.Cyan,
  * highlighter's colour and width, or the eraser's reach as a circle.
  */
 @Composable
-private fun SizePreview(tool: InkTool, style: ToolStyle, modifier: Modifier) {
+private fun SizePreview(tool: InkTool, style: ToolStyle, paper: Color, modifier: Modifier) {
     val density = LocalDensity.current
     // Page units to pixels at normal zoom, where a page is as wide as the screen.
     val unit = with(density) { LocalConfiguration.current.screenWidthDp.dp.toPx() } / INK_PAGE_WIDTH
     val edge = MaterialTheme.colorScheme.outlineVariant
     val reach = MaterialTheme.colorScheme.outline
     val shape = MaterialTheme.shapes.small
-    Canvas(modifier.clip(shape).background(Paper).border(1.dp, edge, shape)) {
+    Canvas(modifier.clip(shape).background(paper).border(1.dp, edge, shape)) {
         val width = style.size * unit
         if (tool == InkTool.Text) {
             // Sample letters at that size, as they will be typed.

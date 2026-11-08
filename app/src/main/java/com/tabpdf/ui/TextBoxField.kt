@@ -40,6 +40,19 @@ class TextBoxField(context: Context, initial: RichText, scale: Float) : EditText
     /** Told after each change of the text, its styles, or the selection. */
     var onChange: () -> Unit = {}
 
+    /** The page under the box is shown dark (기획서 5.10): black and white text show swapped, as on the page. */
+    var darkPage = false
+        set(value) {
+            if (field != value) {
+                field = value
+                invalidate()
+            }
+        }
+
+    override fun onDraw(canvas: android.graphics.Canvas) {
+        com.tabpdf.doc.DocLook.drawing(darkPage) { super.onDraw(canvas) }
+    }
+
     private var loading = false
     private var caretAfterEdit = -1
 

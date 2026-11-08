@@ -120,6 +120,9 @@ data class TextStyle(
     val color: Int = 0xFF000000.toInt(),
     /** Highlight behind the text, or 0. */
     val background: Int = 0,
+    /** [color] and [background] in the dark look (기획서 5.10, HTML); null: the same as in the usual one. */
+    val darkColor: Int? = null,
+    val darkBackground: Int? = null,
     val font: FontKind = FontKind.Sans,
     /** Horizontal glyph scale, 1 = normal (Hangul "장평"). */
     val scaleX: Float = 1f,
@@ -180,6 +183,8 @@ class Table(
 class Box(
     val blocks: List<OfficeBlock>,
     val fill: Int = 0,
+    /** [fill] in the dark look; null: the same. */
+    val darkFill: Int? = null,
     val borders: Borders = Borders.None,
     val padding: Insets = Insets(0f, 0f, 0f, 0f),
     val indentLeft: Float = 0f,
@@ -200,6 +205,8 @@ class TableCell(
     val borders: Borders = Borders.None,
     val padding: Insets = Insets(5.4f, 0f, 5.4f, 0f),
     val verticalAlign: VerticalAlign = VerticalAlign.Top,
+    /** [fill] in the dark look; null: the same. */
+    val darkFill: Int? = null,
 )
 
 enum class VerticalAlign { Top, Center, Bottom }
@@ -212,8 +219,8 @@ enum class VerticalAlign { Top, Center, Bottom }
  */
 class Floating(val x: Float, val fromPage: Boolean, val align: Align?, val y: Float, val behind: Boolean)
 
-/** A line: [width] in points and colour; null sides are not drawn. */
-data class Border(val width: Float, val color: Int)
+/** A line: [width] in points and colour ([darkColor] in the dark look, null: the same); null sides are not drawn. */
+data class Border(val width: Float, val color: Int, val darkColor: Int? = null)
 
 data class Borders(val left: Border?, val top: Border?, val right: Border?, val bottom: Border?) {
     companion object {

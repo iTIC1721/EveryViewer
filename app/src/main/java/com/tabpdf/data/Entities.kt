@@ -53,6 +53,8 @@ data class TabEntity(
     /** Horizontal pan, as a fraction of the viewport width. */
     val panX: Float,
     val lastOpenedAt: Long,
+    /** The look the reader chose for the document (기획서 5.10): dark or not; null follows the app's theme. */
+    val darkLook: Boolean? = null,
 )
 
 /** Single row (id 0) holding app-wide state. */
