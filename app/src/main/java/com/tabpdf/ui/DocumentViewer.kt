@@ -1046,12 +1046,13 @@ private fun DocumentPages(
             modifier = Modifier.padding(start = 8.dp, top = contentPadding.calculateTopPadding() + if (ink != null) INK_TOOLBAR_HEIGHT else 0.dp),
         ) {
             if (onToggleBookmark != null) {
-                // The page at the top of the screen, as the page number shows it.
+                // The page being read, as the page number shows it. Kept at the top of the screen
+                // where that is in the page (a long page read on down), else at the page's top.
                 val topPx = with(density) { contentPadding.calculateTopPadding().toPx() }
                 val spot by remember(listState, topPx) {
                     derivedStateOf {
                         val info = listState.layoutInfo
-                        info.visibleItemsInfo.firstOrNull { it.offset - info.viewportStartOffset + it.size > topPx }?.let { item ->
+                        listState.centerPage()?.let { item ->
                             item.index to ((topPx - (item.offset - info.viewportStartOffset)) / item.size).coerceIn(0f, 1f)
                         }
                     }
@@ -1478,17 +1479,19 @@ private fun FastScroller(
 }
 
 /** "12 / 240", shown while scrolling (or [active]) and briefly after; "240+" while more pages are being laid out. */
+/**
+ * The page being read: the one across the middle of the screen (in the gap between two, the one
+ * below). The page number and the bookmark button both go by it (기획서 5.5).
+ */
+private fun LazyListState.centerPage(): androidx.compose.foundation.lazy.LazyListItemInfo? {
+    val info = layoutInfo
+    val center = (info.viewportStartOffset + info.viewportEndOffset) / 2
+    return info.visibleItemsInfo.firstOrNull { it.offset + it.size > center } ?: info.visibleItemsInfo.lastOrNull()
+}
+
 @Composable
 private fun PageIndicator(listState: LazyListState, pageCount: Int, complete: Boolean, active: Boolean, modifier: Modifier) {
-    val currentPage by remember {
-        derivedStateOf {
-            val info = listState.layoutInfo
-            val center = (info.viewportStartOffset + info.viewportEndOffset) / 2
-            val item = info.visibleItemsInfo.firstOrNull { it.offset + it.size > center }
-                ?: info.visibleItemsInfo.lastOrNull()
-            (item?.index ?: 0) + 1
-        }
-    }
+    val currentPage by remember { derivedStateOf { (listState.centerPage()?.index ?: 0) + 1 } }
     var visible by remember { mutableStateOf(false) }
     LaunchedEffect(listState.isScrollInProgress, active, currentPage) {
         if (listState.isScrollInProgress || active) {
