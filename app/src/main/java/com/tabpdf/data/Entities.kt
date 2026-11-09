@@ -55,6 +55,11 @@ data class TabEntity(
     val lastOpenedAt: Long,
     /** The look the reader chose for the document (기획서 5.10): dark or not; null follows the app's theme. */
     val darkLook: Boolean? = null,
+    /**
+     * Where the file came from, when that is not [uri] (a copy) or to know it again (기획서 5.1:
+     * a file opened again shows its tab). Null for tabs opened before v7.
+     */
+    val sourceUri: String? = null,
 )
 
 /** Single row (id 0) holding app-wide state. */

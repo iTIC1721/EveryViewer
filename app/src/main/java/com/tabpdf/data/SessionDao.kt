@@ -16,6 +16,7 @@ data class TabPlacement(
     val isInternalCopy: Boolean,
     val displayName: String,
     val format: String,
+    val sourceUri: String?,
 )
 
 @Dao
@@ -49,12 +50,16 @@ abstract class SessionDao {
 
     @Query(
         "UPDATE tabs SET groupId = :groupId, position = :position, uri = :uri, " +
-            "isInternalCopy = :isInternalCopy, displayName = :displayName, format = :format WHERE id = :id"
+            "isInternalCopy = :isInternalCopy, displayName = :displayName, format = :format, " +
+            "sourceUri = :sourceUri WHERE id = :id"
     )
     abstract suspend fun updatePlacement(
         id: String, groupId: String?, position: Int, uri: String, isInternalCopy: Boolean, displayName: String,
-        format: String,
+        format: String, sourceUri: String?,
     )
+
+    @Query("SELECT id, lastOpenedAt FROM tabs")
+    abstract suspend fun lastOpened(): List<TabOpened>
 
     @Query("SELECT uri, format FROM tabs")
     abstract suspend fun tabFiles(): List<TabFile>
@@ -99,12 +104,12 @@ abstract class SessionDao {
         val inserts = mutableListOf<TabEntity>()
         for (t in tabs) {
             if (t.id in existing) {
-                updatePlacement(t.id, t.groupId, t.position, t.uri, t.isInternalCopy, t.displayName, t.format)
+                updatePlacement(t.id, t.groupId, t.position, t.uri, t.isInternalCopy, t.displayName, t.format, t.sourceUri)
             } else {
                 val s = newTabStates[t.id] ?: ViewerState()
                 inserts += TabEntity(
                     t.id, t.groupId, t.position, t.uri, t.isInternalCopy, t.displayName, t.format,
-                    s.page, s.pageOffset, s.zoom, s.panX, now,
+                    s.page, s.pageOffset, s.zoom, s.panX, now, sourceUri = t.sourceUri,
                 )
             }
         }
@@ -117,6 +122,9 @@ abstract class SessionDao {
 
 /** A tab's file and what kind of file it is (for [SessionDao.tabFiles]). */
 data class TabFile(val uri: String, val format: String)
+
+/** When a tab was last shown (for [SessionDao.lastOpened]). */
+data class TabOpened(val id: String, val lastOpenedAt: Long)
 
 /** The look chosen for a tab's document (for [SessionDao.darkLooks]). */
 data class TabLook(val id: String, val darkLook: Boolean?)

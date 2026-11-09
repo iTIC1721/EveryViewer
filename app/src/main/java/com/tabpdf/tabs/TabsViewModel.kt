@@ -56,6 +56,9 @@ data class BundleEdit(
     val originalName: String,
 )
 
+/** A file opened from another app was already open: tab shown instead, [uri] can still get a new one. */
+data class Revealed(val id: Long, val uri: Uri)
+
 /** Something just closed that the snackbar can bring back. */
 data class UndoOffer(val id: Long, val message: String)
 
@@ -93,6 +96,10 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
     val undoOffer: StateFlow<UndoOffer?> = _undoOffer.asStateFlow()
     private var undoable: Closed? = null
     private var nextUndoId = 0L
+
+    private val _revealed = MutableStateFlow<Revealed?>(null)
+    val revealed: StateFlow<Revealed?> = _revealed.asStateFlow()
+    private var nextRevealId = 0L
 
     private val _pageJump = MutableStateFlow<PageJump?>(null)
     val pageJump: StateFlow<PageJump?> = _pageJump.asStateFlow()
@@ -174,7 +181,8 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
     /**
      * Opens [files] in [groupId] (null: as ungrouped tabs) and shows the first one. A file already
      * open gets another tab all the same, as a browser opens a page twice (기획서 11장 3번): each
-     * tab keeps its own place and handwriting. With [askToBundle], several files wait for the
+     * tab keeps its own place and handwriting. Only a file from another app looks for its tab first
+     * ([findOpen]). With [askToBundle], several files wait for the
      * choice between a tab each and one bundle ([openChoice]). With [asNewGroup], ungrouped files
      * go into a new unnamed group instead.
      */
@@ -236,7 +244,45 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
     private fun bundleName(first: String, count: Int) = "${first.substringBeforeLast('.')} 외 ${count - 1}개"
 
     private fun newTab(file: OpenedFile, groupId: String?) =
-        DocTab(UUID.randomUUID().toString(), groupId, file.uri, file.name, file.isInternalCopy, file.format)
+        DocTab(UUID.randomUUID().toString(), groupId, file.uri, file.name, file.isInternalCopy, file.format, source = file.source)
+
+    /**
+     * The tab already showing the file at [uri], for a file opened from another app (기획서 5.1):
+     * the current tab if it is one, else the one shown last. Bundles don't count, they are files
+     * of their own (11장 43번).
+     */
+    suspend fun findOpen(uri: Uri): DocTab? {
+        loadJob.join()
+        val s = current()
+        val tabs = s.allTabs.filter { it.format != FileFormat.Bundle }
+        if (tabs.isEmpty()) return null
+        val shown = repository.lastOpened()
+        val ordered = tabs.sortedWith(
+            compareByDescending<DocTab> { it.id == s.currentTabId }.thenByDescending { shown[it.id] ?: 0L },
+        )
+        return FileAccess.findSame(app, uri, ordered)
+    }
+
+    /**
+     * Shows [tab], found by [findOpen] for [uri], instead of opening the file again; the snackbar
+     * offers a new tab all the same. The tab remembers [uri], so it is found quicker next time.
+     */
+    fun reveal(tab: DocTab, uri: Uri) {
+        val s = current()
+        val now = s.tab(tab.id) ?: return
+        if (now.source != uri) {
+            commit(s.replaceTab(now.copy(source = uri)).copy(currentTabId = now.id))
+            app.enqueueWrite { repository.setCurrentTab(now.id) }
+        } else {
+            select(now.id)
+        }
+        _revealed.value = Revealed(nextRevealId++, uri)
+    }
+
+    /** The snackbar for [reveal] [id] is gone (not shown again when the screen is made anew). */
+    fun revealShown(id: Long) {
+        if (_revealed.value?.id == id) _revealed.value = null
+    }
 
     /** Shows tab [id] in the viewer. */
     fun select(id: String) {
@@ -377,7 +423,7 @@ class TabsViewModel(application: Application) : AndroidViewModel(application) {
         // Bumping the revision makes the viewer retry even when the same location was picked again.
         val updated = old.copy(
             uri = file.uri, name = file.name, isInternalCopy = file.isInternalCopy, format = file.format,
-            revision = old.revision + 1,
+            revision = old.revision + 1, source = file.source,
         )
         commit(s.replaceTab(updated))
         app.enqueueWrite { releaseIfUnused(old) }

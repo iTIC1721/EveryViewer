@@ -53,8 +53,26 @@ public class TestPdfProvider extends ContentProvider {
 
     @Override
     public Cursor query(Uri uri, String[] projection, String selection, String[] args, String sort) {
-        MatrixCursor cursor = new MatrixCursor(new String[] {OpenableColumns.DISPLAY_NAME});
-        cursor.addRow(new Object[] {uri.getLastPathSegment()});
+        String[] columns = projection != null ? projection : new String[] {OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE};
+        Object[] row = new Object[columns.length];
+        for (int i = 0; i < columns.length; i++) {
+            if (OpenableColumns.DISPLAY_NAME.equals(columns[i])) {
+                row[i] = uri.getLastPathSegment();
+            } else if (OpenableColumns.SIZE.equals(columns[i])) {
+                // As file apps do: the size, so a file opened again can be known (기획서 5.1).
+                try (InputStream in = getContext().getAssets().open(ASSET)) {
+                    long size = 0;
+                    byte[] buffer = new byte[8192];
+                    int n;
+                    while ((n = in.read(buffer)) > 0) size += n;
+                    row[i] = size;
+                } catch (IOException e) {
+                    row[i] = null;
+                }
+            }
+        }
+        MatrixCursor cursor = new MatrixCursor(columns);
+        cursor.addRow(row);
         return cursor;
     }
 

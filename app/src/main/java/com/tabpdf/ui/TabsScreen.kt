@@ -76,6 +76,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
+import android.net.Uri
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
@@ -152,6 +153,7 @@ fun TabsScreen(
     onRelocate: (DocTab) -> Unit,
     /** Opens the file picker for files to add to the bundle being edited. */
     onAddToBundle: () -> Unit,
+    onOpenAgain: (Uri) -> Unit,
 ) {
     // Loading the saved session takes a few ms; show just the background until then, so the pager
     // can start on the saved tab instead of jumping to it.
@@ -160,6 +162,7 @@ fun TabsScreen(
         return
     }
     val undoOffer by viewModel.undoOffer.collectAsState()
+    val revealed by viewModel.revealed.collectAsState()
     val openChoice by viewModel.openChoice.collectAsState()
     val bundleEdit by viewModel.bundleEdit.collectAsState()
     var barsVisible by rememberSaveable { mutableStateOf(true) }
@@ -270,6 +273,19 @@ fun TabsScreen(
         val offer = undoOffer ?: return@LaunchedEffect
         val result = snackbar.showSnackbar(offer.message, actionLabel = "실행 취소", duration = SnackbarDuration.Long)
         if (result == SnackbarResult.ActionPerformed) viewModel.undo() else viewModel.commitUndo()
+    }
+
+    // A file opened from another app was open already (기획서 5.1): its tab is shown, over whatever
+    // screen was up, and a new tab is still one tap away. Any undo offer showing gives way to it.
+    LaunchedEffect(revealed?.id) {
+        val shown = revealed ?: return@LaunchedEffect
+        showSwitcher = false
+        openGroupId = null
+        showSettings = false
+        snackbar.currentSnackbarData?.dismiss()
+        val result = snackbar.showSnackbar("이미 열려 있는 파일입니다", actionLabel = "새 탭으로 열기", duration = SnackbarDuration.Long)
+        viewModel.revealShown(shown.id)
+        if (result == SnackbarResult.ActionPerformed) onOpenAgain(shown.uri)
     }
 }
 

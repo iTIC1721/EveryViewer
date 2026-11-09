@@ -18,6 +18,8 @@ data class DocTab(
     val format: FileFormat,
     /** Bumped when the tab's file is replaced; not persisted. */
     val revision: Int = 0,
+    /** The address the file was opened from (기획서 5.1), to know it when it is opened again; null if not known. */
+    val source: Uri? = null,
 ) : TopItem
 
 data class TabGroup(
