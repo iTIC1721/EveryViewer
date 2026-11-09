@@ -152,6 +152,74 @@ class InkInputTest {
         assertNotEquals("the finger scrolled instead", before, onMain { vm.viewerState(tabId) })
     }
 
+    /** The pen held still at ([x0], [y0]) past the marking delay, then dragged to ([x1], [y1]) and lifted. */
+    private fun holdAndDrag(x0: Float, y0: Float, x1: Float, y1: Float) {
+        val source = InputDevice.SOURCE_STYLUS or InputDevice.SOURCE_TOUCHSCREEN
+        val down = SystemClock.uptimeMillis()
+        fun send(action: Int, x: Float, y: Float) {
+            val properties = MotionEvent.PointerProperties().apply { id = 0; toolType = MotionEvent.TOOL_TYPE_STYLUS }
+            val coords = MotionEvent.PointerCoords().apply {
+                this.x = x * width
+                this.y = y * height
+                pressure = 0.6f
+                size = 0.05f
+            }
+            val event = MotionEvent.obtain(
+                down, SystemClock.uptimeMillis(), action, 1, arrayOf(properties), arrayOf(coords),
+                0, 0, 1f, 1f, 0, 0, source, 0,
+            )
+            instrumentation.uiAutomation.injectInputEvent(event, true)
+            event.recycle()
+        }
+        send(MotionEvent.ACTION_DOWN, x0, y0)
+        // A pen held still still reports where it is.
+        repeat(12) {
+            Thread.sleep(50)
+            send(MotionEvent.ACTION_MOVE, x0, y0)
+        }
+        for (i in 1..20) {
+            Thread.sleep(12)
+            send(MotionEvent.ACTION_MOVE, x0 + (x1 - x0) * i / 20f, y0 + (y1 - y0) * i / 20f)
+        }
+        send(MotionEvent.ACTION_UP, x1, y1)
+        instrumentation.waitForIdleSync()
+        Thread.sleep(300)
+        instrumentation.waitForIdleSync()
+    }
+
+    @Test
+    fun highlighterHeldOnTextMarksItLineByLine() {
+        onMain { vm.settings.setInkTool(InkTool.Highlighter) }
+        settle()
+        // Lines have gaps between them, where a hold finds no text and just draws: try a little
+        // lower until one lands on a line.
+        var landed = false
+        for (step in 0..12) {
+            val y = 0.45f + step * 0.005f
+            holdAndDrag(0.08f, y, 0.2f, y + 0.08f)
+            if (strokeCount() == 0) {
+                landed = true
+                break
+            }
+            onMain { vm.undoInk() }
+            assertStrokes("the line drawn instead is undone", 0)
+        }
+        assertTrue("a hold landed on text", landed)
+        assertStrokes("the marked range waits, with handles, until something else is done", 0)
+
+        // A tap elsewhere marks it, and draws no dot.
+        drag(0.6f, 0.85f, 0.6f, 0.85f, MotionEvent.TOOL_TYPE_STYLUS)
+        val end = SystemClock.uptimeMillis() + 3_000
+        while (strokeCount() < 2 && SystemClock.uptimeMillis() < end) Thread.sleep(50)
+        val marks = onMain { vm.ink.strokes(tabId).value }
+        assertTrue("one stroke per marked line: ${marks.size}", marks.size >= 2)
+        assertTrue("all highlighter", marks.all { it.tool == InkTool.Highlighter })
+        assertEquals("straight along each line", marks.size, marks.count { s -> s.stroke.inputs.size == 2 && s.stroke.inputs.get(0).y == s.stroke.inputs.get(1).y })
+
+        onMain { vm.undoInk() }
+        assertStrokes("one undo takes the whole mark back", 0)
+    }
+
     /** The pen in the air at ([x], [y]), one hover event per entry of [buttons] (its button state). */
     @Test
     fun aLineAcrossPagesStaysOnEachPage() {
