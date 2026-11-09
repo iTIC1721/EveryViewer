@@ -94,6 +94,22 @@ data class InkStrokeEntity(
  * A typed text box on a page of a tab (기획서 5.8.6, 6장). Kept like [InkStrokeEntity]: no foreign
  * key, deleted with the tab's strokes.
  */
+/**
+ * A bookmark on a page of a tab (기획서 5.5 북마크): at most one per page, at [y] down it (a
+ * fraction of its height: where the top of the screen was when it was put there). Kept and deleted
+ * with the tab's handwriting.
+ */
+@Entity(tableName = "bookmarks", indices = [Index("tabId")])
+data class BookmarkEntity(
+    @PrimaryKey val id: String,
+    val tabId: String,
+    val page: Int,
+    val y: Float,
+    /** Null: named after its page. */
+    val name: String?,
+    val createdAt: Long,
+)
+
 @Entity(tableName = "ink_texts", indices = [Index("tabId")])
 data class InkTextEntity(
     @PrimaryKey val id: String,

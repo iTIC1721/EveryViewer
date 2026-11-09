@@ -48,15 +48,24 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.tabpdf.doc.TocEntry
+import com.tabpdf.ink.Bookmark
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.SecondaryTabRow
+import androidx.compose.material3.Tab
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.shape.RoundedCornerShape
 import com.tabpdf.ui.theme.Motion
 import com.tabpdf.ui.theme.dimmed
 
 /**
- * The table of contents (기획서 5.5) in a panel from the left, as e-book readers show it: entries
- * nested by level, the ones under an entry folded until its arrow is pressed, the entry being read
- * marked and its path unfolded. Pressing an entry goes there and closes the panel.
+ * The table of contents and the bookmarks (기획서 5.5) in a panel from the left, as e-book readers
+ * show them, one list at a time under two tabs. Contents: entries nested by level, the ones under an
+ * entry folded until its arrow is pressed, the entry being read marked and its path unfolded.
+ * Bookmarks: in page order; a long press renames or deletes one. Pressing an entry or a bookmark
+ * goes there and closes the panel.
  */
 @Composable
 fun TocDrawer(
@@ -68,6 +77,14 @@ fun TocDrawer(
     pageOffset: Float,
     onJump: (TocEntry) -> Unit,
     onClose: () -> Unit,
+    showBookmarks: Boolean,
+    onShowBookmarks: (Boolean) -> Unit,
+    bookmarks: List<Bookmark>,
+    /** Pages laid out so far, if known: bookmarks past them wait (shown dimmed). */
+    pageCount: Int?,
+    onBookmark: (Bookmark) -> Unit,
+    onRenameBookmark: (Bookmark, String) -> Unit,
+    onDeleteBookmark: (Bookmark) -> Unit,
 ) {
     BackHandler(enabled = open, onBack = onClose)
     AnimatedVisibility(open, enter = fadeIn(), exit = fadeOut()) {
@@ -95,14 +112,23 @@ fun TocDrawer(
                 shape = DrawerShape,
             ) {
                 Column(Modifier.windowInsetsPadding(WindowInsets.systemBars)) {
-                    Text("목차", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(start = 24.dp, top = 20.dp, bottom = 12.dp))
-                    when {
+                    SecondaryTabRow(
+                        selectedTabIndex = if (showBookmarks) 1 else 0,
+                        containerColor = Color.Transparent,
+                        modifier = Modifier.padding(top = 8.dp),
+                    ) {
+                        Tab(selected = !showBookmarks, onClick = { onShowBookmarks(false) }, text = { Text("목차") })
+                        Tab(selected = showBookmarks, onClick = { onShowBookmarks(true) }, text = { Text("북마크") })
+                    }
+                    if (showBookmarks) {
+                        BookmarkList(bookmarks, pageCount, onBookmark, onRenameBookmark, onDeleteBookmark)
+                    } else when {
                         entries == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
                         entries.isEmpty() -> Text(
                             "이 문서에는 목차가 없습니다.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(horizontal = 24.dp),
+                            modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp),
                         )
                         else -> TocList(entries, page, pageOffset, onJump)
                     }
@@ -193,6 +219,86 @@ private fun TocList(entries: List<TocEntry>, page: Int, pageOffset: Float, onJum
                 )
             }
         }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun BookmarkList(
+    bookmarks: List<Bookmark>,
+    pageCount: Int?,
+    onBookmark: (Bookmark) -> Unit,
+    onRename: (Bookmark, String) -> Unit,
+    onDelete: (Bookmark) -> Unit,
+) {
+    if (bookmarks.isEmpty()) {
+        Column(Modifier.fillMaxWidth().padding(top = 48.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Icon(BookmarkIcon, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(40.dp))
+            Text(
+                "북마크가 없습니다",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 12.dp),
+            )
+        }
+        return
+    }
+    var renaming by remember { mutableStateOf<Bookmark?>(null) }
+    LazyColumn(Modifier.fillMaxSize()) {
+        items(bookmarks, key = { it.id }) { mark ->
+            // A large text file lays out its pages while shown: one further on can't be gone to yet.
+            val ready = pageCount == null || mark.page < pageCount
+            var menu by remember { mutableStateOf(false) }
+            Box {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 48.dp)
+                        .combinedClickable(onClick = { if (ready) onBookmark(mark) }, onLongClick = { menu = true })
+                        .padding(start = 20.dp, end = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        BookmarkedIcon, contentDescription = null,
+                        tint = if (ready) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
+                        modifier = Modifier.size(20.dp),
+                    )
+                    Text(
+                        mark.title,
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = if (ready) Color.Unspecified else MaterialTheme.colorScheme.outline,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f).padding(start = 16.dp, top = 10.dp, bottom = 10.dp),
+                    )
+                    Text(
+                        "${mark.page + 1}",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(start = 12.dp),
+                    )
+                }
+                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                    DropdownMenuItem(text = { Text("이름 변경") }, onClick = { menu = false; renaming = mark })
+                    DropdownMenuItem(text = { Text("삭제") }, onClick = { menu = false; onDelete(mark) })
+                }
+            }
+        }
+    }
+    renaming?.let { mark ->
+        NameDialog(
+            title = "북마크 이름 변경",
+            initial = mark.name.orEmpty(),
+            confirmLabel = "변경",
+            onConfirm = { name ->
+                onRename(mark, name)
+                renaming = null
+            },
+            onDismiss = { renaming = null },
+            // Blank: named after its page again.
+            allowBlank = true,
+            placeholder = "${mark.page + 1}페이지",
+        )
     }
 }
 

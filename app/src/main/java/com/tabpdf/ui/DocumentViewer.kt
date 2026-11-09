@@ -120,6 +120,7 @@ import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.runtime.key
 import com.tabpdf.ink.InkTool
+import com.tabpdf.ink.Bookmark
 import com.tabpdf.ink.InkOnDark
 import com.tabpdf.ink.TextMark
 import com.tabpdf.ink.markStrokes
@@ -242,6 +243,10 @@ fun DocumentViewer(
     onPageLook: (Boolean) -> Unit = {},
     /** The bars are on screen: the look button shows with them. */
     barsVisible: Boolean = true,
+    /** The tab's bookmarks (기획서 5.5): their pages get a ribbon. */
+    bookmarks: List<Bookmark> = emptyList(),
+    /** The bookmark button was pressed, for [page] at [y] down it (the top of the screen). Null: no button. */
+    onToggleBookmark: ((page: Int, y: Float) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -363,6 +368,8 @@ fun DocumentViewer(
                 onDarkChange = onDarkChange,
                 onPageLook = onPageLook,
                 barsVisible = barsVisible,
+                bookmarks = bookmarks,
+                onToggleBookmark = onToggleBookmark,
             ) }
         }
     }
@@ -391,8 +398,11 @@ private fun DocumentPages(
     onDarkChange: ((Boolean) -> Unit)?,
     onPageLook: (Boolean) -> Unit,
     barsVisible: Boolean,
+    bookmarks: List<Bookmark>,
+    onToggleBookmark: ((page: Int, y: Float) -> Unit)?,
 ) {
     val density = LocalDensity.current
+    val bookmarkedPages = remember(bookmarks) { bookmarks.associate { it.page to it.y } }
     // Pages laid out so far: a document laid out in the background grows (기획서 5.7).
     val progress by (document.progress ?: remember(document) { MutableStateFlow(LayoutProgress(document.pageCount, complete = true)) })
         .collectAsState()
@@ -1013,6 +1023,8 @@ private fun DocumentPages(
                     edge = pageEdge,
                     onDrawn = onPageDrawn,
                     dark = shownDark,
+                    // Pages apart hang it from the top edge; text running on marks the place itself.
+                    bookmarkAt = bookmarkedPages[index]?.let { if (document.pageGaps) 0f else it },
                 )
             }
         }
@@ -1025,15 +1037,34 @@ private fun DocumentPages(
             modifier = Modifier.align(Alignment.TopEnd),
         )
         PageIndicator(listState, progress.pages, progress.complete, active = fastScrolling, Modifier.align(Alignment.BottomEnd))
-        if (onDarkChange != null && canBeDark && editing == null) LookButton(
-            dark = shownDark,
-            onClick = { onDarkChange(!shownDark) },
+        val lookButton = onDarkChange != null && canBeDark
+        if ((onToggleBookmark != null || lookButton) && editing == null) PageButtons(
             listState = listState,
             barsVisible = barsVisible,
             onBounds = { lookBounds[0] = it?.translate(-viewerOrigin[0]) },
             // Below the bars: the handwriting tools sit under the top bar while drawing.
-            modifier = Modifier.padding(start = 12.dp, top = contentPadding.calculateTopPadding() + if (ink != null) INK_TOOLBAR_HEIGHT else 0.dp),
-        ) else lookBounds[0] = null
+            modifier = Modifier.padding(start = 8.dp, top = contentPadding.calculateTopPadding() + if (ink != null) INK_TOOLBAR_HEIGHT else 0.dp),
+        ) {
+            if (onToggleBookmark != null) {
+                // The page at the top of the screen, as the page number shows it.
+                val topPx = with(density) { contentPadding.calculateTopPadding().toPx() }
+                val spot by remember(listState, topPx) {
+                    derivedStateOf {
+                        val info = listState.layoutInfo
+                        info.visibleItemsInfo.firstOrNull { it.offset - info.viewportStartOffset + it.size > topPx }?.let { item ->
+                            item.index to ((topPx - (item.offset - info.viewportStartOffset)) / item.size).coerceIn(0f, 1f)
+                        }
+                    }
+                }
+                val marked = spot?.first in bookmarkedPages.keys
+                PageButton(if (marked) BookmarkedIcon else BookmarkIcon, if (marked) "북마크 삭제" else "북마크 추가") {
+                    spot?.let { (page, y) -> onToggleBookmark(page, y) }
+                }
+            }
+            if (lookButton) PageButton(if (shownDark) SunIcon else MoonIcon, if (shownDark) "밝게 보기" else "어둡게 보기") {
+                onDarkChange?.invoke(!shownDark)
+            }
+        } else lookBounds[0] = null
         if (selection.isNotEmpty()) {
             val first = selection.first()
             val last = selection.last()
@@ -1190,7 +1221,10 @@ private fun PageImage(
     onDrawn: () -> Unit,
     /** Drawn in the document's dark look (기획서 5.10); handwriting's black and white swap with it. */
     dark: Boolean,
+    /** Where the page's bookmark is (기획서 5.5), a fraction down it: a small ribbon at its right there. */
+    bookmarkAt: Float? = null,
 ) {
+    val ribbon = MaterialTheme.colorScheme.primary
     var bitmap by remember { mutableStateOf<Bitmap?>(null) }
     // The look the bitmap was drawn in: a new look is drawn at once, a new zoom after a moment.
     val drawnDark = remember { booleanArrayOf(dark) }
@@ -1250,6 +1284,22 @@ private fun PageImage(
             native.translate(left, 0f)
             InkPainter.draw(native, strokes, texts, pageWidth, skipText, dark)
             native.restore()
+        }
+        if (bookmarkAt != null) {
+            // A ribbon tucked in at the page's top edge, as in a book: 10 by 16 dp, notched at the end.
+            val w = 10.dp.toPx()
+            val h = 16.dp.toPx()
+            val x = left + pageWidth - 16.dp.toPx() - w
+            val y = (bookmarkAt * size.height).coerceAtMost(size.height - h)
+            val path = androidx.compose.ui.graphics.Path().apply {
+                moveTo(x, y)
+                lineTo(x + w, y)
+                lineTo(x + w, y + h)
+                lineTo(x + w / 2, y + h - w / 2)
+                lineTo(x, y + h)
+                close()
+            }
+            drawPath(path, ribbon)
         }
     }
 }

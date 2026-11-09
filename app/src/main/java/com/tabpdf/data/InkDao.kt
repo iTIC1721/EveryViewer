@@ -39,15 +39,32 @@ interface InkDao {
     @Query("DELETE FROM ink_texts WHERE tabId NOT IN (SELECT id FROM tabs)")
     suspend fun deleteOrphanTexts()
 
+    @Query("SELECT * FROM bookmarks WHERE tabId = :tabId ORDER BY page")
+    suspend fun bookmarksOf(tabId: String): List<BookmarkEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertBookmarks(bookmarks: List<BookmarkEntity>)
+
+    @Query("DELETE FROM bookmarks WHERE id IN (:ids)")
+    suspend fun deleteBookmarks(ids: List<String>)
+
+    @Query("DELETE FROM bookmarks WHERE tabId IN (:tabIds)")
+    suspend fun deleteBookmarksOfTabs(tabIds: List<String>)
+
+    @Query("DELETE FROM bookmarks WHERE tabId NOT IN (SELECT id FROM tabs)")
+    suspend fun deleteOrphanBookmarks()
+
     @Transaction
     suspend fun deleteTabs(tabIds: List<String>) {
         deleteStrokesOfTabs(tabIds)
         deleteTextsOfTabs(tabIds)
+        deleteBookmarksOfTabs(tabIds)
     }
 
     @Transaction
     suspend fun deleteOrphans() {
         deleteOrphanStrokes()
         deleteOrphanTexts()
+        deleteOrphanBookmarks()
     }
 }
