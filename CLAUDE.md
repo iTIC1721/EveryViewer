@@ -104,7 +104,8 @@ app/src/main/java/com/tabpdf/
   ink/                   필기: 도구·브러시·획 저장 형식(Ink), 탭별 필기와 되돌리기(InkStore),
                          입력 규칙과 그리는 중인 획 표시(InkInput: 창 위 InProgressStrokesView, 터치는 받지 않음).
                          텍스트 상자(InkText: 글자 구간별 서식 RichText, InkTextLayout: 페이지에 그릴 때와 입력란이
-                         같은 조판 설정·구간 표시를 써서 모양과 줄 바꿈이 같다)
+                         같은 조판 설정·구간 표시를 써서 모양과 줄 바꿈이 같다).
+                         글 형광펜(TextMarks: 꾹 누른 형광펜 → 뷰어의 텍스트 선택 → 줄마다 곧은 형광펜 획)
   tabs/                  탭·그룹 구조(Session.kt), ViewModel, 읽던 위치, 파일 접근 권한·복사본 관리
   ui/                    화면: 뷰어(DocumentViewer)·스와이프 범위별 페이저·상단 바(TabsScreen), 탭 전환 화면·그룹 패널(TabSwitcher),
                          대화상자, 카드 목록 제스처(ItemGestures), 텍스트 상자 입력(TextBoxField: EditText 기반,
