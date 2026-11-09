@@ -49,6 +49,18 @@ class SessionRepositoryTest {
         assertEquals(mixed, loaded)
     }
 
+    /** The address a tab's file came from (기획서 5.1) is kept, set later, and kept when the tab moves. */
+    @Test
+    fun fileSourceIsSavedWhenAddedAndWhenChanged() = runBlocking {
+        val source = Uri.parse("content://files/doc.pdf")
+        val withSource = mixed.copy(top = listOf(tab("a").copy(source = source), TabGroup("g", "Study", 3), tab("d")))
+        repository.saveStructure(withSource, emptyMap())
+        assertEquals(withSource, repository.load().first)
+        val later = withSource.copy(top = listOf(tab("a").copy(source = source), TabGroup("g", "Study", 3), tab("d").copy(source = source)))
+        repository.saveStructure(later, emptyMap())
+        assertEquals(later, repository.load().first)
+    }
+
     @Test
     fun newTabsGetTheGivenReadingPositionAndExistingOnesKeepTheirs() = runBlocking {
         repository.saveStructure(mixed, mapOf("a" to ViewerState(page = 4, zoom = 2f)))

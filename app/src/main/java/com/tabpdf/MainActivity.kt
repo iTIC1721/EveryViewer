@@ -114,6 +114,7 @@ class MainActivity : ComponentActivity() {
                         relocate.launch(arrayOf(ANY_MIME))
                     },
                     onAddToBundle = { addToBundle.launch(arrayOf(ANY_MIME)) },
+                    onOpenAgain = { uri -> prepare(listOf(uri)) { tabsViewModel.open(it, groupId = null) } },
                 )
             }
             }
@@ -130,7 +131,8 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * Files handed over by another app ("열기"/"공유") open as ungrouped tabs (기획서 5.1). Their
+     * Files handed over by another app ("열기"/"공유") open as ungrouped tabs (기획서 5.1); a single
+     * file that is open already shows its tab instead. Their
      * read grants are temporary, so FileAccess usually copies them into app storage. Only content
      * URIs are taken: a file: URI from another app could point into this app's own private files.
      */
@@ -160,6 +162,18 @@ class MainActivity : ComponentActivity() {
             lifecycleScope.launch {
                 val file = FileAccess.saveSharedText(applicationContext, text, subject)
                 tabsViewModel.open(listOf(file), groupId = null)
+            }
+            return
+        }
+        if (uris.size == 1) {
+            lifecycleScope.launch {
+                val uri = uris.single()
+                val open = tabsViewModel.findOpen(uri)
+                if (open != null) {
+                    tabsViewModel.reveal(open, uri)
+                } else {
+                    prepare(uris) { tabsViewModel.open(it, groupId = null) }
+                }
             }
             return
         }

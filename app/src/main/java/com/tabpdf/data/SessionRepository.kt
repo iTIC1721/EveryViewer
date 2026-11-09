@@ -59,10 +59,16 @@ class SessionRepository(private val dao: SessionDao) {
 
     suspend fun setDarkLook(tabId: String, dark: Boolean?) = dao.setDarkLook(tabId, dark)
 
+    /** When each tab was last shown, by tab. */
+    suspend fun lastOpened(): Map<String, Long> = dao.lastOpened().associate { it.id to it.lastOpenedAt }
+
     suspend fun saveViewerStates(states: Map<String, ViewerState>) = dao.updateViewerStates(states)
 
-    private fun TabEntity.toTab() = DocTab(id, groupId, Uri.parse(uri), displayName, isInternalCopy, FileFormat.fromKey(format))
+    private fun TabEntity.toTab() = DocTab(
+        id, groupId, Uri.parse(uri), displayName, isInternalCopy, FileFormat.fromKey(format),
+        source = sourceUri?.let(Uri::parse),
+    )
 
     private fun DocTab.placement(position: Int) =
-        TabPlacement(id, groupId, position, uri.toString(), isInternalCopy, name, format.key)
+        TabPlacement(id, groupId, position, uri.toString(), isInternalCopy, name, format.key, source?.toString())
 }

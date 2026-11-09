@@ -18,7 +18,14 @@ import java.io.IOException
 import java.util.UUID
 
 /** A file ready to become a tab: readable now and after an app restart. */
-data class OpenedFile(val uri: Uri, val name: String, val isInternalCopy: Boolean, val format: FileFormat)
+data class OpenedFile(
+    val uri: Uri,
+    val name: String,
+    val isInternalCopy: Boolean,
+    val format: FileFormat,
+    /** The address it was opened from (kept on the tab to know the file again, 기획서 5.1). */
+    val source: Uri? = null,
+)
 
 /**
  * Keeps tab files readable across restarts (기획서 5.3): takes a persistable read grant, or — when
@@ -37,20 +44,95 @@ object FileAccess {
         checkNotOwn(context, uri)
         val name = displayName(context, uri)
         val format = FileFormats.detect(context, uri, name)
-        if (uri.scheme == "file") return@withContext OpenedFile(uri, name, isInternalCopy = false, format)
+        if (uri.scheme == "file") return@withContext OpenedFile(uri, name, isInternalCopy = false, format, source = uri)
         // Android keeps a limited number of grants per app and silently drops the oldest past that:
         // the files of tabs opened long ago. Another app can send hundreds of files at once to make
         // that happen, so past our own share of the limit, files are copied instead.
         val grants = context.contentResolver.persistedUriPermissions
         if (grants.size >= maxGrants(context) && grants.none { it.uri == uri }) {
-            return@withContext OpenedFile(copyToAppStorage(context, uri, name), name, isInternalCopy = true, format)
+            return@withContext OpenedFile(copyToAppStorage(context, uri, name), name, isInternalCopy = true, format, uri)
         }
         try {
             context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            OpenedFile(uri, name, isInternalCopy = false, format)
+            OpenedFile(uri, name, isInternalCopy = false, format, uri)
         } catch (_: SecurityException) {
-            OpenedFile(copyToAppStorage(context, uri, name), name, isInternalCopy = true, format)
+            OpenedFile(copyToAppStorage(context, uri, name), name, isInternalCopy = true, format, uri)
         }
+    }
+
+    /**
+     * The first of [tabs] that holds the same file as [uri] (기획서 5.1: a file opened again shows
+     * its tab), or null. A tab is a candidate if it was opened from that address, or if its file is
+     * as large as this one (the same file reached another way, or a tab from before addresses were
+     * kept); either way the two are compared byte for byte, so a file changed since is a new one.
+     * Only a tab that reads the file where it lies (not a copy) and has the same address needs no
+     * comparing: it always shows the file as it is now.
+     */
+    suspend fun findSame(context: Context, uri: Uri, tabs: List<DocTab>): DocTab? = withContext(Dispatchers.IO) {
+        try {
+            checkNotOwn(context, uri)
+        } catch (_: SecurityException) {
+            return@withContext null
+        }
+        val size by lazy { size(context, uri) }
+        tabs.firstOrNull { tab ->
+            try {
+                val sameAddress = tab.source == uri || tab.uri == uri
+                if (sameAddress && !tab.isInternalCopy) return@firstOrNull true
+                val tabSize = size(context, tab.uri) ?: return@firstOrNull false
+                if (size == null && !sameAddress || size != null && size != tabSize) return@firstOrNull false
+                sameContent(context, tab.uri, tabSize, uri)
+            } catch (e: Exception) {
+                // A file gone or not readable any more is not the same one.
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                false
+            }
+        }
+    }
+
+    /** The size of file [uri] in bytes, if its provider says. */
+    private fun size(context: Context, uri: Uri): Long? = when (uri.scheme) {
+        ContentResolver.SCHEME_FILE -> File(requireNotNull(uri.path)).takeIf { it.isFile }?.length()
+        else -> context.contentResolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)?.use {
+            if (it.moveToFirst() && !it.isNull(0)) it.getLong(0).takeIf { n -> n >= 0 } else null
+        }
+    }
+
+    /**
+     * Whether [other] holds exactly the [size] bytes of [file]. Stops at the first difference, and
+     * reads no more of [other] than that: another app's provider can send an endless stream.
+     */
+    private fun sameContent(context: Context, file: Uri, size: Long, other: Uri): Boolean {
+        val resolver = context.contentResolver
+        val a = resolver.openInputStream(file) ?: return false
+        a.use {
+            val b = resolver.openInputStream(other) ?: return false
+            b.use {
+                val bufA = ByteArray(64 * 1024)
+                val bufB = ByteArray(bufA.size)
+                var total = 0L
+                while (true) {
+                    val n = a.fill(bufA)
+                    if (n == 0) break
+                    if (b.fill(bufB, n) != n) return false
+                    for (i in 0 until n) if (bufA[i] != bufB[i]) return false
+                    total += n
+                    if (total > size) return false
+                }
+                return total == size && b.read() == -1
+            }
+        }
+    }
+
+    /** Reads until [buf] is full ([count] bytes) or the stream ends; returns how many were read. */
+    private fun java.io.InputStream.fill(buf: ByteArray, count: Int = buf.size): Int {
+        var n = 0
+        while (n < count) {
+            val r = read(buf, n, count - n)
+            if (r < 0) break
+            n += r
+        }
+        return n
     }
 
     /**
