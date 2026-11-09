@@ -120,6 +120,9 @@ import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.runtime.key
 import com.tabpdf.ink.InkTool
+import com.tabpdf.ink.InkOnDark
+import com.tabpdf.ink.TextMark
+import com.tabpdf.ink.markStrokes
 import com.tabpdf.ink.LocalInkSurface
 import com.tabpdf.ink.PageHit
 import com.tabpdf.ink.inkInput
@@ -459,8 +462,11 @@ private fun DocumentPages(
     LaunchedEffect(selectionAnchors.value) {
         selection = selectionAnchors.value?.let { selectRange(document, it) }.orEmpty()
     }
-    LaunchedEffect(ink != null) { if (ink != null) selectionAnchors.value = null }
-    BackHandler(enabled = selectionAnchors.value != null) { selectionAnchors.value = null }
+    // Marking text with the highlighter (기획서 5.8.7): while set, the selection is the
+    // highlighter's, drawn in this colour with no toolbar, until it is marked or dropped.
+    var markColor by remember(document) { mutableStateOf<Int?>(null) }
+    val markLookup = remember { arrayOfNulls<Job>(1) }
+    val markFound = remember { arrayOfNulls<Pair<Int, TextSelection>>(1) }
     // A long press took the current gesture for selecting: no tap or pan for it.
     val selectionClaimed = remember { booleanArrayOf(false) }
     // Where the selection handles and toolbar are, so touches on them are left to them.
@@ -489,6 +495,58 @@ private fun DocumentPages(
         return SelectionEnd(hit.index, Offset((inPage.x / INK_PAGE_WIDTH).coerceIn(0f, 1f), (inPage.y / (INK_PAGE_WIDTH * aspect)).coerceIn(0f, 1f)))
     }
 
+    /** Marks the range the highlighter left waiting (기획서 5.8.7), or with [keep] false drops it. */
+    fun endMarking(keep: Boolean): Boolean {
+        val color = markColor ?: return false
+        val anchors = selectionAnchors.value
+        markColor = null
+        selectionAnchors.value = null
+        val binding = lastInk[0]
+        if (!keep || anchors == null || binding == null) return true
+        scope.launch {
+            val lines = selectRange(document, anchors).map { (page, part) -> page to part.rects }
+            val strokes = markStrokes(lines, { document.pageSizes[it].aspect }, color)
+            if (strokes.isNotEmpty()) binding.onStroke(strokes, InkTool.Highlighter)
+        }
+        return true
+    }
+    val textMark = remember(document) {
+        object : TextMark {
+            override fun down(position: Offset, highlighter: Boolean): Boolean {
+                val marked = endMarking(keep = true)
+                markLookup[0]?.cancel()
+                markFound[0] = null
+                if (!highlighter) return marked
+                val start = selectionEndAt(position) ?: return marked
+                markLookup[0] = scope.launch {
+                    val word = guarded(null) { document.selectWord(start.page, PointF(start.point.x, start.point.y)) }
+                    markFound[0] = word?.let { start.page to it }
+                }
+                return marked
+            }
+
+            override fun held(): Boolean {
+                val (page, word) = markFound[0] ?: return false
+                val binding = currentInk ?: return false
+                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                markColor = binding.style.color
+                selectionAnchors.value = SelectionAnchors.around(page, word)
+                return true
+            }
+
+            override fun moved(position: Offset) {
+                val end = selectionEndAt(position) ?: return
+                selectionAnchors.value?.let { selectionAnchors.value = it.copy(end = end) }
+            }
+        }
+    }
+    // Turning handwriting on drops a selection; doing anything else than highlighting marks the waiting range.
+    LaunchedEffect(ink != null) { if (ink != null && markColor == null) selectionAnchors.value = null }
+    LaunchedEffect(ink?.tool, active) { if (ink?.tool != InkTool.Highlighter || !active) endMarking(keep = true) }
+    BackHandler(enabled = selectionAnchors.value != null) {
+        if (markColor != null) endMarking(keep = false) else selectionAnchors.value = null
+    }
+
     /** A point on page [page] (fractions) in viewer coordinates, if that page is on screen. */
     fun viewerPoint(page: Int, x: Float, y: Float): Offset? {
         val info = listState.layoutInfo
@@ -510,7 +568,7 @@ private fun DocumentPages(
      */
     suspend fun tap(position: Offset) {
         if (selectionAnchors.value != null) {
-            selectionAnchors.value = null
+            if (markColor != null) endMarking(keep = true) else selectionAnchors.value = null
             return
         }
         when (val link = linkAt(position)) {
@@ -740,7 +798,7 @@ private fun DocumentPages(
             .fillMaxSize()
             .onGloballyPositioned { viewerOrigin[0] = it.positionInRoot() }
             // Handwriting first: a pointer that draws is consumed before anything below sees it.
-            .inkInput(LocalInkSurface.current, { currentInk }, { p -> if (onLookButton(p)) null else pageAt(p) }, { inkPages() }, onClaim = { inkClaimed[0] = it }) { hover = it }
+            .inkInput(LocalInkSurface.current, { currentInk }, { p -> if (onLookButton(p) || onHandle(p)) null else pageAt(p) }, { inkPages() }, onClaim = { inkClaimed[0] = it }, onHover = { hover = it }, textMark = textMark)
             // Text tool (기획서 5.8.6): a tap makes or opens a box, dragging a box moves it; other
             // drags scroll as ever. The open box and its handles take their own touches.
             .pointerInput(Unit) {
@@ -950,7 +1008,7 @@ private fun DocumentPages(
                     skipText = editing?.box?.id,
                     found = matchesByPage[index].orEmpty(),
                     selected = selection.firstOrNull { it.first == index }?.second?.rects.orEmpty(),
-                    selectionColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f),
+                    selectionColor = markColor?.let { Color(InkOnDark.color(it, shownDark)) } ?: MaterialTheme.colorScheme.primary.copy(alpha = 0.3f),
                     currentMatch = searchIndex,
                     edge = pageEdge,
                     onDrawn = onPageDrawn,
@@ -1004,7 +1062,7 @@ private fun DocumentPages(
                 below != null && below < viewportHeight - with(density) { 120.dp.toPx() } -> below
                 else -> topPx + with(density) { 8.dp.toPx() }
             }
-            SelectionToolbar(
+            if (markColor == null) SelectionToolbar(
                 text = { joinSelection(selection) },
                 onDone = { selectionAnchors.value = null },
                 sensitive = document.locked,

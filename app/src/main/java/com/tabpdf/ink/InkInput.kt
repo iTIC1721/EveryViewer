@@ -113,7 +113,8 @@ private val PointerInputChange.isPen get() = type == PointerType.Stylus || type 
  * - a second finger cancels a finger stroke and becomes two-finger scrolling and zooming;
  * - once a pen draws, nothing else in that gesture (a resting palm) moves the page;
  * - the eraser tool, a pen's eraser end, or the held side button erase whole strokes;
- * - or, set to undo, pressing the side button while the pen hovers undoes once.
+ * - or, set to undo, pressing the side button while the pen hovers undoes once;
+ * - the highlighter held still on text marks the text instead ([TextMark]).
  * [binding] is null when handwriting mode is off; then nothing here touches the events.
  */
 fun Modifier.inkInput(
@@ -125,6 +126,8 @@ fun Modifier.inkInput(
     /** Told whether handwriting has the current gesture, so other handlers can stay out of it. */
     onClaim: (Boolean) -> Unit,
     onHover: (Offset?) -> Unit,
+    /** Marking text with the highlighter (기획서 5.8.7); null where it can't be done. */
+    textMark: TextMark? = null,
 ): Modifier = this
     .pointerInput(surface) {
         if (surface == null) return@pointerInput
@@ -136,12 +139,31 @@ fun Modifier.inkInput(
                 if (claimed != value) onClaim(value)
                 claimed = value
             }
+            /** The highlighter has been held still long enough: marks text if there is some there. */
+            fun hold(a: Active, ink: InkBinding?) {
+                a.holdable = false
+                if (textMark?.held() != true) return
+                a.strokeId?.let { surface.cancel(it, null) }
+                a.strokeId = null
+                a.marking = true
+            }
             while (true) {
-                val event = awaitPointerEvent(PointerEventPass.Initial)
+                val waiting = active?.takeIf { it.holdable }
+                val event = if (waiting == null) {
+                    awaitPointerEvent(PointerEventPass.Initial)
+                } else {
+                    val left = TEXT_MARK_HOLD_MS - (android.os.SystemClock.uptimeMillis() - waiting.downTime)
+                    withTimeoutOrNull(left.coerceAtLeast(1L)) { awaitPointerEvent(PointerEventPass.Initial) }
+                }
+                if (event == null) {
+                    // Held without a move (a finger sends none while it rests).
+                    waiting?.let { hold(it, binding()) }
+                    continue
+                }
                 val ink = binding()
                 val motion = event.motionEvent
                 if (ink == null || motion == null) {
-                    active?.let { if (it.strokeId != null) surface.cancel(it.strokeId, motion) }
+                    active?.strokeId?.let { surface.cancel(it, motion) }
                     active = null
                     claim(false)
                     continue
@@ -161,6 +183,8 @@ fun Modifier.inkInput(
                         )
                     // The text tool draws nothing: its taps and drags are the viewer's (기획서 5.8.6).
                     if (down != null && hit != null && (erasing || ink.tool != InkTool.Text)) {
+                        val highlighter = !erasing && ink.tool == InkTool.Highlighter
+                        val marked = textMark?.down(down.position, highlighter) == true
                         val pointerId = motion.getPointerId(motion.actionIndex)
                         val motionOffset = Offset(motion.getX(motion.actionIndex), motion.getY(motion.actionIndex)) - down.position
                         active = if (erasing) {
@@ -178,7 +202,11 @@ fun Modifier.inkInput(
                                 val kept = if (drawn === brush) stroke else stroke.copy(brush)
                                 ink.onStroke(splitAcrossPages(kept, page, pages()), tool)
                             }
-                            Active(down.id, pointerId, down.isPen, id, hit, down.position, 0)
+                            Active(down.id, pointerId, down.isPen, id, hit, down.position, 0).also {
+                                it.holdable = highlighter && textMark != null
+                                it.downTime = down.uptimeMillis
+                                it.confirming = marked
+                            }
                         }
                         claim(true)
                     }
@@ -188,6 +216,13 @@ fun Modifier.inkInput(
                 if (a != null) {
                     val change = event.changes.firstOrNull { it.id == a.composeId }
                     val fingers = event.changes.count { it.pressed && !it.isPen }
+                    if (change != null && (change.position - a.last).getDistance() > viewConfiguration.touchSlop) a.confirming = false
+                    if (a.holdable && change != null) {
+                        when {
+                            (change.position - a.last).getDistance() > viewConfiguration.touchSlop -> a.holdable = false
+                            change.uptimeMillis - a.downTime >= TEXT_MARK_HOLD_MS -> hold(a, ink)
+                        }
+                    }
                     when {
                         // A second finger: this was the start of scrolling or zooming, not a line.
                         !a.pen && fingers >= 2 -> {
@@ -200,11 +235,17 @@ fun Modifier.inkInput(
                             a.strokeId?.let { surface.cancel(it, motion) }
                             active = null
                         }
+                        // A tap that marked the waiting text: no dot.
+                        !change.pressed && a.confirming -> {
+                            a.strokeId?.let { surface.cancel(it, motion) }
+                            active = null
+                        }
                         !change.pressed -> {
                             a.strokeId?.let { surface.finish(motion, a.pointerId, it) }
                             active = null
                         }
-                        a.strokeId != null -> surface.add(motion, a.pointerId, a.strokeId)
+                        a.marking -> textMark?.moved(change.position)
+                        a.strokeId != null -> a.strokeId?.let { surface.add(motion, a.pointerId, it) }
                         else -> {
                             erase(ink, pages(), a.hit, a.last, change.position, a.gesture)
                             a.last = change.position
@@ -247,12 +288,20 @@ private class Active(
     /** The pointer's id in the MotionEvent (not the same as Compose's). */
     val pointerId: Int,
     val pen: Boolean,
-    /** Null while erasing. */
-    val strokeId: InProgressStrokeId?,
+    /** Null while erasing or marking text. */
+    var strokeId: InProgressStrokeId?,
     val hit: PageHit,
     var last: Offset,
     val gesture: Long,
-)
+) {
+    /** A highlighter line not yet moved: held still, it may turn into marking text. */
+    var holdable = false
+    var downTime = 0L
+    /** Marking text (기획서 5.8.7): moves go to [TextMark.moved]. */
+    var marking = false
+    /** Began by marking the text left waiting: let go without moving, it draws nothing. */
+    var confirming = false
+}
 
 /**
  * Erases every stroke that the eraser touched moving from [from] to [to]: on [hit]'s page, and on
