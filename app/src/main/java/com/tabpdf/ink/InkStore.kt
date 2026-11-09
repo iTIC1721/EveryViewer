@@ -18,6 +18,8 @@ class InkStore(private val app: TabPdfApp, private val scope: CoroutineScope) {
     private class TabInk {
         val strokes = MutableStateFlow<List<InkStroke>>(emptyList())
         val texts = MutableStateFlow<List<InkText>>(emptyList())
+        /** In page order. Not part of undo: they are not handwriting. */
+        val bookmarks = MutableStateFlow<List<Bookmark>>(emptyList())
         val undo = ArrayDeque<Edit>()
         val redo = ArrayDeque<Edit>()
     }
@@ -46,12 +48,19 @@ class InkStore(private val app: TabPdfApp, private val scope: CoroutineScope) {
     /** Tab [tabId]'s text boxes, all pages, in the order they were made. */
     fun texts(tabId: String): StateFlow<List<InkText>> = tab(tabId).texts.asStateFlow()
 
+    /** Tab [tabId]'s bookmarks (기획서 5.5), in page order. */
+    fun bookmarks(tabId: String): StateFlow<List<Bookmark>> = tab(tabId).bookmarks.asStateFlow()
+
     private fun tab(tabId: String): TabInk = tabs.getOrPut(tabId) {
         TabInk().also { ink ->
             scope.launch {
                 val (strokes, texts) = withContext(Dispatchers.Default) {
                     dao.strokesOf(tabId).map { it.toInkStroke() } to dao.textsOf(tabId).map { it.toInkText(defaultTextStyle) }
                 }
+                val marks = withContext(Dispatchers.Default) { dao.bookmarksOf(tabId).map { it.toBookmark() } }
+                // Put there while loading: kept, before a saved one on the same page.
+                val put = ink.bookmarks.value
+                ink.bookmarks.value = (put + marks.filter { m -> put.none { it.page == m.page } }).sortedBy { it.page }
                 // Strokes drawn while loading come after the saved ones.
                 val drawn = ink.strokes.value
                 ink.strokes.value = strokes + drawn.filter { d -> strokes.none { it.id == d.id } }
@@ -178,6 +187,12 @@ class InkStore(private val app: TabPdfApp, private val scope: CoroutineScope) {
         }
         val movedTextIds = movedTexts.associateBy { it.id }
         ink.texts.value = ink.texts.value.filterNot { t -> goneTexts.any { it.id == t.id } }.map { movedTextIds[it.id] ?: it }
+        val marks = ink.bookmarks.value.mapNotNull { b -> move(b.page)?.let { b.copy(page = it) } }
+        val goneMarks = ink.bookmarks.value.filter { move(it.page) == null }
+        val movedMarks = marks.filter { m -> ink.bookmarks.value.any { it.id == m.id && it.page != m.page } }
+        ink.bookmarks.value = marks.sortedBy { it.page }
+        if (goneMarks.isNotEmpty()) app.enqueueWrite { dao.deleteBookmarks(goneMarks.map { it.id }) }
+        if (movedMarks.isNotEmpty()) app.enqueueWrite { dao.insertBookmarks(movedMarks.map { it.toEntity(tabId) }) }
         ink.undo.clear()
         ink.redo.clear()
         _history.value++
@@ -185,6 +200,37 @@ class InkStore(private val app: TabPdfApp, private val scope: CoroutineScope) {
         if (moved.isNotEmpty()) save(tabId, moved)
         if (goneTexts.isNotEmpty()) app.enqueueWrite { dao.deleteTexts(goneTexts.map { it.id }) }
         if (movedTexts.isNotEmpty()) app.enqueueWrite { dao.insertTexts(movedTexts.map { it.toEntity(tabId) }) }
+    }
+
+    /**
+     * Puts a bookmark on page [page] at [y] (a fraction down it), or takes away the one there
+     * (one per page, so the same button does both).
+     */
+    fun toggleBookmark(tabId: String, page: Int, y: Float) {
+        val ink = tab(tabId)
+        val there = ink.bookmarks.value.firstOrNull { it.page == page }
+        if (there != null) {
+            removeBookmark(tabId, there.id)
+            return
+        }
+        val mark = Bookmark(java.util.UUID.randomUUID().toString(), page, y.coerceIn(0f, 1f), null, System.currentTimeMillis())
+        ink.bookmarks.value = (ink.bookmarks.value + mark).sortedBy { it.page }
+        app.enqueueWrite { dao.insertBookmarks(listOf(mark.toEntity(tabId))) }
+    }
+
+    fun removeBookmark(tabId: String, id: String) {
+        val ink = tab(tabId)
+        ink.bookmarks.value = ink.bookmarks.value.filterNot { it.id == id }
+        app.enqueueWrite { dao.deleteBookmarks(listOf(id)) }
+    }
+
+    /** Names bookmark [id]; a blank [name] goes back to naming it after its page. */
+    fun renameBookmark(tabId: String, id: String, name: String) {
+        val ink = tab(tabId)
+        val mark = ink.bookmarks.value.firstOrNull { it.id == id } ?: return
+        val renamed = mark.copy(name = name.trim().ifEmpty { null })
+        ink.bookmarks.value = ink.bookmarks.value.map { if (it.id == id) renamed else it }
+        app.enqueueWrite { dao.insertBookmarks(listOf(renamed.toEntity(tabId))) }
     }
 
     /** The tabs are gone for good (their undo offer ended): drop their strokes. */

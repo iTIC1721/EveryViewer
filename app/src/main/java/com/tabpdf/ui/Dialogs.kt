@@ -60,6 +60,7 @@ fun NameDialog(
     onConfirm: (String) -> Unit,
     onDismiss: () -> Unit,
     allowBlank: Boolean = false,
+    placeholder: String = "그룹 이름",
 ) {
     var value by remember { mutableStateOf(TextFieldValue(initial, TextRange(0, initial.length))) }
     val focus = remember { FocusRequester() }
@@ -72,7 +73,7 @@ fun NameDialog(
                 value = value,
                 onValueChange = { value = it },
                 singleLine = true,
-                placeholder = { Text("그룹 이름") },
+                placeholder = { Text(placeholder) },
                 modifier = Modifier.focusRequester(focus),
             )
         },

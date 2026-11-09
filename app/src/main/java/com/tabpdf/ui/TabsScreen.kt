@@ -1,5 +1,6 @@
 package com.tabpdf.ui
 
+import kotlinx.coroutines.flow.MutableStateFlow
 import com.tabpdf.FingerDrawing
 import com.tabpdf.ink.InkBinding
 import com.tabpdf.ink.LocalInkStore
@@ -360,6 +361,8 @@ private fun ContextPager(
 
     // Table of contents (기획서 5.5): read when the panel opens, for the tab being looked at.
     var tocOpen by rememberSaveable { mutableStateOf(false) }
+    // Which list the panel shows: the table of contents or the bookmarks (기획서 5.5).
+    var tocShowsBookmarks by rememberSaveable { mutableStateOf(false) }
     var tocEntries by remember { mutableStateOf<List<TocEntry>?>(null) }
     LaunchedEffect(tocOpen, session.currentTabId) {
         tocEntries = null
@@ -402,6 +405,7 @@ private fun ContextPager(
                 val tab = tabs[page]
                 val strokes by remember(tab.id) { viewModel.ink.strokes(tab.id) }.collectAsState()
                 val texts by remember(tab.id) { viewModel.ink.texts(tab.id) }.collectAsState()
+                val bookmarks by remember(tab.id) { viewModel.ink.bookmarks(tab.id) }.collectAsState()
                 val ink = if (!inkMode) null else InkBinding(
                     tool = inkTool,
                     style = toolStyles.getValue(inkTool),
@@ -453,6 +457,8 @@ private fun ContextPager(
                     onDarkChange = { dark -> viewModel.setDarkLook(tab.id, dark.takeIf { it != appDark }) },
                     onPageLook = { darkPages[tab.id] = it },
                     barsVisible = barsVisible || inkMode,
+                    bookmarks = bookmarks,
+                    onToggleBookmark = { page, y -> viewModel.ink.toggleBookmark(tab.id, page, y) },
                 )
             }
         }
@@ -520,6 +526,9 @@ private fun ContextPager(
         }
 
         val reading = session.currentTabId?.let { viewModel.viewerState(it) }
+        val currentBookmarks by remember(session.currentTabId) {
+            session.currentTabId?.let { viewModel.ink.bookmarks(it) } ?: MutableStateFlow(emptyList())
+        }.collectAsState()
         TocDrawer(
             open = tocOpen,
             entries = tocEntries,
@@ -530,6 +539,16 @@ private fun ContextPager(
                 session.currentTabId?.let { viewModel.jumpToPage(it, entry.page, entry.y) }
             },
             onClose = { tocOpen = false },
+            showBookmarks = tocShowsBookmarks,
+            onShowBookmarks = { tocShowsBookmarks = it },
+            bookmarks = currentBookmarks,
+            pageCount = session.currentTabId?.let { viewModel.pageCount(it) },
+            onBookmark = { mark ->
+                tocOpen = false
+                session.currentTabId?.let { viewModel.jumpToPage(it, mark.page, mark.y) }
+            },
+            onRenameBookmark = { mark, name -> session.currentTabId?.let { viewModel.ink.renameBookmark(it, mark.id, name) } },
+            onDeleteBookmark = { mark -> session.currentTabId?.let { viewModel.ink.removeBookmark(it, mark.id) } },
         )
     }
 
@@ -738,7 +757,7 @@ private fun ViewerMenu(
         onClick = { dismiss(); onSearch() },
     )
     DropdownMenuItem(
-        text = { Text("목차") },
+        text = { Text("목차·북마크") },
         enabled = canExport,
         onClick = { dismiss(); onContents() },
     )

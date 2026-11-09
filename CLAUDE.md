@@ -106,10 +106,11 @@ app/src/main/java/com/tabpdf/
                          텍스트 상자(InkText: 글자 구간별 서식 RichText, InkTextLayout: 페이지에 그릴 때와 입력란이
                          같은 조판 설정·구간 표시를 써서 모양과 줄 바꿈이 같다).
                          글 형광펜(TextMarks: 꾹 누른 형광펜 → 뷰어의 텍스트 선택 → 줄마다 곧은 형광펜 획)
+                         북마크(Bookmark: 탭마다, 한 페이지에 하나. 필기와 같이 InkStore가 불러오고 묶음 편집·탭 닫기를 따른다)
   tabs/                  탭·그룹 구조(Session.kt), ViewModel, 읽던 위치, 파일 접근 권한·복사본 관리
   ui/                    화면: 뷰어(DocumentViewer)·스와이프 범위별 페이저·상단 바(TabsScreen), 탭 전환 화면·그룹 패널(TabSwitcher),
                          대화상자, 카드 목록 제스처(ItemGestures), 텍스트 상자 입력(TextBoxField: EditText 기반,
-                         TextBoxes: 편집 틀·손잡이·서식 막대), 문서 어두운 화면 버튼(LookButton)
+                         TextBoxes: 편집 틀·손잡이·서식 막대), 페이지 왼쪽 위 작은 버튼(PageButtons: 북마크·문서 어두운 화면), 목차·북마크 서랍(TocDrawer)
   ui/theme/              색(종이·책상·잉크)·글꼴(Pretendard, UI와 텍스트 상자)·모양·움직임 토큰, EveryViewerTheme (기획서 4.4).
                          화면에서 색·반경을 직접 적지 말고 여기 토큰을 쓴다 (그룹·펜·검색 색과 문서 색은 예외)
 app/schemas/             Room 스키마 (DB 버전마다 커밋)
